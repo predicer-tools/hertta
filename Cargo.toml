@@ -36,6 +36,7 @@ serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 time = "0.3.30"
 async-trait = { version = "0.1", optional = true }
+mockito = "0.28.0"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "rt", "time", "sync"]}

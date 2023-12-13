@@ -30,3 +30,8 @@ pub fn combine_vectors(solution_vector: &mut Vec<(String, f64)>, ts_vector: Vec<
     }
 }
 
+pub fn is_valid_http_header_value(value: &str) -> bool {
+    // Example: Check if the string is ASCII and does not contain control characters
+    value.is_ascii() && !value.chars().any(|ch| ch.is_control())
+}
+
