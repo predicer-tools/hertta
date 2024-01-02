@@ -46,21 +46,14 @@ pub fn _print_tuple_vector(v: &Vec<(String, f64)>) {
 ///
 /// Returns an `Err` with a string message if `vector1` and `vector2` have different lengths.
 ///
-pub fn combine_vectors(solution_vector: &mut Vec<(String, f64)>, vector1: Vec<String>, vector2: Vec<f64>) -> Result<(), String> {
-    // Check if the vectors have the same length
+pub fn combine_vectors(vector1: Vec<String>, vector2: Vec<f64>) -> Result<Vec<(String, f64)>, String> {
     if vector1.len() != vector2.len() {
         return Err("Vectors have different lengths".to_string());
     }
 
-    // Clear the current contents
-    solution_vector.clear();
+    let combined_vector: Vec<(String, f64)> = vector1.into_iter().zip(vector2.into_iter()).collect();
 
-    // Combining the vectors
-    for (ts, data) in vector1.into_iter().zip(vector2.into_iter()) {
-        solution_vector.push((ts, data));
-    }
-
-    Ok(())
+    Ok(combined_vector)
 }
 
 
@@ -80,4 +73,41 @@ pub fn combine_vectors(solution_vector: &mut Vec<(String, f64)>, vector1: Vec<St
 pub fn is_valid_http_header_value(value: &str) -> bool {
     value.is_ascii() && !value.chars().any(|ch| ch.is_control())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /* 
+    #[test]
+    fn test_combine_vectors_success() {
+        let vector1 = vec!["a".to_string(), "b".to_string()];
+        let vector2 = vec![1.0, 2.0];
+
+        assert!(combine_vectors(vector1, vector2).is_ok());
+        assert_eq!(solution_vector, vec![("a".to_string(), 1.0), ("b".to_string(), 2.0)]);
+    }
+    
+
+    #[test]
+    fn test_combine_vectors_different_length() {
+        let vector1 = vec!["a".to_string()];
+        let vector2 = vec![1.0, 2.0];
+
+        assert!(combine_vectors(vector1, vector2).is_err());
+    }
+
+    #[test]
+    fn test_combine_vectors_empty() {
+        let mut solution_vector = Vec::new();
+        let vector1: Vec<String> = Vec::new();
+        let vector2: Vec<f64> = Vec::new();
+
+        assert!(combine_vectors(&mut solution_vector, vector1, vector2).is_ok());
+        assert!(solution_vector.is_empty());
+    }
+
+    */
+}
+
 

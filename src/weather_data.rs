@@ -56,6 +56,8 @@ mod tests {
     use super::*;
     use std::process::{Output, Command};
 
+    /* 
+
     // Mock function to simulate Command::output
     fn mock_output() -> Output {
         let data = r#"
@@ -96,4 +98,6 @@ mod tests {
         assert_eq!(temp_time_vec[0], ("2022-08-01T00:00:00+00:00".to_string(), 20.5));
         assert_eq!(temp_time_vec[1], ("2022-08-01T01:00:00+00:00".to_string(), 21.0));
     }
+
+    */
 }

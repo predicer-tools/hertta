@@ -13,13 +13,12 @@ pub struct RunPredicer {
 #[async_trait(?Send)]
 impl AsyncTask for RunPredicer {
     // Different tasks can return different results. If successful, this task returns an `f64`.
-    type Output = Vec<(String, f64)>;
+    type Output = Vec<Vec<(String, f64)>>;
     type Affinity = DispatchAny;
 
     async fn run<'base>(&mut self, mut frame: AsyncGcFrame<'base>) -> JlrsResult<Self::Output> {
 
         unsafe { RuntimeBuilder::new().async_runtime::<Tokio>().start_async::<1>().expect("Could not init Julia") };
-        let mut solution_vector: Vec<(String, f64)> = Vec::new();
     
         unsafe {
 
@@ -256,6 +255,8 @@ impl AsyncTask for RunPredicer {
 
             //Solve model
 
+            let mut all_combined_vectors = Vec::new(); // To store combined vectors for all data columns
+
             match _input_data {
                 Ok(id_value) => {
                     let _generate_model_result = julia_interface::call(
@@ -267,66 +268,97 @@ impl AsyncTask for RunPredicer {
                     let ts_column = "t";
                     let ts_column_name = JuliaString::new(&mut frame, ts_column).as_value();
 
-                    let data_column = "electricheater_electricitygrid_electricheater_s1";
-                    let data_column_name = JuliaString::new(&mut frame, data_column).as_value();
+                    let scenario = "s1";
+                    let mut data_column_names = Vec::new();
+
+                    for (_process_name, process) in &self.data.processes {
+                        if let Some(data_column) = generate_data_column(process, scenario) {
+                            data_column_names.push(data_column);
+                            // Use data_column_name as needed
+                            // e.g., let data_column_name = JuliaString::new(&mut frame, data_column).as_value();
+                        } else {
+                            println!("Process '{}' does not have matching topology", process.name);
+                        }
+                    }
 
                     match _generate_model_result {
                         Ok(df) => {
 
-                            let mut ts_vector: Vec<String> = Vec::new();
-                            let mut data_vector: Vec<f64> = Vec::new();
+                            for data_column_name in data_column_names {
+                                let ts_vector_function = julia_interface::call(
+                                    &mut frame, 
+                                    &["Predicer", "extract_column_as_vector"], 
+                                    &[df, ts_column_name]
+                                );
+                    
+                                let ts_vector = match ts_vector_function {
+                                    Ok(df) => julia_interface::make_rust_vector_string(&mut frame, &df),
+                                    Err(error) => {
+                                        println!("Error extracting time series: {:?}", error);
+                                        continue; // Skip to the next iteration
+                                    },
+                                };
 
-                            let ts_vector_function = julia_interface::call(
-                                &mut frame, 
-                                &["Predicer", "extract_column_as_vector"], 
-                                &[df, ts_column_name]
-                            );
+                                let j_data_column_name = JuliaString::new(&mut frame, data_column_name).as_value();
+                    
+                                let df_vector_function = julia_interface::call(
+                                    &mut frame, 
+                                    &["Predicer", "extract_column_as_vector"], 
+                                    &[df, j_data_column_name]
+                                );
+                    
+                                let data_vector = match df_vector_function {
+                                    Ok(df) => julia_interface::make_rust_vector_f64(&mut frame, &df),
+                                    Err(error) => {
+                                        println!("Error extracting data: {:?}", error);
+                                        continue; // Skip to the next iteration
+                                    },
+                                };
+                    
+                                //let combined_vector = utilities::combine_vectors(ts_vector, data_vector);
+                                //all_combined_vectors.push(combined_vector); // Add the combined vector to the list
 
-                            match ts_vector_function {
-                                Ok(df) => {
-                                    
-                                    ts_vector = julia_interface::make_rust_vector_string(&mut frame, &df);
-                                    
+                                match utilities::combine_vectors(ts_vector, data_vector) {
+                                    Ok(combined_vector) => {
+                                        // Iterate and print each element in the combined vector
+                                        all_combined_vectors.push(combined_vector); // Add the combined vector to the list
+                                    },
+                                    Err(e) => {
+                                        // Handle the error
+                                        println!("Error combining vectors: {}", e);
+                                    }
                                 }
-                                Err(error) => println!("Error solving model: {:?}", error),
-                            }
-
-                            let df_vector_function = julia_interface::call(
-                                &mut frame, 
-                                &["Predicer", "extract_column_as_vector"], 
-                                &[df, data_column_name]
-                            );
-
-                            match df_vector_function {
-                                Ok(df) => {
-                                    
-                                    data_vector = julia_interface::make_rust_vector_f64(&mut frame, &df);
-                                    
-                                }
-                                Err(error) => println!("Error solving model: {:?}", error),
-                            }
-
-                            utilities::combine_vectors(&mut solution_vector, ts_vector, data_vector);
 
                             
+                            }
+                            
+                            
                         }
-                        Err(error) => println!("Error solving model: {:?}", error),
+
+                        Err(error) => println!("Error solving model: {:?}", error),   
+
                     }   
-
                 }
-                Err(error) => println!("Error solving model: {:?}", error),
-            }  
 
-            Ok(solution_vector)
+                Err(error) => println!("Error solving model: {:?}", error),  
 
+            }
+
+            Ok(all_combined_vectors)
         }
-
     }
-
 }
 
 
-
+fn generate_data_column(process: &input_data::Process, scenario: &str) -> Option<String> {
+    for topology in &process.topos {
+        if topology.source == "electricitygrid" {
+            let data_column = format!("{}_{}_{}_{}", process.name, topology.source, process.name, scenario);
+            return Some(data_column);
+        }
+    }
+    None
+}
     
 pub fn add_topology<'target, 'data>(frame: &mut frame::GcFrame<'target>, process: Value<'_, '_>, topos: &Vec<input_data::Topology>) {
 

@@ -192,10 +192,6 @@ pub fn add_time_serie(ts_data_vec: &mut Vec<TimeSeries>, time_series: TimeSeries
 
 }
 
-pub fn json_to_inputdata(json_data: &str) -> Result<InputData, serde_json::Error> {
-    serde_json::from_str(json_data)
-}
-
 pub fn create_data(init_temp: f64) -> InputData {
 
     //Example time series

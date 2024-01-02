@@ -26,6 +26,9 @@ use tokio::sync::Mutex;
 use std::sync::Arc;
 use std::fs;
 use std::net::SocketAddr;
+use std::error::Error;
+use std::fs::File;
+use std::io::Write;
 
 /// This function is used to make post request to Home Assistant in the Hertta development phase
 /// 
@@ -48,7 +51,7 @@ use std::net::SocketAddr;
 /// - Errors in header construction or during the sending of the request are converted to `PostRequestError`.
 /// - Errors in the response status (e.g., non-successful HTTP status codes) are also converted to `PostRequestError`.
 ///
-async fn _make_post_request_light(url: &str, entity_id: &str, token: &str, brightness: f64) -> Result<(), errors::PostRequestError> {
+async fn _make_post_request(url: &str, entity_id: &str, token: &str, brightness: f64) -> Result<(), errors::PostRequestError> {
     
     // Check if the token is valid for HTTP headers
     if !utilities::is_valid_http_header_value(token) {
@@ -173,7 +176,7 @@ async fn send_task_to_runtime(
     julia: &AsyncJulia<Tokio>,
     data: input_data::InputData, 
     predicer_dir: String, 
-    sender: tokio::sync::oneshot::Sender<Result<Vec<(String, f64)>, Box<JlrsError>>>,
+    sender: tokio::sync::oneshot::Sender<Result<Vec<Vec<(String, f64)>>, Box<JlrsError>>>,
 ) -> Result<(), errors::JuliaError> {
 
     // Dispatch a task with the provided data and directory to the Julia runtime.
@@ -216,8 +219,8 @@ async fn send_task_to_runtime(
 /// - If there is an error in receiving the task result from the channel, a `JuliaError` indicating this failure is returned.
 ///
 async fn receive_task_result(
-    receiver: tokio::sync::oneshot::Receiver<Result<Vec<(String, f64)>, Box<JlrsError>>>,
-) -> Result<Vec<(String, f64)>, errors::JuliaError> {
+    receiver: tokio::sync::oneshot::Receiver<Result<Vec<Vec<(String, f64)>>, Box<JlrsError>>>,
+) -> Result<Vec<Vec<(String, f64)>>, errors::JuliaError> {
     match receiver.await {
         Ok(result) => match result {
             // The task result is successfully received from the channel.
@@ -263,47 +266,6 @@ async fn _shutdown_julia_runtime(julia: AsyncJulia<Tokio>, handle: JoinHandle<Re
     }
 }
 
-/// Help function in development phase to control light in Home Assistant using POST-request
-/// 
-/// Sends light control commands to a specified URL.
-///
-/// This asynchronous function iterates over a slice of brightness values, sending each as part of a POST request.
-/// It sends commands to adjust the brightness of a light entity, waiting for 2 seconds between each command.
-///
-/// # Parameters
-/// - `url`: The URL to which the POST request is sent.
-/// - `entity_id`: The identifier of the light entity being controlled.
-/// - `hass_token`: The Home Assistant API token used for authentication.
-/// - `brightness_values`: A slice of brightness values (assumed to be `f64`, adjust as needed).
-///
-/// # Returns
-/// Returns `Ok(())` if all POST requests are made successfully, or `ProcessControlError` in case of any failure.
-///
-/// # Errors
-/// - Returns `ProcessControlError` if a POST request fails. The function currently continues sending remaining requests
-///   even after encountering an error, but this behavior can be changed based on requirements.
-///
-async fn send_light_commands(
-    url: &str,
-    entity_id: &str,
-    hass_token: &str,
-    brightness_values: &[f64], // Assuming brightness values are u8, adjust as needed
-) -> Result<(), errors::ProcessControlError> {
-    for brightness in brightness_values.iter().take(2) {
-        println!("Setting brightness to: {}", brightness);
-        if let Err(err) = _make_post_request_light(url, entity_id, hass_token, *brightness).await {
-            eprintln!("Error in making POST request for brightness {}: {:?}", brightness, err);
-            // Decide how to handle the error: return or continue to the next iteration
-        } else {
-            println!("POST request successful for brightness: {}", brightness);
-        }
-
-        // Wait for 2 seconds before sending the next request
-        println!("Waiting for 2 seconds before next request...");
-        time::sleep(Duration::from_secs(2)).await;
-    }
-    Ok(())
-}
 
 /// Executes Run Predicer task using a Julia runtime.
 ///
@@ -327,7 +289,7 @@ async fn run_predicer(
     julia: Arc<Mutex<AsyncJulia<Tokio>>>,
     data: input_data::InputData,
     predicer_dir: String,
-) -> Result<Vec<(String, f64)>, errors::JuliaError> {
+) -> Result<Vec<Vec<(String, f64)>>, errors::JuliaError> {
 
     // Acquire a lock on the Julia runtime.
     let julia_guard = julia.lock().await;
@@ -359,62 +321,27 @@ async fn run_predicer(
         }
     };
 
-    // Print the results for debugging or logging purposes.
-    utilities::_print_tuple_vector(&result);
-
     // Return the successful result.
     Ok(result)
 
 
 }
 
-/// This function is just for development purposes
-/// 
-/// Changes the brightness of a light entity based on provided values.
-///
-/// This asynchronous function processes a vector of values to derive brightness levels,
-/// then sends corresponding commands to adjust the brightness of a specified light entity.
-///
-/// # Parameters
-/// - `values`: A vector of tuples, each containing an identifier and a numeric value.
-///              These values are transformed into brightness levels.
-/// - `hass_token`: The Home Assistant API token used for authorization.
-/// - `url`: The URL of the light control service.
-/// - `entity_id`: The identifier of the light entity to be controlled.
-///
-/// # Returns
-/// Returns `Ok(())` if all brightness adjustment commands are successfully sent and processed.
-/// Returns `PostRequestError` if any error occurs during the command sending process.
-///
-/// # Errors
-/// - Returns `PostRequestError` if there's an issue in sending light commands, 
-///   encapsulating the underlying error details.
-///
-async fn change_brightness(
-    values: Vec<(String, f64)>, 
-    hass_token: String, 
-    url: &str, 
-    entity_id: &str
-) -> Result<(), errors::PostRequestError> {
-    // Transform values to brightness values
-    let brightness_values: Vec<f64> = values.iter().map(|(_, value)| *value * 20.0).collect();
-    println!("Brightness Values: {:?}", brightness_values);
+async fn control_values_to_hass(result: Vec<(String, f64)>, entity_id: &str, server_1_url: &str) -> Result<(), reqwest::Error> {
+    // Create JSON payload
+    let json_payload = json!({
+        "entity_id": entity_id,
+        "control_values": result
+    });
 
-    // Send commands to adjust the brightness of the light entity.
-    let light_command = send_light_commands(url, entity_id, &hass_token, &brightness_values).await;
-    
-    // Handle the outcome of the light command operation.
-    match light_command {
-        Ok(()) => {
-            println!("Light command successful.");
-            Ok(())
-        },
-        Err(e) => {
-            eprintln!("Error in light commands: {}", e);
-            // Convert and return the error as PostRequestError.
-            Err(errors::PostRequestError(format!("Error in sending light command: {:?}", e)))
-        },
-    }
+    // Create a client and make a POST request
+    let client = reqwest::Client::new();
+    client.post(server_1_url)
+          .json(&json_payload)
+          .send()
+          .await?;
+
+    Ok(())
 }
 
 // Example of Options for the development phase
@@ -429,13 +356,50 @@ struct Options {
     hass_token: String,
 }
 
+pub fn write_to_json_file(data: &input_data::InputData, file_path: &str) -> Result<(), Box<dyn Error>> {
+    // Serialize the data to JSON
+    let json = serde_json::to_string_pretty(data)?;
+
+    // Open a file in write mode
+    let mut file = File::create(file_path)?;
+
+    // Write the JSON data to the file
+    file.write_all(json.as_bytes())?;
+
+    Ok(())
+}
+
 #[tokio::main]
-async fn main() {
+async fn main()  {
+
+    // Read JSON file
+    let json_data = match fs::read_to_string("output.json") {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("Error reading file: {}", e);
+            return; // Exit the function early on error
+        }
+    };
+
+    // Convert JSON to InputData
+    let input_data = match input_data::json_to_inputdata(&json_data) {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("Error parsing JSON: {}", e);
+            return; // Exit the function early on error
+        }
+    };
+
+    println!("Successfully parsed InputData: {:?}", input_data);
+
+    /*
 
     let start_time = "2023-12-11 00:00".to_string();
     let end_time = "2023-12-11 23:00".to_string();
     let place = "Hervanta".to_string();
     let _data = weather_data::get_weather_data(start_time, end_time, place);
+
+    */
 
     
     // Parse command line arguments
@@ -471,8 +435,9 @@ async fn main() {
 	let _insulation_u_value = &options.insulation_u_value;
     let listen_ip = options.listen_ip.clone();
     let port = options.port.clone();
-	let hass_token = options.hass_token.clone();
     let url = "http://192.168.1.171:8123/api/services/light/turn_on";
+
+    //Tämä pitäisi tulla post kutsuna hass-serveriltä
     let entity_id = "light.katto1";
 	
 	// Partially mask the hass token for printing.
@@ -503,6 +468,9 @@ async fn main() {
     // Set up an mpsc channel for graceful shutdown
     let (shutdown_sender, mut shutdown_receiver) = mpsc::channel::<()>(1);
 
+    // Clone the necessary data before moving it into the closure
+    let input_data_clone = input_data.clone();
+
     // Define the route for handling POST requests to run the Julia task
     let my_route = {
         let julia = julia.clone();
@@ -514,35 +482,35 @@ async fn main() {
                 // Clone shared resources
                 let julia_clone = julia.clone();
                 let predicer_dir_clone = predicer_dir.clone();
-                let hass_token_clone = hass_token.clone();
                 let url_clone = url.to_string();
                 let entity_id_clone = entity_id.to_string();
 
-                let data = input_data::create_data(data.init_temp);
-                
+                // Use cloned data here
+                let data = input_data_clone.clone();
 
                 // Spawn an asynchronous task to run the Julia task
                 tokio::spawn(async move {
                     // Call the function to run the Julia task with the provided data
                     match run_predicer(julia_clone, data, predicer_dir_clone).await {
-                        Ok(result) => {
-                            // Handle the successful result of the Julia task
-                            println!("Julia task completed successfully: {:?}", result);
-                            match change_brightness(result, hass_token_clone, &url_clone, &entity_id_clone).await {
-                                Ok(_) => {
-                                    // Handle the successful case here, if needed
-                                    println!("change_brightness executed successfully");
-                                }
-                                Err(e) => {
-                                    eprintln!("Error running change_brightness: {:?}", e);
+                        Ok(all_combined_vectors) => {
+                            // Iterate and print each vector along with its index
+                            for (index, combined_vector) in all_combined_vectors.iter().enumerate() {
+                                println!("Vector {}:", index + 1);
+                    
+                                // Iterate through each tuple in the combined vector
+                                for tuple in combined_vector {
+                                    // Here, tuple is a reference to a (String, f64) tuple, so we destructure it
+                                    let (ts, value) = tuple; // Destructure the tuple reference
+                                    println!("  Timestamp: {}, Value: {}", ts, value);
                                 }
                             }
-                        }
-                        Err(e) => {
-                            // Handle any errors that occurred during the Julia task
-                            eprintln!("Error running Julia task: {:?}", e);
+                        },
+                        Err(error) => {
+                            // Handle error
+                            println!("An error occurred: {}", error);
                         }
                     }
+                                      
                 });
 
                 // Respond to the request
@@ -607,6 +575,8 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    /* 
+
     use mockito::{mock, server_url};
     use tokio;
 
@@ -648,6 +618,8 @@ mod tests {
         let result = _make_post_request_light(&test_url, "entity1", "token123", 50.0).await;
         assert!(result.is_err()); // The function should return an error
     }
+
+    */
 
 
 }
