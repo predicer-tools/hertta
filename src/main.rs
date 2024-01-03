@@ -29,6 +29,7 @@ use std::net::SocketAddr;
 use std::error::Error;
 use std::fs::File;
 use std::io::Write;
+use std::collections::HashMap;
 
 /// This function is used to make post request to Home Assistant in the Hertta development phase
 /// 
@@ -176,7 +177,7 @@ async fn send_task_to_runtime(
     julia: &AsyncJulia<Tokio>,
     data: input_data::InputData, 
     predicer_dir: String, 
-    sender: tokio::sync::oneshot::Sender<Result<Vec<Vec<(String, f64)>>, Box<JlrsError>>>,
+    sender: tokio::sync::oneshot::Sender<Result<HashMap<String, predicer::ControlValues>, Box<JlrsError>>>,
 ) -> Result<(), errors::JuliaError> {
 
     // Dispatch a task with the provided data and directory to the Julia runtime.
@@ -219,8 +220,8 @@ async fn send_task_to_runtime(
 /// - If there is an error in receiving the task result from the channel, a `JuliaError` indicating this failure is returned.
 ///
 async fn receive_task_result(
-    receiver: tokio::sync::oneshot::Receiver<Result<Vec<Vec<(String, f64)>>, Box<JlrsError>>>,
-) -> Result<Vec<Vec<(String, f64)>>, errors::JuliaError> {
+    receiver: tokio::sync::oneshot::Receiver<Result<HashMap<String, predicer::ControlValues>, Box<JlrsError>>>,
+) -> Result<HashMap<String, predicer::ControlValues>, errors::JuliaError> {
     match receiver.await {
         Ok(result) => match result {
             // The task result is successfully received from the channel.
@@ -289,7 +290,7 @@ async fn run_predicer(
     julia: Arc<Mutex<AsyncJulia<Tokio>>>,
     data: input_data::InputData,
     predicer_dir: String,
-) -> Result<Vec<Vec<(String, f64)>>, errors::JuliaError> {
+) -> Result<HashMap<String, predicer::ControlValues>, errors::JuliaError> {
 
     // Acquire a lock on the Julia runtime.
     let julia_guard = julia.lock().await;
@@ -492,16 +493,14 @@ async fn main()  {
                 tokio::spawn(async move {
                     // Call the function to run the Julia task with the provided data
                     match run_predicer(julia_clone, data, predicer_dir_clone).await {
-                        Ok(all_combined_vectors) => {
-                            // Iterate and print each vector along with its index
-                            for (index, combined_vector) in all_combined_vectors.iter().enumerate() {
-                                println!("Vector {}:", index + 1);
+                        Ok(device_control_values) => {
+                            // Iterate through the HashMap
+                            for (device_id, control_values) in device_control_values.iter() {
+                                println!("Device ID: {}", device_id);
                     
-                                // Iterate through each tuple in the combined vector
-                                for tuple in combined_vector {
-                                    // Here, tuple is a reference to a (String, f64) tuple, so we destructure it
-                                    let (ts, value) = tuple; // Destructure the tuple reference
-                                    println!("  Timestamp: {}, Value: {}", ts, value);
+                                // Iterate through the vector of control values for each device
+                                for (timestamp, value) in control_values {
+                                    println!("  Timestamp: {}, Value: {}", timestamp, value);
                                 }
                             }
                         },

@@ -5,15 +5,19 @@ use jlrs::prelude::*;
 use std::collections::HashMap;
 use jlrs::memory::target::frame;
 
+
 pub struct RunPredicer {
     pub data: input_data::InputData,
     pub predicer_dir: String,
 }
 
+// Define the type for control values
+pub type ControlValues = Vec<(String, f64)>;
+
 #[async_trait(?Send)]
 impl AsyncTask for RunPredicer {
     // Different tasks can return different results. If successful, this task returns an `f64`.
-    type Output = Vec<Vec<(String, f64)>>;
+    type Output = HashMap<String, Vec<(String, f64)>>;
     type Affinity = DispatchAny;
 
     async fn run<'base>(&mut self, mut frame: AsyncGcFrame<'base>) -> JlrsResult<Self::Output> {
@@ -255,7 +259,10 @@ impl AsyncTask for RunPredicer {
 
             //Solve model
 
-            let mut all_combined_vectors = Vec::new(); // To store combined vectors for all data columns
+
+            // Define a HashMap to store device IDs and their corresponding control values
+            let mut all_device_controls: HashMap<String, ControlValues> = HashMap::new();
+
 
             match _input_data {
                 Ok(id_value) => {
@@ -267,24 +274,25 @@ impl AsyncTask for RunPredicer {
 
                     let ts_column = "t";
                     let ts_column_name = JuliaString::new(&mut frame, ts_column).as_value();
-
                     let scenario = "s1";
-                    let mut data_column_names = Vec::new();
 
-                    for (_process_name, process) in &self.data.processes {
+                    //Predicer data columns for fetching process control values 
+                    // Define a HashMap to store process names and their corresponding data column names
+                    let mut predicer_data_columns: HashMap<String, String> = HashMap::new();
+
+                    // Iterate over processes and populate the HashMap
+                    for (process_name, process) in &self.data.processes {
                         if let Some(data_column) = generate_data_column(process, scenario) {
-                            data_column_names.push(data_column);
-                            // Use data_column_name as needed
-                            // e.g., let data_column_name = JuliaString::new(&mut frame, data_column).as_value();
+                            predicer_data_columns.insert(process_name.clone(), data_column);
                         } else {
                             println!("Process '{}' does not have matching topology", process.name);
                         }
-                    }
+                    }        
 
                     match _generate_model_result {
                         Ok(df) => {
 
-                            for data_column_name in data_column_names {
+                            for (process_name, data_column_name) in predicer_data_columns.iter() {
                                 let ts_vector_function = julia_interface::call(
                                     &mut frame, 
                                     &["Predicer", "extract_column_as_vector"], 
@@ -314,25 +322,21 @@ impl AsyncTask for RunPredicer {
                                         continue; // Skip to the next iteration
                                     },
                                 };
-                    
-                                //let combined_vector = utilities::combine_vectors(ts_vector, data_vector);
-                                //all_combined_vectors.push(combined_vector); // Add the combined vector to the list
 
                                 match utilities::combine_vectors(ts_vector, data_vector) {
-                                    Ok(combined_vector) => {
-                                        // Iterate and print each element in the combined vector
-                                        all_combined_vectors.push(combined_vector); // Add the combined vector to the list
+                                    Ok(control_values_for_device) => {
+                                        // Insert the control data for the device
+                                        all_device_controls.insert(process_name.to_string(), control_values_for_device);
+                                        
                                     },
                                     Err(e) => {
                                         // Handle the error
                                         println!("Error combining vectors: {}", e);
                                     }
                                 }
-
                             
                             }
-                            
-                            
+                               
                         }
 
                         Err(error) => println!("Error solving model: {:?}", error),   
@@ -344,18 +348,22 @@ impl AsyncTask for RunPredicer {
 
             }
 
-            Ok(all_combined_vectors)
+            for (device_id, control_values) in &all_device_controls {
+                println!("Device ID: {}", device_id);
+                for (timestamp, value) in control_values {
+                    println!("    Timestamp: {}, Value: {}", timestamp, value);
+                }
+            }            
+
+            Ok(all_device_controls)
         }
     }
 }
 
-
 fn generate_data_column(process: &input_data::Process, scenario: &str) -> Option<String> {
     for topology in &process.topos {
-        if topology.source == "electricitygrid" {
-            let data_column = format!("{}_{}_{}_{}", process.name, topology.source, process.name, scenario);
-            return Some(data_column);
-        }
+        let data_column = format!("{}_{}_{}_{}", process.name, topology.source, process.name, scenario);
+        return Some(data_column);
     }
     None
 }
