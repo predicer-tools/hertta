@@ -1,6 +1,9 @@
 
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
+use std::fs::File;
+use std::error::Error;
+use std::io::Write;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InputData {
@@ -171,6 +174,51 @@ pub struct GenConstraint {
     pub penalty: f64,
     pub factors: Vec<ConFactor>,
     pub constant: TimeSeriesData,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct WeatherData {
+    place: String,
+    weather_data: Vec<(String, f64)>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct BuildingData {
+    // Fields representing weather data
+    pub place: String,
+    pub input_data: InputData,
+}
+
+pub fn write_to_json_file_bd(data: &BuildingData, file_path: &str) -> Result<(), Box<dyn Error>> {
+    // Serialize the data to JSON
+    let json = serde_json::to_string_pretty(data)?;
+
+    // Open a file in write mode
+    let mut file = File::create(file_path)?;
+
+    // Write the JSON data to the file
+    file.write_all(json.as_bytes())?;
+
+    Ok(())
+}
+
+pub fn convert_to_time_series(data: WeatherData) -> Vec<TimeSeries> {
+    let scenarios = vec!["s1".to_string(), "s2".to_string()];
+
+    scenarios.into_iter().map(|scenario| {
+        TimeSeries {
+            scenario,
+            series: data.weather_data.clone(),
+        }
+    }).collect()
+}
+
+pub fn update_outside_inflow(input_data: &mut InputData, outside_inflow: Vec<TimeSeries>) {
+    if let Some(outside_node) = input_data.nodes.get_mut("outside") {
+        outside_node.inflow = TimeSeriesData { ts_data: outside_inflow };
+    } else {
+        eprintln!("'outside' node not found in InputData");
+    }
 }
 
 

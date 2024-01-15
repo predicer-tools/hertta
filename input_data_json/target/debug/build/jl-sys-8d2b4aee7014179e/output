@@ -1,0 +1,86 @@
+cargo:rerun-if-changed=src/jlrs_cc.c
+cargo:rerun-if-changed=src/jlrs_cc.h
+cargo:rerun-if-env-changed=JULIA_DIR
+cargo:rustc-link-arg=-Wl,--export-dynamic
+cargo:rustc-link-search=C:\Users\enessi\AppData\Local\Programs\Julia-1.8.5/bin
+cargo:rustc-link-search=C:\Users\enessi\AppData\Local\Programs\Julia-1.8.5/lib
+TARGET = Some("x86_64-pc-windows-msvc")
+OPT_LEVEL = Some("0")
+HOST = Some("x86_64-pc-windows-msvc")
+cargo:rerun-if-env-changed=CXX_x86_64-pc-windows-msvc
+CXX_x86_64-pc-windows-msvc = None
+cargo:rerun-if-env-changed=CXX_x86_64_pc_windows_msvc
+CXX_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=HOST_CXX
+HOST_CXX = None
+cargo:rerun-if-env-changed=CXX
+CXX = None
+cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+CRATE_CC_NO_DEFAULTS = None
+CARGO_CFG_TARGET_FEATURE = Some("fxsr,sse,sse2")
+DEBUG = Some("true")
+cargo:rerun-if-env-changed=CXXFLAGS_x86_64-pc-windows-msvc
+CXXFLAGS_x86_64-pc-windows-msvc = None
+cargo:rerun-if-env-changed=CXXFLAGS_x86_64_pc_windows_msvc
+CXXFLAGS_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=HOST_CXXFLAGS
+HOST_CXXFLAGS = None
+cargo:rerun-if-env-changed=CXXFLAGS
+CXXFLAGS = None
+cargo:rerun-if-env-changed=CXX_x86_64-pc-windows-msvc
+CXX_x86_64-pc-windows-msvc = None
+cargo:rerun-if-env-changed=CXX_x86_64_pc_windows_msvc
+CXX_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=HOST_CXX
+HOST_CXX = None
+cargo:rerun-if-env-changed=CXX
+CXX = None
+cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+CRATE_CC_NO_DEFAULTS = None
+CARGO_CFG_TARGET_FEATURE = Some("fxsr,sse,sse2")
+cargo:rerun-if-env-changed=CXXFLAGS_x86_64-pc-windows-msvc
+CXXFLAGS_x86_64-pc-windows-msvc = None
+cargo:rerun-if-env-changed=CXXFLAGS_x86_64_pc_windows_msvc
+CXXFLAGS_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=HOST_CXXFLAGS
+HOST_CXXFLAGS = None
+cargo:rerun-if-env-changed=CXXFLAGS
+CXXFLAGS = None
+running: "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\BuildTools\\VC\\Tools\\MSVC\\14.29.30133\\bin\\HostX64\\x64\\cl.exe" "-nologo" "-MD" "-Z7" "-Brepro" "-I" "C:\\Users\\enessi\\AppData\\Local\\Programs\\Julia-1.8.5/include/julia/" "-W4" "/std:c++20" "-DJULIA_1_8" "-DJLRS_FAST_TLS" "-FoC:\\Users\\enessi\\Documents\\hertta\\input_data_json\\target\\debug\\build\\jl-sys-8d2b4aee7014179e\\out\\src/jlrs_cc.o" "-c" "src/jlrs_cc.cc"
+jlrs_cc.cc
+C:\Program Files (x86)\Windows Kits\10\include\10.0.19041.0\ucrt\signal.h(26): warning C4005: 'NSIG': macro redefinition
+C:\Users\enessi\AppData\Local\Programs\Julia-1.8.5\include\julia\uv/win.h(75): note: see previous definition of 'NSIG'
+C:\Users\enessi\.cargo\registry\src\github.com-1ecc6299db9ec823\jl-sys-0.23.1\src\jlrs_cc.c(74): warning C4456: declaration of 'ptrf' hides previous local declaration
+C:\Users\enessi\.cargo\registry\src\github.com-1ecc6299db9ec823\jl-sys-0.23.1\src\jlrs_cc.c(48): note: see declaration of 'ptrf'
+C:\Users\enessi\.cargo\registry\src\github.com-1ecc6299db9ec823\jl-sys-0.23.1\src\jlrs_cc.c(107): warning C4127: conditional expression is constant
+C:\Users\enessi\.cargo\registry\src\github.com-1ecc6299db9ec823\jl-sys-0.23.1\src\jlrs_cc.c(107): note: consider using 'if constexpr' statement instead
+C:\Users\enessi\.cargo\registry\src\github.com-1ecc6299db9ec823\jl-sys-0.23.1\src\jlrs_cc.c(137): warning C4267: 'argument': conversion from 'size_t' to 'uint32_t', possible loss of data
+exit code: 0
+cargo:rerun-if-env-changed=AR_x86_64-pc-windows-msvc
+AR_x86_64-pc-windows-msvc = None
+cargo:rerun-if-env-changed=AR_x86_64_pc_windows_msvc
+AR_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=HOST_AR
+HOST_AR = None
+cargo:rerun-if-env-changed=AR
+AR = None
+cargo:rerun-if-env-changed=ARFLAGS_x86_64-pc-windows-msvc
+ARFLAGS_x86_64-pc-windows-msvc = None
+cargo:rerun-if-env-changed=ARFLAGS_x86_64_pc_windows_msvc
+ARFLAGS_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=HOST_ARFLAGS
+HOST_ARFLAGS = None
+cargo:rerun-if-env-changed=ARFLAGS
+ARFLAGS = None
+running: "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\BuildTools\\VC\\Tools\\MSVC\\14.29.30133\\bin\\HostX64\\x64\\lib.exe" "-out:C:\\Users\\enessi\\Documents\\hertta\\input_data_json\\target\\debug\\build\\jl-sys-8d2b4aee7014179e\\out\\libjlrs_cc.a" "-nologo" "C:\\Users\\enessi\\Documents\\hertta\\input_data_json\\target\\debug\\build\\jl-sys-8d2b4aee7014179e\\out\\src/jlrs_cc.o" "C:\\Users\\enessi\\AppData\\Local\\Programs\\Julia-1.8.5/lib/libjulia.dll.a"
+exit code: 0
+cargo:rustc-link-lib=static=jlrs_cc
+cargo:rustc-link-search=native=C:\Users\enessi\Documents\hertta\input_data_json\target\debug\build\jl-sys-8d2b4aee7014179e\out
+cargo:rerun-if-env-changed=CXXSTDLIB_x86_64-pc-windows-msvc
+CXXSTDLIB_x86_64-pc-windows-msvc = None
+cargo:rerun-if-env-changed=CXXSTDLIB_x86_64_pc_windows_msvc
+CXXSTDLIB_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=HOST_CXXSTDLIB
+HOST_CXXSTDLIB = None
+cargo:rerun-if-env-changed=CXXSTDLIB
+CXXSTDLIB = None

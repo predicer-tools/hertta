@@ -3,14 +3,13 @@
 mod predicer;
 mod utilities;
 mod input_data;
-mod weather_data;
 mod errors;
 
 use std::env;
 use hertta::julia_interface;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, AUTHORIZATION};
 use serde_json::json;
-use tokio::time::{self, Duration};
+use tokio::time::{self, Duration, Instant};
 use warp::Filter;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -30,6 +29,10 @@ use std::error::Error;
 use std::fs::File;
 use std::io::Write;
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::join;
+use warp::reject::Reject;
+use chrono::{Utc, Duration as ChronoDuration, TimeZone, Timelike};
 
 /// This function is used to make post request to Home Assistant in the Hertta development phase
 /// 
@@ -370,91 +373,286 @@ pub fn write_to_json_file(data: &input_data::InputData, file_path: &str) -> Resu
     Ok(())
 }
 
+pub fn serialize_device_control_values(
+    device_control_values: &HashMap<String, Vec<(String, f64)>>,
+) -> Result<String, Box<dyn Error>> {
+    // Serialize the HashMap to a JSON string
+    serde_json::to_string(device_control_values).map_err(|e| e.into())
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct OptimizationInput {
+    weather_data: input_data::WeatherData,
+    device_data: input_data::InputData,
+}
+
+#[derive(Serialize, Deserialize)]
+struct OptimizationResult {
+    data: f64,
+}
+
+
+#[derive(Serialize, Deserialize)]
+struct DeviceData {
+    // Fields representing device data
+    input_data: input_data::InputData,
+
+}
+
+async fn fetch_weather_data(start_time: String, end_time: String, place: String) 
+    -> Result<input_data::WeatherData, Box<dyn Error + Send>> {
+    
+    println!("Fetching weather data for place: {}, start time: {}, end time: {}", place, start_time, end_time);
+
+    let client = reqwest::Client::new();
+    let url = "http://localhost:8001/get_weather_data";
+    let params = [("start_time", &start_time), ("end_time", &end_time), ("place", &place)];
+
+    let response = match client.get(url).query(&params).send().await {
+        Ok(res) => {
+            println!("Received response from weather data server.");
+            res
+        },
+        Err(e) => {
+            println!("Network request for weather data failed: {}", e);
+            return Err(Box::new(errors::TaskError::new(&format!("Network request failed: {}", e))));
+        },
+    };
+
+    match response.json::<input_data::WeatherData>().await {
+        Ok(weather_data) => {
+            println!("Successfully parsed weather data.");
+            Ok(weather_data)
+        },
+        Err(e) => {
+            println!("Failed to parse weather data JSON response: {}", e);
+            Err(Box::new(errors::TaskError::new(&format!("Failed to parse JSON response: {}", e))))
+        },
+    }
+}
+
+async fn fetch_weather_data_task(mut rx: mpsc::Receiver<String>, tx: mpsc::Sender<input_data::WeatherData>) {
+    loop {
+        if let Some(place) = rx.recv().await {
+            println!("fetch_weather_data_task: Received place: {}", place);
+
+            let now = Utc::now();
+            let start_time = now.with_minute(0).unwrap().with_second(0).unwrap().with_nanosecond(0).unwrap();
+            let end_time = start_time + ChronoDuration::hours(9);
+
+            let start_time_str = start_time.format("%Y-%m-%d %H:%M:%S").to_string();
+            let end_time_str = end_time.format("%Y-%m-%d %H:%M:%S").to_string();
+
+            println!("fetch_weather_data_task: Fetching weather data...");
+            let fetched_data = fetch_weather_data(start_time_str, end_time_str, place).await;
+
+            match fetched_data {
+                Ok(weather_data) => {
+                    println!("fetch_weather_data_task: Weather data fetched successfully.");
+                    tx.send(weather_data).await.expect("Failed to send weather data");
+                },
+                Err(e) => {
+                    eprintln!("fetch_weather_data_task: Failed to fetch weather data: {:?}", e);
+                },
+            }
+        } else {
+            println!("fetch_weather_data_task: No place received.");
+        }
+    }
+}
+
+async fn run_optimization(optimization_data: OptimizationInput) 
+    -> Result<HashMap<String, Vec<(String, f64)>>, Box<dyn Error + Send>> {
+
+    let client = reqwest::Client::new();
+    let url = "http://localhost:8002/run_hertta/post";
+
+    let response = match client.post(url)
+                                .json(&optimization_data)
+                                .send()
+                                .await {
+        Ok(res) => res,
+        Err(e) => return Err(Box::new(errors::TaskError::new(&format!("Network request failed: {}", e)))),
+    };
+
+    if response.status().is_success() {
+        match response.json::<HashMap<String, Vec<(String, f64)>>>().await {
+            Ok(device_control_values) => Ok(device_control_values),
+            Err(e) => Err(Box::new(errors::TaskError::new(&format!("Failed to parse JSON response: {}", e)))),
+        }
+    } else {
+        Err(Box::new(errors::TaskError::new("Response returned unsuccessful status")))
+    }
+}
+
+// Async function to run optimization and process results
+async fn run_optimization_task(mut rx: mpsc::Receiver<OptimizationInput>) {
+    let client = reqwest::Client::new();
+
+    while let Some(optimization_input) = rx.recv().await {
+        match run_optimization(optimization_input).await {
+            Ok(device_control_values) => {
+                // Handle the successful optimization result
+                // Send the results to another server
+                let url = "http://localhost:8000/from_hertta/optimization_results";
+
+                match client.post(url)
+                            .json(&device_control_values)
+                            .send()
+                            .await {
+                    Ok(response) => {
+                        if response.status().is_success() {
+                            println!("Successfully sent optimization results");
+                        } else {
+                            eprintln!("Failed to send optimization results, received status: {}", response.status());
+                        }
+                    }
+                    Err(e) => eprintln!("Failed to send optimization results: {:?}", e),
+                }
+            },
+            Err(e) => eprintln!("Optimization task failed: {:?}", e),
+        }
+    }
+}
+
+pub async fn fetch_building_data() -> Result<input_data::BuildingData, Box<dyn Error + Send>> {
+
+    let url = "http://localhost:8000/to_hertta/building_data"; // Replace with the actual URL
+    let client = reqwest::Client::new();
+    let response = match client.get(url).send().await {
+        Ok(res) => {
+            res
+        },
+        Err(e) => {
+            println!("Network request failed: {}", e);
+            return Err(Box::new(errors::TaskError::new(&format!("Network request failed: {}", e))));
+        },
+    };
+
+    match response.json::<input_data::BuildingData>().await {
+        Ok(building_data) => {
+            Ok(building_data)
+        },
+        Err(e) => {
+            println!("Failed to parse JSON response: {}", e);
+            Err(Box::new(errors::TaskError::new(&format!("Failed to parse JSON response: {}", e))))
+        },
+    }
+}
+
+//Channel approach
+
+// Async function to fetch building data from another server
+async fn fetch_building_data_task(tx: mpsc::Sender<input_data::BuildingData>) {
+    loop {
+        println!("fetch_building_data_task: Attempting to fetch building data.");
+
+        match fetch_building_data().await {
+            Ok(building_data) => {
+                println!("fetch_building_data_task: Building data fetched successfully.");
+                if tx.send(building_data).await.is_err() {
+                    eprintln!("fetch_building_data_task: Receiver dropped, stopping task.");
+                    break;
+                }
+            },
+            Err(e) => eprintln!("fetch_building_data_task: Failed to fetch building data: {:?}", e),
+        }
+
+        println!("fetch_building_data_task: Waiting for next interval...");
+        time::sleep(Duration::from_secs(5)).await; // Adjust the interval as needed
+    }
+}
+
 #[tokio::main]
 async fn main()  {
 
-    // Read JSON file
-    let json_data = match fs::read_to_string("output.json") {
-        Ok(data) => data,
-        Err(e) => {
-            eprintln!("Error reading file: {}", e);
-            return; // Exit the function early on error
-        }
-    };
+    let (tx_building, mut rx_building) = mpsc::channel(32);
+    let (tx_weather, rx_weather) = mpsc::channel(32);
+    let (tx_weather_data, mut rx_weather_data) = mpsc::channel(32);
+    //let (tx_optimization, rx_optimization) = mpsc::channel(32);
+    let (tx_shutdown, mut rx_shutdown) = mpsc::channel::<()>(1);
 
-    // Convert JSON to InputData
-    let input_data = match input_data::json_to_inputdata(&json_data) {
-        Ok(data) => data,
-        Err(e) => {
-            eprintln!("Error parsing JSON: {}", e);
-            return; // Exit the function early on error
-        }
-    };
+    println!("Spawning tasks...");
 
-    println!("Successfully parsed InputData: {:?}", input_data);
+    let now = Utc::now();
+    println!("Current UTC time: {}", now.to_string());
 
-    /*
+    let start_time = now.with_minute(0).unwrap().with_second(0).unwrap().with_nanosecond(0).unwrap();
+    println!("Rounded down start time: {}", start_time.to_string());
 
-    let start_time = "2023-12-11 00:00".to_string();
-    let end_time = "2023-12-11 23:00".to_string();
-    let place = "Hervanta".to_string();
-    let _data = weather_data::get_weather_data(start_time, end_time, place);
+    let end_time = start_time + ChronoDuration::hours(9);
+    println!("End time (start time + 9 hours): {}", end_time.to_string());
 
-    */
+    let start_time_str = start_time.format("%Y-%m-%d %H:%M:%S").to_string();
+    let end_time_str = end_time.format("%Y-%m-%d %H:%M:%S").to_string();
+
+    println!("Formatted start time: {}", start_time_str);
+    println!("Formatted end time: {}", end_time_str);
+
+    tokio::spawn(async {
+        println!("fetch_building_data_task started.");
+        fetch_building_data_task(tx_building).await;
+        println!("fetch_building_data_task finished.");
+    });
 
     
+    tokio::spawn(async {
+        println!("fetch_weather_data_task started.");
+        fetch_weather_data_task(rx_weather, tx_weather_data).await;
+        println!("fetch_weather_data_task finished.");
+    });
+    
+
+    
+    /* 
+    tokio::spawn(async {
+        println!("run_optimization_task started.");
+        run_optimization_task(rx_optimization).await;
+        println!("run_optimization_task finished.");
+    });
+*/
+    let tx_shutdown_clone = tx_shutdown.clone();
+
+    tokio::spawn(async move {
+        tokio::task::spawn_blocking(move || {
+            let mut input = String::new();
+            println!("Type 'quit' to shut down the server.");
+            while let Ok(_) = std::io::stdin().read_line(&mut input) {
+                if input.trim().eq_ignore_ascii_case("quit") {
+                    let _ = tx_shutdown_clone.send(());
+                    break;
+                }
+                input.clear();
+            }
+        })
+        .await
+        .expect("Failed to read user input");
+    });
+
+    let server = warp::serve(routes)
+        .bind_with_graceful_shutdown(ip_address, async move {
+            let mut rx_shutdown_for_server = tx_shutdown_for_server.subscribe();
+            rx_shutdown_for_server.recv().await;
+            println!("Server shutdown initiated.");
+        });
+
+    tokio::spawn(async move {
+        server.await.expect("Server failed");
+    });
+
+    let mut task_interval = time::interval(Duration::from_secs(60));
+
+    let listen_ip = "127.0.0.1";
+    let port = "7000";
+    let ip_port = format!("{}:{}", listen_ip, port);
+    let ip_address: SocketAddr = ip_port.parse().unwrap();
+
     // Parse command line arguments
     let args: Vec<String> = env::args().collect();
     let predicer_dir = args
         .get(1)
         .expect("First argument should be path to Predicer")
         .to_string();
-
-    let options_path = "./src/options.json";
-    //let options_path = "/data/options.json";
-
-    let options_str = match fs::read_to_string(options_path) {
-        Ok(content) => content,
-        Err(err) => {
-            eprintln!("Error reading options.json: {}", err);
-            return;
-        }
-    };
-
-    // Parse the options JSON string into an Options struct
-    let options: Options = match serde_json::from_str(&options_str) {
-        Ok(parsed_options) => parsed_options,
-        Err(err) => {
-            eprintln!("Error parsing options.json: {}", err);
-            return;
-        }
-    };
-
-    // Extract option data from the options.json file.
-	let _floor_area = &options.floor_area;
-	let _stories = &options.stories;
-	let _insulation_u_value = &options.insulation_u_value;
-    let listen_ip = options.listen_ip.clone();
-    let port = options.port.clone();
-    let url = "http://192.168.1.171:8123/api/services/light/turn_on";
-
-    //Tämä pitäisi tulla post kutsuna hass-serveriltä
-    let entity_id = "light.katto1";
-	
-	// Partially mask the hass token for printing.
-	let _masked_token = if options.hass_token.len() > 4 {
-		let last_part = &options.hass_token[options.hass_token.len() - 4..];
-		let masked_part = "*".repeat(options.hass_token.len() - 4);
-		format!("{}{}", masked_part, last_part)
-	} else {
-		// If the token is too short, just print it as is
-		options.hass_token.clone()
-	};
-
-    let ip_port = format!("{}:{}", listen_ip, port);
-
-    // Parse the combined string into a SocketAddr
-    let ip_address: SocketAddr = ip_port.parse().unwrap();
 
     // Initialize the Julia runtime
     let (julia, handle) = match init_julia_runtime() {
@@ -466,54 +664,35 @@ async fn main()  {
     };
     let julia = Arc::new(Mutex::new(julia));
 
+
     // Set up an mpsc channel for graceful shutdown
     let (shutdown_sender, mut shutdown_receiver) = mpsc::channel::<()>(1);
 
-    // Clone the necessary data before moving it into the closure
-    let input_data_clone = input_data.clone();
-
-    // Define the route for handling POST requests to run the Julia task
     let my_route = {
         let julia = julia.clone();
         let predicer_dir = predicer_dir.clone();
-        warp::path!("from_hass" / "post")
+        warp::path!("run_hertta" / "post")
             .and(warp::post())
-            .and(warp::body::json()) // Assuming you're receiving JSON data
-            .map(move |data: input_data::HassData| { // Update the type of 'data' if needed
-                // Clone shared resources
+            .and(warp::body::json())
+            .and_then(move |data: OptimizationInput| {
                 let julia_clone = julia.clone();
                 let predicer_dir_clone = predicer_dir.clone();
-                let url_clone = url.to_string();
-                let entity_id_clone = entity_id.to_string();
-
-                // Use cloned data here
-                let data = input_data_clone.clone();
-
-                // Spawn an asynchronous task to run the Julia task
-                tokio::spawn(async move {
-                    // Call the function to run the Julia task with the provided data
-                    match run_predicer(julia_clone, data, predicer_dir_clone).await {
+    
+                async move {
+                    // Data transformation and prediction logic
+                    let new_outside_inflow: Vec<input_data::TimeSeries> = input_data::convert_to_time_series(data.weather_data.clone());
+                    let mut device_data = data.device_data;
+                    input_data::update_outside_inflow(&mut device_data, new_outside_inflow);
+    
+                    match run_predicer(julia_clone, device_data, predicer_dir_clone).await {
                         Ok(device_control_values) => {
-                            // Iterate through the HashMap
-                            for (device_id, control_values) in device_control_values.iter() {
-                                println!("Device ID: {}", device_id);
-                    
-                                // Iterate through the vector of control values for each device
-                                for (timestamp, value) in control_values {
-                                    println!("  Timestamp: {}, Value: {}", timestamp, value);
-                                }
-                            }
+                            Ok(warp::reply::json(&device_control_values)) // Return the device control values
                         },
                         Err(error) => {
-                            // Handle error
-                            println!("An error occurred: {}", error);
+                            Err(warp::reject::custom(error)) // Handle error
                         }
                     }
-                                      
-                });
-
-                // Respond to the request
-                warp::reply::json(&"Request received, logic is running")
+                }
             })
     };
 
@@ -540,15 +719,54 @@ async fn main()  {
             });
         server
     };
+    
     println!("Server started at {}", ip_address);
 
-    // Run the server and listen for Ctrl+C
+    // Temporarily comment this out to test if it's blocking
+    /*
     tokio::select! {
         _ = server => {},
         _ = tokio::signal::ctrl_c() => {
-            // Trigger shutdown if Ctrl+C is pressed
             let _ = shutdown_sender.send(());
         },
+    }
+    */
+
+    let mut first_iteration = true;
+    loop {
+        tokio::select! {
+            _ = rx_shutdown.recv() => {
+                println!("Shutdown signal received. Exiting loop.");
+                break;
+            }
+            _ = async {
+                println!("Main loop iteration started");
+                
+                if !first_iteration {
+                    task_interval.tick().await;
+                } else {
+                    first_iteration = false;
+                }
+            
+                if let Some(building_data) = rx_building.recv().await {
+                    println!("Received building data: {:?}", building_data);
+                    tx_weather.send(building_data.place.clone()).await.expect("Failed to send place to weather task");
+                } else {
+                    println!("No building data received.");
+                }
+            
+                // Assuming rx_weather_data is another channel you're listening to
+                if let Some(weather_data) = rx_weather_data.recv().await {
+                    println!("Received weather data");
+                    // Here you would handle the received weather data
+                    // ...
+                } else {
+                    println!("No weather data received.");
+                }
+
+                println!("Main loop iteration ended");
+            } => {}
+        }
     }
 
     std::mem::drop(julia);
@@ -556,9 +774,9 @@ async fn main()  {
     .expect("Julia exited with an error")
     .expect("The runtime thread panicked");
 
-    println!("Server has been shut down");
+    println!("Server has been shut down");   
 
-    
+        
 }
 
 

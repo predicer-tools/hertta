@@ -1,5 +1,6 @@
 use std::fmt;
-
+use warp::reject::Reject;
+use std::error::Error;
 
 /// A custom error type for representing errors from Julia.
 ///
@@ -16,6 +17,7 @@ impl fmt::Display for JuliaError {
 }
 
 impl std::error::Error for JuliaError {}
+impl Reject for JuliaError {}
 
 /// Represents errors that occur during the control and execution of various processes.
 ///
@@ -69,3 +71,22 @@ impl From<reqwest::Error> for PostRequestError {
         PostRequestError(format!("HTTP request error: {}", err))
     }
 }
+
+#[derive(Debug)]
+pub struct TaskError {
+    message: String,
+}
+
+impl TaskError {
+    pub fn new(msg: &str) -> TaskError {
+        TaskError { message: msg.to_string() }
+    }
+}
+
+impl fmt::Display for TaskError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl Error for TaskError {}
