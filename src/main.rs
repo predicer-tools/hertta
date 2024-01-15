@@ -4,6 +4,7 @@ mod predicer;
 mod utilities;
 mod input_data;
 mod errors;
+mod event_loop;
 
 use std::env;
 use hertta::julia_interface;
@@ -552,35 +553,6 @@ async fn fetch_building_data_task(tx: mpsc::Sender<input_data::BuildingData>) {
 #[tokio::main]
 async fn main()  {
 
-    // Read JSON file
-    let json_data = match fs::read_to_string("output.json") {
-        Ok(data) => data,
-        Err(e) => {
-            eprintln!("Error reading file: {}", e);
-            return; // Exit the function early on error
-        }
-    };
-
-    // Convert JSON to InputData
-    let input_data = match input_data::json_to_inputdata(&json_data) {
-        Ok(data) => data,
-        Err(e) => {
-            eprintln!("Error parsing JSON: {}", e);
-            return; // Exit the function early on error
-        }
-    };
-
-    //println!("Successfully parsed InputData: {:?}", input_data);
-
-    /*
-
-    let start_time = "2023-12-11 00:00".to_string();
-    let end_time = "2023-12-11 23:00".to_string();
-    let place = "Hervanta".to_string();
-    let _data = weather_data::get_weather_data(start_time, end_time, place);
-
-    */
-
     
     // Parse command line arguments
     let args: Vec<String> = env::args().collect();
@@ -610,25 +582,8 @@ async fn main()  {
     };
 
     // Extract option data from the options.json file.
-	let _floor_area = &options.floor_area;
-	let _stories = &options.stories;
-	let _insulation_u_value = &options.insulation_u_value;
     let listen_ip = options.listen_ip.clone();
     let port = options.port.clone();
-    let url = "http://192.168.1.171:8123/api/services/light/turn_on";
-
-    //Tämä pitäisi tulla post kutsuna hass-serveriltä
-    let entity_id = "light.katto1";
-	
-	// Partially mask the hass token for printing.
-	let _masked_token = if options.hass_token.len() > 4 {
-		let last_part = &options.hass_token[options.hass_token.len() - 4..];
-		let masked_part = "*".repeat(options.hass_token.len() - 4);
-		format!("{}{}", masked_part, last_part)
-	} else {
-		// If the token is too short, just print it as is
-		options.hass_token.clone()
-	};
 
     let ip_port = format!("{}:{}", listen_ip, port);
 
@@ -647,9 +602,6 @@ async fn main()  {
 
     // Set up an mpsc channel for graceful shutdown
     let (shutdown_sender, mut shutdown_receiver) = mpsc::channel::<()>(1);
-
-    // Clone the necessary data before moving it into the closure
-    let input_data_clone = input_data.clone();
 
     // Define the route for handling POST requests to run the Julia task
     let my_route = {
@@ -704,25 +656,25 @@ async fn main()  {
             })
     };
 
-    // Combine the routes
     let routes = my_route.or(shutdown_route);
 
-    // Start the Warp server with graceful shutdown
-    let server = {
-        let (_, server) = warp::serve(routes)
-            .bind_with_graceful_shutdown(ip_address, async move {
-                shutdown_receiver.recv().await;
-            });
-        server
-    };
-    println!("Server started at {}", ip_address);
+    // Start the Warp server and extract only the future part of the tuple
+    let (_, server_future) = warp::serve(routes)
+        .bind_with_graceful_shutdown(ip_address, async move {
+            shutdown_receiver.recv().await;
+        });
 
-    // Run the server and listen for Ctrl+C
+    let event_loop_task = event_loop::event_loop();
+
+    // Run the server future, event loop, and listen for Ctrl+C concurrently
     tokio::select! {
-        _ = server => {},
+        _ = server_future => {
+            println!("Server has been shut down");
+        },
+        _ = event_loop_task => {},
         _ = tokio::signal::ctrl_c() => {
-            // Trigger shutdown if Ctrl+C is pressed
-            let _ = shutdown_sender.send(());
+            println!("Ctrl+C pressed. Shutting down...");
+            shutdown_sender.send(()).await.expect("Failed to send shutdown signal");
         },
     }
 
