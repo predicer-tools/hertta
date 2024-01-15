@@ -189,6 +189,12 @@ pub struct BuildingData {
     pub input_data: InputData,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct OptimizationData {
+    pub weather_data: WeatherData,
+    pub device_data: BuildingData,
+}
+
 pub fn write_to_json_file_bd(data: &BuildingData, file_path: &str) -> Result<(), Box<dyn Error>> {
     // Serialize the data to JSON
     let json = serde_json::to_string_pretty(data)?;

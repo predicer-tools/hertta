@@ -178,11 +178,11 @@ pub struct GenConstraint {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct WeatherData {
-    place: String,
-    weather_data: Vec<(String, f64)>,
+    pub place: String,
+    pub weather_data: Vec<(String, f64)>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BuildingData {
     // Fields representing weather data
     pub place: String,
@@ -198,7 +198,26 @@ impl BuildingData {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct OptimizationData {
+    pub weather_data: WeatherData,
+    pub device_data: BuildingData,
+}
+
 pub fn write_to_json_file_bd(data: &BuildingData, file_path: &str) -> Result<(), Box<dyn Error>> {
+    // Serialize the data to JSON
+    let json = serde_json::to_string_pretty(data)?;
+
+    // Open a file in write mode
+    let mut file = File::create(file_path)?;
+
+    // Write the JSON data to the file
+    file.write_all(json.as_bytes())?;
+
+    Ok(())
+}
+
+pub fn write_to_json_file_od(data: &OptimizationData, file_path: &str) -> Result<(), Box<dyn Error>> {
     // Serialize the data to JSON
     let json = serde_json::to_string_pretty(data)?;
 
