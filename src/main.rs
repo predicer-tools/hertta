@@ -570,7 +570,7 @@ async fn main()  {
         }
     };
 
-    println!("Successfully parsed InputData: {:?}", input_data);
+    //println!("Successfully parsed InputData: {:?}", input_data);
 
     /*
 
@@ -653,12 +653,36 @@ async fn main()  {
 
     // Define the route for handling POST requests to run the Julia task
     let my_route = {
+        let julia = julia.clone();
+        let predicer_dir = predicer_dir.clone();
         warp::path!("from_hass" / "post")
             .and(warp::post())
             .and(warp::body::json()) // This will parse the body as JSON
             .map(move |data: input_data::OptimizationData| { // Replace with the appropriate type
+
+                let julia_clone = julia.clone();
+                let predicer_dir_clone = predicer_dir.clone();
+
                 // Process the received data
                 println!("Received data: {:?}", data);
+
+                let input_data = data.device_data.input_data.clone();
+
+                // Spawn an asynchronous task to run the Julia task
+                tokio::spawn(async move {
+                    // Call the function to run the Julia task with the provided data
+                    match run_predicer(julia_clone, input_data, predicer_dir_clone).await {
+                        Ok(device_control_values) => {
+                            // Iterate through the HashMap
+                            println!("Ok")
+                        },
+                        Err(error) => {
+                            // Handle error
+                            println!("An error occurred: {}", error);
+                        }
+                    }
+                                      
+                });
 
                 // Your logic here...
                 // For example, you might want to pass this data to a function
