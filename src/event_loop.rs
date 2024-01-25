@@ -1,4 +1,4 @@
-use tokio::time::{self, Duration, Instant};
+use tokio::time::{self, Duration, Interval, Instant};
 use serde_json::json;
 use tokio::sync::{mpsc, broadcast};
 use crate::errors;
@@ -6,18 +6,15 @@ use crate::input_data;
 use std::error::Error;
 use chrono::{Utc, Duration as ChronoDuration, TimeZone, Timelike};
 use std::collections::HashMap;
+use crate::input_data::{OptimizationData, BuildingData, WeatherData};
 
-pub async fn event_loop() {
-
+pub async fn event_loop(tx_optimization: mpsc::Sender<input_data::OptimizationData>) {
     // Broadcast channel for building data task
     let (tx_building, _) = broadcast::channel(32);
-    // Clone the sender for the building data task
     let tx_building_for_task = tx_building.clone();
 
     // Channel for weather data task
     let (tx_weather, mut rx_weather) = mpsc::channel(32);
-    // Channel for optimization task
-    let (tx_optimization, mut rx_optimization) = mpsc::channel(32);
 
     // Spawn the building data task with the cloned sender
     tokio::spawn(async move {
@@ -25,7 +22,7 @@ pub async fn event_loop() {
     });
 
     // Subscribe to the broadcast channel for weather data task
-    let mut rx_building_weather = tx_building.subscribe();
+    let rx_building_weather = tx_building.subscribe();
 
     // Spawn the weather data task
     tokio::spawn(async move {
@@ -35,30 +32,35 @@ pub async fn event_loop() {
     // Subscribe to the broadcast channel for the event loop
     let mut rx_building = tx_building.subscribe();
 
-    // Spawn the optimization task
-    tokio::spawn(async move {
-        run_optimization_task(rx_optimization).await;
-    });
-
-    // Variables to store the latest data
     let mut last_building_data: Option<input_data::BuildingData> = None;
     let mut last_weather_data: Option<input_data::WeatherData> = None;
+
+    let mut interval: Option<Interval> = None; // Initialize interval as None
 
     loop {
         tokio::select! {
             Ok(building_data) = rx_building.recv() => {
+                println!("Received building data");
                 last_building_data = Some(building_data);
             },
             Some(weather_data) = rx_weather.recv() => {
+                println!("Received weather data");
                 last_weather_data = Some(weather_data);
             },
-            // Periodic tasks in the event loop
-            _ = tokio::time::sleep(Duration::from_secs(20)) => {
-                // Check if both weather and building data are available
+            _ = if interval.is_none() {
+                // First iteration, no interval
+                Box::pin(async {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }) as Pin<Box<dyn Future<Output = ()>>>
+            } else {
+                // Subsequent iterations, 3-minute interval
+                Box::pin(async {
+                    interval.as_mut().unwrap().tick().await;
+                }) as Pin<Box<dyn Future<Output = ()>>>
+            } => {
                 if let (Some(weather_data), Some(building_data)) = (&last_weather_data, &last_building_data) {
-                    println!("Optimization started.");
-                    // Construct OptimizationData and send to optimization task
-                    let optimization_data = input_data::OptimizationData {
+                    println!("Optimization task triggered.");
+                    let optimization_data = OptimizationData {
                         weather_data: weather_data.clone(),
                         device_data: building_data.clone(),
                     };
@@ -66,8 +68,13 @@ pub async fn event_loop() {
                         eprintln!("Failed to send optimization data: {:?}", e);
                     }
                 }
-                println!("Event loop iteration");
-            }
+            },
+            // Other arms of select...
+        }
+        
+        // Set up the interval after the first iteration
+        if interval.is_none() {
+            interval = Some(time::interval(Duration::from_secs(180)));
         }
     }
 }
@@ -93,40 +100,6 @@ async fn run_optimization(optimization_data: input_data::OptimizationData)
         }
     } else {
         Err(Box::new(errors::TaskError::new("Response returned unsuccessful status")))
-    }
-}
-
-// Async function to run optimization and process results
-async fn run_optimization_task(mut rx: mpsc::Receiver<input_data::OptimizationData>) {
-    let client = reqwest::Client::new();
-
-    while let Some(optimization_input) = rx.recv().await {
-        match run_optimization(optimization_input).await {
-            Ok(device_control_values) => {
-                println!("Results received.")
-                // Handle the successful optimization result
-                // Send the results to another server
-                /* 
-                let url = "http://localhost:8000/from_hertta/optimization_results";
-
-                match client.post(url)
-                            .json(&device_control_values)
-                            .send()
-                            .await {
-                    Ok(response) => {
-                        if response.status().is_success() {
-                            println!("Successfully sent optimization results");
-                        } else {
-                            eprintln!("Failed to send optimization results, received status: {}", response.status());
-                        }
-                    }
-                    Err(e) => eprintln!("Failed to send optimization results: {:?}", e),
-                }
-
-                */
-            },
-            Err(e) => eprintln!("Optimization task failed: {:?}", e),
-        }
     }
 }
 
@@ -163,12 +136,17 @@ async fn fetch_weather_data(start_time: String, end_time: String, place: String)
 }
 
 async fn fetch_weather_data_task(mut rx: broadcast::Receiver<input_data::BuildingData>, tx: mpsc::Sender<input_data::WeatherData>) {
-    loop {
-        let mut received_data = false;
+    let mut interval = None; // Initialize interval as None
 
-        while let Ok(building_data) = rx.recv().await {
-            received_data = true;
+    loop {
+        // Wait for the next building data
+        if let Ok(building_data) = rx.recv().await {
             println!("fetch_weather_data_task: Received place: {}", building_data.place);
+
+            // Start the interval after receiving the first building data
+            if interval.is_none() {
+                interval = Some(time::interval(Duration::from_secs(60)));
+            }
 
             let now = Utc::now();
             let start_time = now.with_minute(0).unwrap().with_second(0).unwrap().with_nanosecond(0).unwrap();
@@ -191,13 +169,14 @@ async fn fetch_weather_data_task(mut rx: broadcast::Receiver<input_data::Buildin
                     eprintln!("fetch_weather_data_task: Failed to fetch weather data: {:?}", e);
                 },
             }
-        }
-
-        if !received_data {
+        } else {
             println!("fetch_weather_data_task: No place received.");
         }
 
-        // Additional code or sleep here if necessary to prevent tight loop
+        // If an interval is active, wait for its tick
+        if let Some(ref mut interval) = interval {
+            interval.tick().await;
+        }
     }
 }
 
@@ -230,8 +209,15 @@ pub async fn fetch_building_data() -> Result<input_data::BuildingData, Box<dyn E
 
 // Async function to fetch building data from another server
 async fn fetch_building_data_task(tx: broadcast::Sender<input_data::BuildingData>) {
+    let mut interval = None; // Initialize interval as None
+
     loop {
         println!("fetch_building_data_task: Attempting to fetch building data.");
+
+        // Start the interval after the first iteration
+        if interval.is_none() {
+            interval = Some(time::interval(Duration::from_secs(60)));
+        }
 
         match fetch_building_data().await {
             Ok(building_data) => {
@@ -244,7 +230,9 @@ async fn fetch_building_data_task(tx: broadcast::Sender<input_data::BuildingData
             Err(e) => eprintln!("fetch_building_data_task: Failed to fetch building data: {:?}", e),
         }
 
-        println!("fetch_building_data_task: Waiting for next interval...");
-        time::sleep(Duration::from_secs(5)).await; // Adjust the interval as needed
+        // If an interval is active, wait for its tick
+        if let Some(ref mut interval) = interval {
+            interval.tick().await;
+        }
     }
 }

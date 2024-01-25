@@ -329,7 +329,6 @@ async fn run_predicer(
     // Return the successful result.
     Ok(result)
 
-
 }
 
 async fn control_values_to_hass(result: Vec<(String, f64)>, entity_id: &str, server_1_url: &str) -> Result<(), reqwest::Error> {
@@ -386,60 +385,6 @@ struct OptimizationResult {
     data: f64,
 }
 
-async fn run_optimization(optimization_data: input_data::OptimizationData) 
-    -> Result<HashMap<String, Vec<(String, f64)>>, Box<dyn Error + Send>> {
-
-    let client = reqwest::Client::new();
-    let url = "http://localhost:8002/run_hertta/post";
-
-    let response = match client.post(url)
-                                .json(&optimization_data)
-                                .send()
-                                .await {
-        Ok(res) => res,
-        Err(e) => return Err(Box::new(errors::TaskError::new(&format!("Network request failed: {}", e)))),
-    };
-
-    if response.status().is_success() {
-        match response.json::<HashMap<String, Vec<(String, f64)>>>().await {
-            Ok(device_control_values) => Ok(device_control_values),
-            Err(e) => Err(Box::new(errors::TaskError::new(&format!("Failed to parse JSON response: {}", e)))),
-        }
-    } else {
-        Err(Box::new(errors::TaskError::new("Response returned unsuccessful status")))
-    }
-}
-
-// Async function to run optimization and process results
-async fn run_optimization_task(mut rx: mpsc::Receiver<input_data::OptimizationData>) {
-    let client = reqwest::Client::new();
-
-    while let Some(optimization_input) = rx.recv().await {
-        match run_optimization(optimization_input).await {
-            Ok(device_control_values) => {
-                // Handle the successful optimization result
-                // Send the results to another server
-                let url = "http://localhost:8000/from_hertta/optimization_results";
-
-                match client.post(url)
-                            .json(&device_control_values)
-                            .send()
-                            .await {
-                    Ok(response) => {
-                        if response.status().is_success() {
-                            println!("Successfully sent optimization results");
-                        } else {
-                            eprintln!("Failed to send optimization results, received status: {}", response.status());
-                        }
-                    }
-                    Err(e) => eprintln!("Failed to send optimization results: {:?}", e),
-                }
-            },
-            Err(e) => eprintln!("Optimization task failed: {:?}", e),
-        }
-    }
-}
-
 #[tokio::main]
 async fn main()  {
 
@@ -492,49 +437,30 @@ async fn main()  {
 
     // Set up an mpsc channel for graceful shutdown
     let (shutdown_sender, mut shutdown_receiver) = mpsc::channel::<()>(1);
+    let (tx_optimization, mut rx_optimization) = mpsc::channel::<input_data::OptimizationData>(32);
 
-    // Define the route for handling POST requests to run the Julia task
-    let my_route = {
-        let julia = julia.clone();
-        let predicer_dir = predicer_dir.clone();
-        warp::path!("from_hass" / "post")
-            .and(warp::post())
-            .and(warp::body::json()) // This will parse the body as JSON
-            .map(move |data: input_data::OptimizationData| { // Replace with the appropriate type
+    // Define the asynchronous task to handle optimization
+    let julia_clone = julia.clone();
+    let predicer_dir_clone = predicer_dir.clone();
 
-                let julia_clone = julia.clone();
-                let predicer_dir_clone = predicer_dir.clone();
+    let optimization_task = tokio::spawn(async move {
+        println!("Optimization task started and waiting for data...");
+        while let Some(optimization_data) = rx_optimization.recv().await {
+            println!("Received optimization data, running predicer...");
+            
+            match run_predicer(julia_clone.clone(), optimization_data.device_data.input_data.clone(), predicer_dir_clone.clone()).await {
+                Ok(device_control_values) => {
+                    // Process the results
+                    println!("Optimization successful");
+                },
+                Err(error) => {
+                    // Handle error
+                    println!("An error occurred in optimization: {}", error);
+                }
+            }
+        }
+    });
 
-                // Process the received data
-                println!("Received data: {:?}", data);
-
-                let input_data = data.device_data.input_data.clone();
-
-                // Spawn an asynchronous task to run the Julia task
-                tokio::spawn(async move {
-                    // Call the function to run the Julia task with the provided data
-                    match run_predicer(julia_clone, input_data, predicer_dir_clone).await {
-                        Ok(device_control_values) => {
-                            // Iterate through the HashMap
-                            println!("Ok")
-                        },
-                        Err(error) => {
-                            // Handle error
-                            println!("An error occurred: {}", error);
-                        }
-                    }
-                                      
-                });
-
-                // Your logic here...
-                // For example, you might want to pass this data to a function
-
-                // Respond to the request
-                warp::reply::json(&"Request received, processing data")
-            })
-    };
-
-    // Define the route for triggering a graceful shutdown
     let shutdown_route = {
         let shutdown_sender_clone = shutdown_sender.clone();
         warp::path!("shutdown")
@@ -546,25 +472,23 @@ async fn main()  {
             })
     };
 
-    let routes = my_route.or(shutdown_route);
+    let routes = shutdown_route;
 
     // Start the Warp server and extract only the future part of the tuple
     let (_, server_future) = warp::serve(routes)
-        .bind_with_graceful_shutdown(ip_address, async move {
-            shutdown_receiver.recv().await;
-        });
+    .bind_with_graceful_shutdown(ip_address, async move {
+        shutdown_receiver.recv().await;
+    });
 
-    let event_loop_task = event_loop::event_loop();
+    let event_loop_task = event_loop::event_loop(tx_optimization);
 
-    // Run the server future, event loop, and listen for Ctrl+C concurrently
     tokio::select! {
-        _ = server_future => {
-            println!("Server has been shut down");
+        _ = event_loop_task => {
+            println!("Event loop has been shut down");
         },
-        _ = event_loop_task => {},
         _ = tokio::signal::ctrl_c() => {
             println!("Ctrl+C pressed. Shutting down...");
-            shutdown_sender.send(()).await.expect("Failed to send shutdown signal");
+            // Perform any necessary shutdown procedures here
         },
     }
 
