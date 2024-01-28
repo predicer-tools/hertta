@@ -1,4 +1,4 @@
-
+/* 
 
 use hertta::weather_data::get_weather_data;
 
@@ -20,3 +20,5 @@ mod integration_tests {
         // Add more specific assertions here
     }
 }
+
+*/

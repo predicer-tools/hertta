@@ -387,7 +387,6 @@ struct OptimizationResult {
 
 #[tokio::main]
 async fn main()  {
-
     
     // Parse command line arguments
     let args: Vec<String> = env::args().collect();

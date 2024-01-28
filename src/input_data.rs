@@ -178,8 +178,8 @@ pub struct GenConstraint {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct WeatherData {
-    place: String,
-    weather_data: Vec<(String, f64)>,
+    pub place: String,
+    pub weather_data: Vec<(String, f64)>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -190,9 +190,23 @@ pub struct BuildingData {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ElectricityPriceData {
+    // Fields representing weather data
+    pub country: String,
+    pub price_data: Vec<ElectricityPricePoint>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ElectricityPricePoint {
+    pub timestamp: i64,
+    pub price: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct OptimizationData {
     pub weather_data: WeatherData,
     pub device_data: BuildingData,
+    pub elec_price_data: ElectricityPriceData,
 }
 
 pub fn write_to_json_file_bd(data: &BuildingData, file_path: &str) -> Result<(), Box<dyn Error>> {

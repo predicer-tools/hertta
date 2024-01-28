@@ -4,9 +4,10 @@ use tokio::sync::{mpsc, broadcast};
 use crate::errors;
 use crate::input_data;
 use std::error::Error;
-use chrono::{Utc, Duration as ChronoDuration, TimeZone, Timelike};
+use chrono::{Utc, Duration as ChronoDuration, TimeZone, Timelike, NaiveDateTime};
 use std::collections::HashMap;
-use crate::input_data::{OptimizationData, BuildingData, WeatherData};
+use crate::input_data::{OptimizationData, BuildingData, WeatherData, ElectricityPriceData, ElectricityPricePoint};
+use std::convert::From;
 
 pub async fn event_loop(tx_optimization: mpsc::Sender<input_data::OptimizationData>) {
     // Broadcast channel for building data task
@@ -16,9 +17,19 @@ pub async fn event_loop(tx_optimization: mpsc::Sender<input_data::OptimizationDa
     // Channel for weather data task
     let (tx_weather, mut rx_weather) = mpsc::channel(32);
 
+    // Channel for electricity price data task
+    let (tx_elec_price, mut rx_elec_price) = mpsc::channel(32);
+
+    let country = "fi".to_string(); // Example country
+
     // Spawn the building data task with the cloned sender
     tokio::spawn(async move {
         fetch_building_data_task(tx_building_for_task).await;
+    });
+
+    // Spawn the electricity price data task
+    tokio::spawn(async move {
+        fetch_electricity_price_task(tx_elec_price, country).await;
     });
 
     // Subscribe to the broadcast channel for weather data task
@@ -34,6 +45,8 @@ pub async fn event_loop(tx_optimization: mpsc::Sender<input_data::OptimizationDa
 
     let mut last_building_data: Option<input_data::BuildingData> = None;
     let mut last_weather_data: Option<input_data::WeatherData> = None;
+    let mut last_elec_price_data: Option<input_data::ElectricityPriceData> = None;
+    let mut initial_data_received = false; 
 
     let mut interval: Option<Interval> = None; // Initialize interval as None
 
@@ -42,96 +55,53 @@ pub async fn event_loop(tx_optimization: mpsc::Sender<input_data::OptimizationDa
             Ok(building_data) = rx_building.recv() => {
                 println!("Received building data");
                 last_building_data = Some(building_data);
+                if last_weather_data.is_some() && last_elec_price_data.is_some() {
+                    initial_data_received = true;
+                }
             },
             Some(weather_data) = rx_weather.recv() => {
                 println!("Received weather data");
                 last_weather_data = Some(weather_data);
+                if last_building_data.is_some() && last_elec_price_data.is_some() {
+                    initial_data_received = true;
+                }
             },
-            _ = if interval.is_none() {
-                // First iteration, no interval
-                Box::pin(async {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }) as Pin<Box<dyn Future<Output = ()>>>
-            } else {
-                // Subsequent iterations, 3-minute interval
+            Some(elec_price_data) = rx_elec_price.recv() => {
+                println!("Received electricity price data");
+                last_elec_price_data = Some(elec_price_data);
+                if last_building_data.is_some() && last_weather_data.is_some() {
+                    initial_data_received = true;
+                }
+            },
+            _ = if initial_data_received {
+                // Once initial data is received, use the interval
                 Box::pin(async {
                     interval.as_mut().unwrap().tick().await;
                 }) as Pin<Box<dyn Future<Output = ()>>>
+            } else {
+                // Before initial data, just sleep
+                Box::pin(async {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }) as Pin<Box<dyn Future<Output = ()>>>
             } => {
-                if let (Some(weather_data), Some(building_data)) = (&last_weather_data, &last_building_data) {
+                if let (Some(weather_data), Some(building_data), Some(elec_price_data)) = (&last_weather_data, &last_building_data, &last_elec_price_data) {
                     println!("Optimization task triggered.");
                     let optimization_data = OptimizationData {
                         weather_data: weather_data.clone(),
                         device_data: building_data.clone(),
+                        elec_price_data: elec_price_data.clone(),
                     };
                     if let Err(e) = tx_optimization.send(optimization_data).await {
                         eprintln!("Failed to send optimization data: {:?}", e);
                     }
                 }
             },
-            // Other arms of select...
         }
-        
+    
         // Set up the interval after the first iteration
-        if interval.is_none() {
+        if interval.is_none() && initial_data_received {
             interval = Some(time::interval(Duration::from_secs(180)));
         }
-    }
-}
-
-async fn run_optimization(optimization_data: input_data::OptimizationData) 
-    -> Result<HashMap<String, Vec<(String, f64)>>, Box<dyn Error + Send>> {
-
-    let client = reqwest::Client::new();
-    let url = "http://localhost:8002/run_hertta/post";
-
-    let response = match client.post(url)
-                                .json(&optimization_data)
-                                .send()
-                                .await {
-        Ok(res) => res,
-        Err(e) => return Err(Box::new(errors::TaskError::new(&format!("Network request failed: {}", e)))),
-    };
-
-    if response.status().is_success() {
-        match response.json::<HashMap<String, Vec<(String, f64)>>>().await {
-            Ok(device_control_values) => Ok(device_control_values),
-            Err(e) => Err(Box::new(errors::TaskError::new(&format!("Failed to parse JSON response: {}", e)))),
-        }
-    } else {
-        Err(Box::new(errors::TaskError::new("Response returned unsuccessful status")))
-    }
-}
-
-async fn fetch_weather_data(start_time: String, end_time: String, place: String) 
-    -> Result<input_data::WeatherData, Box<dyn Error + Send>> {
-    
-    println!("Fetching weather data for place: {}, start time: {}, end time: {}", place, start_time, end_time);
-
-    let client = reqwest::Client::new();
-    let url = "http://localhost:8001/get_weather_data";
-    let params = [("start_time", &start_time), ("end_time", &end_time), ("place", &place)];
-
-    let response = match client.get(url).query(&params).send().await {
-        Ok(res) => {
-            println!("Received response from weather data server.");
-            res
-        },
-        Err(e) => {
-            println!("Network request for weather data failed: {}", e);
-            return Err(Box::new(errors::TaskError::new(&format!("Network request failed: {}", e))));
-        },
-    };
-
-    match response.json::<input_data::WeatherData>().await {
-        Ok(weather_data) => {
-            println!("Successfully parsed weather data.");
-            Ok(weather_data)
-        },
-        Err(e) => {
-            println!("Failed to parse weather data JSON response: {}", e);
-            Err(Box::new(errors::TaskError::new(&format!("Failed to parse JSON response: {}", e))))
-        },
     }
 }
 
@@ -180,6 +150,101 @@ async fn fetch_weather_data_task(mut rx: broadcast::Receiver<input_data::Buildin
     }
 }
 
+async fn fetch_weather_data(start_time: String, end_time: String, place: String) 
+    -> Result<input_data::WeatherData, Box<dyn Error + Send>> {
+    
+    println!("Fetching weather data for place: {}, start time: {}, end time: {}", place, start_time, end_time);
+
+    let client = reqwest::Client::new();
+    let url = "http://localhost:8001/get_weather_data";
+    let params = [("start_time", &start_time), ("end_time", &end_time), ("place", &place)];
+
+    let response = match client.get(url).query(&params).send().await {
+        Ok(res) => {
+            println!("Received response from weather data server.");
+            res
+        },
+        Err(e) => {
+            println!("Network request for weather data failed: {}", e);
+            return Err(Box::new(errors::TaskError::new(&format!("Network request failed: {}", e))));
+        },
+    };
+
+    match response.json::<input_data::WeatherData>().await {
+        Ok(weather_data) => {
+            println!("Successfully parsed weather data.");
+            Ok(weather_data)
+        },
+        Err(e) => {
+            println!("Failed to parse weather data JSON response: {}", e);
+            Err(Box::new(errors::TaskError::new(&format!("Failed to parse JSON response: {}", e))))
+        },
+    }
+}
+
+async fn fetch_electricity_prices(start_time: String, end_time: String, country: String) 
+    -> Result<ElectricityPriceData, Box<dyn Error + Send>> {
+    
+    println!("Fetching electricity price data for country: {}, start time: {}, end time: {}", country, start_time, end_time);
+
+    let client = reqwest::Client::new();
+    let url = format!("https://dashboard.elering.ee/api/nps/price?start={}&end={}", start_time, end_time);
+    
+    let response = client.get(&url).header("accept", "*/*").send().await
+        .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+
+    println!("Received response from electricity price server.");
+
+    let full_data: HashMap<String, serde_json::Value> = response.json().await
+        .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+
+    println!("Successfully parsed electricity price data.");
+
+    if let Some(data) = full_data.get("data") {
+        if let Some(country_data) = data.get(&country.to_lowercase()) {
+            let price_data: Vec<ElectricityPricePoint> = serde_json::from_value(country_data.clone())
+                .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+
+            Ok(ElectricityPriceData {
+                country: country.clone(),
+                price_data,
+            })
+        } else {
+            Err(Box::new(errors::TaskError::new(&format!("No data found for country: {}", country))))
+        }
+    } else {
+        Err(Box::new(errors::TaskError::new("No data field found in response")))
+    }
+}
+
+
+async fn fetch_electricity_price_task(
+    tx: mpsc::Sender<input_data::ElectricityPriceData>, 
+    country: String,
+) {
+    let mut interval = time::interval(Duration::from_secs(60)); // Fetch data every 60 seconds
+    let start_time = "2020-05-31T20:59:59.999Z";
+    let end_time = "2020-06-30T20:59:59.999Z";
+
+    loop {
+        println!("fetch_electricity_price_task: Fetching electricity price data for country: {}", country);
+        let fetched_data = fetch_electricity_prices(start_time.to_string(), end_time.to_string(), country.clone()).await;
+
+        match fetched_data {
+            Ok(price_data) => {
+                println!("fetch_electricity_price_task: Electricity price data fetched successfully for country: {}", country);
+                tx.send(price_data).await.expect("Failed to send electricity price data");
+            },
+            Err(e) => {
+                eprintln!("fetch_electricity_price_task: Failed to fetch electricity price data: {:?}", e);
+            },
+        }
+
+        interval.tick().await; // Wait for the next interval tick before next fetch
+    }
+}
+
+
 pub async fn fetch_building_data() -> Result<input_data::BuildingData, Box<dyn Error + Send>> {
 
     let url = "http://localhost:8000/to_hertta/building_data"; // Replace with the actual URL
@@ -204,8 +269,6 @@ pub async fn fetch_building_data() -> Result<input_data::BuildingData, Box<dyn E
         },
     }
 }
-
-//Channel approach
 
 // Async function to fetch building data from another server
 async fn fetch_building_data_task(tx: broadcast::Sender<input_data::BuildingData>) {
@@ -233,6 +296,101 @@ async fn fetch_building_data_task(tx: broadcast::Sender<input_data::BuildingData
         // If an interval is active, wait for its tick
         if let Some(ref mut interval) = interval {
             interval.tick().await;
+        }
+    }
+}
+
+/* 
+async fn run_bd_test_with_mock_data(mock_file_path: &str) -> Result<(), String> {
+    let (tx, rx) = broadcast::channel(1);
+
+    // Run the task with the mock function
+    tokio::spawn(async move {
+        fetch_building_data_task(tx, || mock_fetch_building_data(mock_file_path)).await;
+    });
+
+    // Check if data is received
+    match rx.recv().await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!("Test failed: {:?}", e)),
+    }
+}
+
+async fn mock_fetch_building_data(file_path: &str) -> Result<input_data::BuildingData, Box<dyn Error + Send>> {
+    match fs::read_to_string(file_path) {
+        Ok(json_str) => match serde_json::from_str(&json_str) {
+            Ok(building_data) => Ok(building_data),
+            Err(e) => Err(Box::new(e)),
+        },
+        Err(e) => Err(Box::new(e)),
+    }
+}
+
+#[tokio::test]
+async fn test_scenario_success() {
+    let mock_file_path = "tests/mocks/bd_success.json";
+    if let Err(e) = run_bd_test_with_mock_data(mock_file_path).await {
+        panic!("{}", e);
+    }
+}
+
+#[tokio::test]
+async fn test_scenario_failure() {
+    let mock_file_path = "tests/mocks/bd_no_contains_reserves.json";
+    if let Err(e) = run_bd_test_with_mock_data(mock_file_path).await {
+        panic!("{}", e);
+    }
+}
+
+*/
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc;
+    use tokio::time::{self, Duration};
+
+    #[tokio::test]
+    async fn test_fetch_electricity_prices() {
+        let start_time = "2020-05-31T20:59:59.999Z".to_string();
+        let end_time = "2020-06-30T20:59:59.999Z".to_string();
+        let country = "fi".to_string();
+
+        match fetch_electricity_prices(start_time, end_time, country).await {
+            Ok(data) => {
+                println!("Success! Data: {:?}", data);
+                assert!(!data.price_data.is_empty(), "Price data should not be empty");
+            },
+            Err(e) => {
+                panic!("Test failed with error: {:?}", e);
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_electricity_price_task() {
+        // Set up a mock sender channel
+        let (tx, mut rx) = mpsc::channel(1);
+        
+        // Mock country input
+        let country = String::from("fi");
+
+        // Start the task in a new task
+        tokio::spawn(async move {
+            fetch_electricity_price_task(tx, country).await;
+        });
+
+        // Mock wait time or trigger to simulate the passage of time or other conditions
+        time::sleep(Duration::from_secs(1)).await;
+
+        // Test the expected behavior
+        match rx.recv().await {
+            Some(price_data) => {
+                // Assert conditions or inspect the `price_data` received
+                assert!(!price_data.price_data.is_empty(), "Price data should not be empty");
+                // ... more assertions as needed
+            },
+            None => panic!("No data received"),
         }
     }
 }
