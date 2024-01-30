@@ -10,7 +10,7 @@ use std::env;
 use hertta::julia_interface;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, AUTHORIZATION};
 use serde_json::json;
-use tokio::time::{self, Duration, Instant};
+//use tokio::time::{self, Duration, Instant};
 use warp::Filter;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -20,7 +20,7 @@ use jlrs::prelude::*;
 use predicer::RunPredicer;
 use jlrs::error::JlrsError;
 use tokio::task::JoinHandle;
-use std::fmt;
+//use std::fmt;
 use reqwest::Client;
 use tokio::sync::Mutex;
 use std::sync::Arc;
@@ -30,10 +30,10 @@ use std::error::Error;
 use std::fs::File;
 use std::io::Write;
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::join;
-use warp::reject::Reject;
-use chrono::{Utc, Duration as ChronoDuration, TimeZone, Timelike};
+//use std::time::{SystemTime, UNIX_EPOCH};
+//use tokio::join;
+//use warp::reject::Reject;
+//use chrono::{Utc, Duration as ChronoDuration, TimeZone, Timelike};
 
 /// This function is used to make post request to Home Assistant in the Hertta development phase
 /// 
@@ -59,7 +59,7 @@ use chrono::{Utc, Duration as ChronoDuration, TimeZone, Timelike};
 async fn _make_post_request(url: &str, entity_id: &str, token: &str, brightness: f64) -> Result<(), errors::PostRequestError> {
     
     // Check if the token is valid for HTTP headers
-    if !utilities::is_valid_http_header_value(token) {
+    if !utilities::_is_valid_http_header_value(token) {
         return Err(errors::PostRequestError("Invalid token header".to_string()));
     }
     
@@ -331,7 +331,7 @@ async fn run_predicer(
 
 }
 
-async fn control_values_to_hass(result: Vec<(String, f64)>, entity_id: &str, server_1_url: &str) -> Result<(), reqwest::Error> {
+async fn _control_values_to_hass(result: Vec<(String, f64)>, entity_id: &str, server_1_url: &str) -> Result<(), reqwest::Error> {
     // Create JSON payload
     let json_payload = json!({
         "entity_id": entity_id,
@@ -352,12 +352,8 @@ async fn control_values_to_hass(result: Vec<(String, f64)>, entity_id: &str, ser
 // Configuration options saved into a json file in the addon data directory.
 #[derive(Deserialize, Debug)]
 struct Options {
-	floor_area: i32,
-	stories: i32,
-	insulation_u_value: f32,
     listen_ip: String,
     port: String,
-    hass_token: String,
 }
 
 pub fn write_to_json_file(data: &input_data::InputData, file_path: &str) -> Result<(), Box<dyn Error>> {
@@ -442,13 +438,17 @@ async fn main()  {
     let julia_clone = julia.clone();
     let predicer_dir_clone = predicer_dir.clone();
 
-    let optimization_task = tokio::spawn(async move {
+    let _optimization_task = tokio::spawn(async move {
         println!("Optimization task started and waiting for data...");
         while let Some(optimization_data) = rx_optimization.recv().await {
             println!("Received optimization data, running predicer...");
+
+            let mut input_data = optimization_data.device_data.input_data.clone();
+            let weather_data = input_data::convert_to_time_series(optimization_data.weather_data.weather_data.clone());
+            input_data::update_outside_inflow(&mut input_data, weather_data);
             
             match run_predicer(julia_clone.clone(), optimization_data.device_data.input_data.clone(), predicer_dir_clone.clone()).await {
-                Ok(device_control_values) => {
+                Ok(_device_control_values) => {
                     // Process the results
                     println!("Optimization successful");
                 },
@@ -474,7 +474,7 @@ async fn main()  {
     let routes = shutdown_route;
 
     // Start the Warp server and extract only the future part of the tuple
-    let (_, server_future) = warp::serve(routes)
+    let (_, _server_future) = warp::serve(routes)
     .bind_with_graceful_shutdown(ip_address, async move {
         shutdown_receiver.recv().await;
     });

@@ -1,9 +1,15 @@
 
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
-use std::fs::File;
-use std::error::Error;
-use std::io::Write;
+//use std::fs::File;
+//use std::error::Error;
+//use std::io::Write;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PricePoint {
+    pub timestamp: i64,
+    pub price: f64,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InputData {
@@ -198,7 +204,7 @@ pub struct ElectricityPriceData {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ElectricityPricePoint {
-    pub timestamp: i64,
+    pub timestamp: String,
     pub price: f64,
 }
 
@@ -209,6 +215,7 @@ pub struct OptimizationData {
     pub elec_price_data: ElectricityPriceData,
 }
 
+/* 
 pub fn write_to_json_file_bd(data: &BuildingData, file_path: &str) -> Result<(), Box<dyn Error>> {
     // Serialize the data to JSON
     let json = serde_json::to_string_pretty(data)?;
@@ -221,14 +228,15 @@ pub fn write_to_json_file_bd(data: &BuildingData, file_path: &str) -> Result<(),
 
     Ok(())
 }
+*/
 
-pub fn convert_to_time_series(data: WeatherData) -> Vec<TimeSeries> {
+pub fn convert_to_time_series(data: Vec<(String, f64)>) -> Vec<TimeSeries> {
     let scenarios = vec!["s1".to_string(), "s2".to_string()];
 
     scenarios.into_iter().map(|scenario| {
         TimeSeries {
             scenario,
-            series: data.weather_data.clone(),
+            series: data.clone(),
         }
     }).collect()
 }
@@ -241,7 +249,17 @@ pub fn update_outside_inflow(input_data: &mut InputData, outside_inflow: Vec<Tim
     }
 }
 
+/* 
+pub fn update_market_price(input_data: &mut InputData, market_name: &str, new_price: TimeSeriesData) {
+    if let Some(market) = input_data.markets.get_mut(market_name) {
+        market.price = new_price;
+    } else {
+        eprintln!("Market '{}' not found in InputData", market_name);
+    }
+}
+*/
 
+/* 
 pub fn create_time_point(string: String, number: f64) -> (String, f64) {
 
     return (string, number)
@@ -263,8 +281,9 @@ pub fn add_time_serie(ts_data_vec: &mut Vec<TimeSeries>, time_series: TimeSeries
 pub fn json_to_inputdata(json_data: &str) -> Result<InputData, serde_json::Error> {
     serde_json::from_str(json_data)
 }
-
-pub fn create_data(init_temp: f64) -> InputData {
+*/
+/* 
+pub fn _create_data(init_temp: f64) -> InputData {
 
     //Example time series
 
@@ -865,7 +884,8 @@ pub fn create_data(init_temp: f64) -> InputData {
     return data
 
 }
-
+*/
+/* 
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -931,3 +951,5 @@ mod tests {
     }
 
 }
+
+*/

@@ -70,7 +70,7 @@ pub fn combine_vectors(vector1: Vec<String>, vector2: Vec<f64>) -> Result<Vec<(S
 ///
 /// Returns `true` if the string is ASCII and does not contain control characters, otherwise `false`.
 ///
-pub fn is_valid_http_header_value(value: &str) -> bool {
+pub fn _is_valid_http_header_value(value: &str) -> bool {
     value.is_ascii() && !value.chars().any(|ch| ch.is_control())
 }
 

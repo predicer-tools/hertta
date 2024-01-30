@@ -1,13 +1,13 @@
-use tokio::time::{self, Duration, Interval, Instant};
-use serde_json::json;
+use tokio::time::{self, Duration, Interval};
+//use serde_json::json;
 use tokio::sync::{mpsc, broadcast};
 use crate::errors;
 use crate::input_data;
 use std::error::Error;
-use chrono::{Utc, Duration as ChronoDuration, TimeZone, Timelike, NaiveDateTime};
+use chrono::{Utc, Duration as ChronoDuration, Timelike, DateTime, TimeZone};
 use std::collections::HashMap;
-use crate::input_data::{OptimizationData, BuildingData, WeatherData, ElectricityPriceData, ElectricityPricePoint};
-use std::convert::From;
+use crate::input_data::{OptimizationData, ElectricityPriceData, ElectricityPricePoint};
+use serde_json::{self, Value};
 
 pub async fn event_loop(tx_optimization: mpsc::Sender<input_data::OptimizationData>) {
     // Broadcast channel for building data task
@@ -53,7 +53,7 @@ pub async fn event_loop(tx_optimization: mpsc::Sender<input_data::OptimizationDa
     loop {
         tokio::select! {
             Ok(building_data) = rx_building.recv() => {
-                println!("Received building data");
+                println!("Received predicer input data");
                 last_building_data = Some(building_data);
                 if last_weather_data.is_some() && last_elec_price_data.is_some() {
                     initial_data_received = true;
@@ -105,13 +105,27 @@ pub async fn event_loop(tx_optimization: mpsc::Sender<input_data::OptimizationDa
     }
 }
 
+async fn _update_input_data_task(mut rx: broadcast::Receiver<input_data::OptimizationData>, tx: mpsc::Sender<input_data::InputData>) {
+    
+    if let Ok(optimization_data) = rx.recv().await {
+
+        //Update outside weather data
+        let mut input_data = optimization_data.device_data.input_data.clone();
+        let weather_data = input_data::convert_to_time_series(optimization_data.weather_data.weather_data.clone());
+        input_data::update_outside_inflow(&mut input_data, weather_data);
+
+        //Update elec prices
+
+
+    }
+}
+
 async fn fetch_weather_data_task(mut rx: broadcast::Receiver<input_data::BuildingData>, tx: mpsc::Sender<input_data::WeatherData>) {
     let mut interval = None; // Initialize interval as None
 
     loop {
         // Wait for the next building data
         if let Ok(building_data) = rx.recv().await {
-            println!("fetch_weather_data_task: Received place: {}", building_data.place);
 
             // Start the interval after receiving the first building data
             if interval.is_none() {
@@ -127,12 +141,10 @@ async fn fetch_weather_data_task(mut rx: broadcast::Receiver<input_data::Buildin
 
             let place = building_data.place;
 
-            println!("fetch_weather_data_task: Fetching weather data...");
             let fetched_data = fetch_weather_data(start_time_str, end_time_str, place).await;
 
             match fetched_data {
                 Ok(weather_data) => {
-                    println!("fetch_weather_data_task: Weather data fetched successfully.");
                     tx.send(weather_data).await.expect("Failed to send weather data");
                 },
                 Err(e) => {
@@ -161,7 +173,6 @@ async fn fetch_weather_data(start_time: String, end_time: String, place: String)
 
     let response = match client.get(url).query(&params).send().await {
         Ok(res) => {
-            println!("Received response from weather data server.");
             res
         },
         Err(e) => {
@@ -172,7 +183,6 @@ async fn fetch_weather_data(start_time: String, end_time: String, place: String)
 
     match response.json::<input_data::WeatherData>().await {
         Ok(weather_data) => {
-            println!("Successfully parsed weather data.");
             Ok(weather_data)
         },
         Err(e) => {
@@ -183,7 +193,7 @@ async fn fetch_weather_data(start_time: String, end_time: String, place: String)
 }
 
 async fn fetch_electricity_prices(start_time: String, end_time: String, country: String) 
-    -> Result<ElectricityPriceData, Box<dyn Error + Send>> {
+    -> Result<input_data::ElectricityPriceData, Box<dyn Error + Send>> {
     
     println!("Fetching electricity price data for country: {}, start time: {}, end time: {}", country, start_time, end_time);
 
@@ -193,22 +203,41 @@ async fn fetch_electricity_prices(start_time: String, end_time: String, country:
     let response = client.get(&url).header("accept", "*/*").send().await
         .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
 
-    println!("Received response from electricity price server.");
-
-    let full_data: HashMap<String, serde_json::Value> = response.json().await
+    let full_data: HashMap<String, Value> = response.json().await
         .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
-
-    println!("Successfully parsed electricity price data.");
 
     if let Some(data) = full_data.get("data") {
         if let Some(country_data) = data.get(&country.to_lowercase()) {
-            let price_data: Vec<ElectricityPricePoint> = serde_json::from_value(country_data.clone())
+            // Deserialize JSON into Vec<PricePoint>
+            let raw_price_data: Vec<input_data::PricePoint> = serde_json::from_value(country_data.clone())
                 .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
 
-            Ok(ElectricityPriceData {
+            // Parse the start_time as DateTime
+            let start_datetime = DateTime::parse_from_rfc3339(&start_time)
+                .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+
+            // Process and convert timestamps in price_data
+            let processed_price_data: Vec<input_data::ElectricityPricePoint> = raw_price_data
+                .iter()
+                .enumerate()
+                .map(|(i, price_point)| {
+                    let new_timestamp = start_datetime + ChronoDuration::hours(i as i64);
+                    input_data::ElectricityPricePoint {
+                        timestamp: new_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                        price: price_point.price,
+                    }
+                })
+                .collect();
+
+            let electricity_price_data = input_data::ElectricityPriceData {
                 country: country.clone(),
-                price_data,
-            })
+                price_data: processed_price_data,
+            };
+
+            // Print the result before returning
+            println!("Fetched Electricity Price Data: {:?}", electricity_price_data);
+
+            Ok(electricity_price_data)
         } else {
             Err(Box::new(errors::TaskError::new(&format!("No data found for country: {}", country))))
         }
@@ -223,16 +252,19 @@ async fn fetch_electricity_price_task(
     country: String,
 ) {
     let mut interval = time::interval(Duration::from_secs(60)); // Fetch data every 60 seconds
-    let start_time = "2020-05-31T20:59:59.999Z";
-    let end_time = "2020-06-30T20:59:59.999Z";
+
+    let now = Utc::now();
+    let start_time = now.with_minute(0).unwrap().with_second(0).unwrap().with_nanosecond(0).unwrap();
+    let end_time = start_time + ChronoDuration::hours(9);
+
+    let start_time_str = start_time.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let end_time_str = end_time.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
     loop {
-        println!("fetch_electricity_price_task: Fetching electricity price data for country: {}", country);
-        let fetched_data = fetch_electricity_prices(start_time.to_string(), end_time.to_string(), country.clone()).await;
+        let fetched_data = fetch_electricity_prices(start_time_str.to_string(), end_time_str.to_string(), country.clone()).await;
 
         match fetched_data {
             Ok(price_data) => {
-                println!("fetch_electricity_price_task: Electricity price data fetched successfully for country: {}", country);
                 tx.send(price_data).await.expect("Failed to send electricity price data");
             },
             Err(e) => {
@@ -275,7 +307,6 @@ async fn fetch_building_data_task(tx: broadcast::Sender<input_data::BuildingData
     let mut interval = None; // Initialize interval as None
 
     loop {
-        println!("fetch_building_data_task: Attempting to fetch building data.");
 
         // Start the interval after the first iteration
         if interval.is_none() {
@@ -284,7 +315,6 @@ async fn fetch_building_data_task(tx: broadcast::Sender<input_data::BuildingData
 
         match fetch_building_data().await {
             Ok(building_data) => {
-                println!("fetch_building_data_task: Building data fetched successfully.");
                 if tx.send(building_data).is_err() {
                     eprintln!("fetch_building_data_task: Receiver dropped, stopping task.");
                     break;
