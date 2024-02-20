@@ -13,7 +13,7 @@ pub struct PricePoint {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Temporals {
-    pub hours: i32,
+    pub hours: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -32,7 +32,6 @@ pub struct InputData {
     pub gen_constraints: HashMap<String, GenConstraint>,
     pub node_diffusion: HashMap<String, NodeDiffusion>,
     pub node_delay: HashMap<String, NodeDelay>,
-    pub temporals: Temporals,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -220,8 +219,10 @@ pub struct TimePoint {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct OptimizationData {
+    pub country: Option<String>,
     pub location: Option<String>,
     pub timezone: Option<String>,
+    pub temporals: Option<Temporals>,
     pub time_data: Option<TimeData>,
     pub weather_data: Option<WeatherData>,
     pub model_data: Option<ModelData>,

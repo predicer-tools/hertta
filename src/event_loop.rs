@@ -30,17 +30,15 @@ pub async fn event_loop(tx_optimization: mpsc::Sender<OptimizationData>) {
         create_time_data_task(rx_time, tx_weather).await; // Output passed to fetch_weather_data_task
     });
 
-    // Spawn the weather data task to process and potentially finalize the data
+    // Spawn the weather data task to process and pass the data to the electricity price data task
     tokio::spawn(async move {
-        fetch_weather_data_task(rx_weather, tx_final).await; // Output sent to tx_elec
+        fetch_weather_data_task(rx_weather, tx_elec).await; // Output sent to fetch_elec_price_task
     });
 
-    /* 
     // Spawn the electricity price data task to process and potentially finalize the data
     tokio::spawn(async move {
-        fetch_elec_price_task(rx_weather, tx_elec).await; // Final output sent to tx_optimization
+        fetch_elec_price_task(rx_elec, tx_final).await; // Final output sent to tx_final
     });
-    */
 
     let mut interval = time::interval(Duration::from_secs(10));
 
@@ -69,7 +67,7 @@ async fn fetch_model_data_task(tx: mpsc::Sender<OptimizationData>) {
         match fetch_model_data().await {
             Ok(optimization_data) => {
                 // Print the fetched OptimizationData
-                println!("OptimizationData successfully fetched or constructed: {:?}", optimization_data);
+                println!("OptimizationData successfully fetched or constructed");
                 
                 // Send the fetched or constructed OptimizationData downstream
                 if tx.send(optimization_data).await.is_err() {
@@ -92,14 +90,16 @@ async fn create_time_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mps
                     let now_timezone = now.with_timezone(&timezone);
 
                     let start_time = now_timezone.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-                    let end_time = (now_timezone + chrono::Duration::hours(1)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+                    // Ensure that temporals and hours exist and are accessible
+                    let hours_to_add = optimization_data.temporals.as_ref().map_or(12, |temporals| temporals.hours); //
+                    let end_time = (now_timezone + chrono::Duration::hours(hours_to_add)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
                     optimization_data.time_data = Some(input_data::TimeData { start_time, end_time });
                 },
                 Err(_) => {
                     eprintln!("Invalid timezone '{}', defaulting to UTC.", timezone_str);
-                    // Here you can either default to UTC or handle the error differently
-                    // For now, let's just log the error
+                    // Handle the error as needed
                 }
             }
         } else {
@@ -264,34 +264,43 @@ async fn fetch_electricity_prices(start_time: String, end_time: String, country:
     }
 }
 
-/* 
-async fn fetch_electricity_price_task(mut rx: mpsc::Receiver<input_data::OptimizationData>, tx: mpsc::Sender<input_data::OptimizationData>) {
+
+async fn fetch_elec_price_task(mut rx: mpsc::Receiver<input_data::OptimizationData>, tx: mpsc::Sender<input_data::OptimizationData>) {
     let mut interval = time::interval(Duration::from_secs(60)); // Set up the interval right away
+
+    println!("Fetch elec prices");
 
     loop {
         interval.tick().await; // Wait for the next interval tick before the next fetch
 
         if let Some(mut optimization_data) = rx.recv().await {
-            // Extract the location from the optimization data
-            if let Some(location) = &optimization_data.location {
-                let now = Utc::now();
-                let start_time = now.with_minute(0).unwrap().with_second(0).unwrap().with_nanosecond(0).unwrap();
-                let end_time = start_time + ChronoDuration::hours(9);
+            // Ensure country and time_data are both present
+            if let (Some(country), Some(time_data)) = (&optimization_data.country, &optimization_data.time_data) {
+                let start_time = time_data.start_time.clone();
+                let end_time = time_data.end_time.clone();
 
-                let start_time_str = start_time.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-                let end_time_str = end_time.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-
-                match fetch_electricity_prices(start_time_str, end_time_str, location.clone()).await {
+                match fetch_electricity_prices(start_time, end_time, country.clone()).await {
                     Ok(price_data) => {
-                        optimization_data.elec_price_data = Some(price_data); // Update the electricity price data
-                        tx.send(optimization_data).await.expect("Failed to send updated optimization data"); // Send updated data
+                        // Update the electricity price data
+                        optimization_data.elec_price_data = Some(price_data.clone()); // Assuming price_data can be cloned for printing
+                        
+                        // Print the fetched electricity price data
+                        println!("Fetched electricity price data for country '{}': {:?}", country, price_data);
+
+                        // Send updated data
+                        tx.send(optimization_data).await.expect("Failed to send updated optimization data");
                     },
                     Err(e) => {
-                        eprintln!("fetch_electricity_price_task: Failed to fetch electricity price data: {:?}", e);
+                        eprintln!("fetch_electricity_price_task: Failed to fetch electricity price data for country '{}': {:?}", country, e);
                     },
                 }
             } else {
-                eprintln!("fetch_electricity_price_task: Location data is missing.");
+                if optimization_data.country.is_none() {
+                    eprintln!("fetch_electricity_price_task: Country data is missing.");
+                }
+                if optimization_data.time_data.is_none() {
+                    eprintln!("fetch_electricity_price_task: Time data is missing.");
+                }
             }
         } else {
             println!("fetch_electricity_price_task: Channel closed, stopping task.");
@@ -299,7 +308,7 @@ async fn fetch_electricity_price_task(mut rx: mpsc::Receiver<input_data::Optimiz
         }
     }
 }
-*/
+
 
 
 pub async fn fetch_model_data() -> Result<input_data::OptimizationData, errors::ModelDataError> {

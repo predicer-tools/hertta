@@ -1,5 +1,8 @@
+country: fi
 location: Hervanta
 timezone: Europe/Helsinki
+temporals:
+      hours: 12
 time_data:
   start_time: default_start_time
   end_time: default_end_time
@@ -264,5 +267,3 @@ model_data:
           sink: interiorair
           source: electricheater
           vom_cost: 0.0
-    temporals:
-      hours: 12
