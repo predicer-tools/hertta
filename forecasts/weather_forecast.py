@@ -7,14 +7,12 @@ import json
 import datetime as dt
 import pandas as pd
 from fmiopendata.wfs import download_stored_query
-import requests
 
 # Set display options for pandas
 pd.set_option('display.max_rows', 500)
 pd.set_option('display.min_rows', 500)
 
 class WeatherHandler(BaseHTTPRequestHandler):
-
     def do_GET(self):
         # Parse the URL path and query components
         parsed_path = urlparse.urlparse(self.path)
@@ -106,5 +104,3 @@ def reshape_dict(data, times):
 
 if __name__ == '__main__':
     run_server()
-
-

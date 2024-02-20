@@ -38,6 +38,42 @@ impl fmt::Display for ProcessControlError {
 
 impl std::error::Error for ProcessControlError {}
 
+#[derive(Debug)]
+pub enum ModelDataError {
+    Network(reqwest::Error),
+    Parsing(serde_yaml::Error),
+}
+
+impl fmt::Display for ModelDataError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            ModelDataError::Network(ref err) => write!(f, "Network Error: {}", err),
+            ModelDataError::Parsing(ref err) => write!(f, "Parsing Error: {}", err),
+        }
+    }
+}
+
+impl Error for ModelDataError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match *self {
+            ModelDataError::Network(ref err) => Some(err),
+            ModelDataError::Parsing(ref err) => Some(err),
+        }
+    }
+}
+
+impl From<reqwest::Error> for ModelDataError {
+    fn from(err: reqwest::Error) -> ModelDataError {
+        ModelDataError::Network(err)
+    }
+}
+
+impl From<serde_yaml::Error> for ModelDataError {
+    fn from(err: serde_yaml::Error) -> ModelDataError {
+        ModelDataError::Parsing(err)
+    }
+}
+
 /// Represents errors that can occur during a POST request.
 ///
 /// This struct is used to handle and encapsulate errors that might arise while making POST

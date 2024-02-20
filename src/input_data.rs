@@ -12,6 +12,11 @@ pub struct PricePoint {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Temporals {
+    pub hours: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InputData {
     pub contains_reserves: bool,
     pub contains_online: bool,
@@ -27,6 +32,7 @@ pub struct InputData {
     pub gen_constraints: HashMap<String, GenConstraint>,
     pub node_diffusion: HashMap<String, NodeDiffusion>,
     pub node_delay: HashMap<String, NodeDelay>,
+    pub temporals: Temporals,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -185,38 +191,45 @@ pub struct GenConstraint {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct WeatherData {
     pub place: String,
-    pub weather_data: Vec<(String, f64)>,
+    pub weather_data: Vec<TimePoint>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct BuildingData {
-    // Fields representing weather data
-    pub place: String,
+pub struct ModelData {
     pub input_data: InputData,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct TimeData {
+    pub start_time: String,
+    pub end_time: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ElectricityPriceData {
     // Fields representing weather data
     pub country: String,
-    pub price_data: Vec<ElectricityPricePoint>,
+    pub price_data: Vec<TimePoint>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ElectricityPricePoint {
+pub struct TimePoint {
     pub timestamp: String,
-    pub price: f64,
+    pub value: f64,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct OptimizationData {
-    pub weather_data: WeatherData,
-    pub device_data: BuildingData,
-    pub elec_price_data: ElectricityPriceData,
+    pub location: Option<String>,
+    pub timezone: Option<String>,
+    pub time_data: Option<TimeData>,
+    pub weather_data: Option<WeatherData>,
+    pub model_data: Option<ModelData>,
+    pub elec_price_data: Option<ElectricityPriceData>,
 }
 
 /* 
-pub fn write_to_json_file_bd(data: &BuildingData, file_path: &str) -> Result<(), Box<dyn Error>> {
+pub fn write_to_json_file_bd(data: &ModelData, file_path: &str) -> Result<(), Box<dyn Error>> {
     // Serialize the data to JSON
     let json = serde_json::to_string_pretty(data)?;
 
@@ -230,34 +243,79 @@ pub fn write_to_json_file_bd(data: &BuildingData, file_path: &str) -> Result<(),
 }
 */
 
-pub fn convert_to_time_series(data: Vec<(String, f64)>) -> Vec<TimeSeries> {
+pub fn convert_to_time_series(data: Vec<TimePoint>) -> TimeSeriesData {
     let scenarios = vec!["s1".to_string(), "s2".to_string()];
 
-    scenarios.into_iter().map(|scenario| {
+    let ts_data = scenarios.into_iter().map(|scenario| {
+        let series = data.iter()
+                         .map(|tp| (tp.timestamp.clone(), tp.value))
+                         .collect::<Vec<(String, f64)>>();
+
         TimeSeries {
             scenario,
-            series: data.clone(),
+            series,
         }
-    }).collect()
+    }).collect::<Vec<TimeSeries>>();
+
+    TimeSeriesData {
+        ts_data
+    }
 }
 
-pub fn update_outside_inflow(input_data: &mut InputData, outside_inflow: Vec<TimeSeries>) {
+pub fn update_outside_inflow(input_data: &mut InputData, outside_inflow: TimeSeriesData) {
     if let Some(outside_node) = input_data.nodes.get_mut("outside") {
-        outside_node.inflow = TimeSeriesData { ts_data: outside_inflow };
+        outside_node.inflow = outside_inflow;
     } else {
         eprintln!("'outside' node not found in InputData");
     }
 }
 
-/* 
-pub fn update_market_price(input_data: &mut InputData, market_name: &str, new_price: TimeSeriesData) {
-    if let Some(market) = input_data.markets.get_mut(market_name) {
-        market.price = new_price;
+pub fn update_elec_prices(input_data: &mut InputData, elec_prices: TimeSeriesData) {
+    if let Some(npe_market) = input_data.markets.get_mut("npe") {
+        npe_market.price = elec_prices;
     } else {
-        eprintln!("Market '{}' not found in InputData", market_name);
+        eprintln!("'outside' node not found in InputData");
     }
 }
-*/
+
+pub async fn update_input_data_task(
+    mut optimization_data: OptimizationData,
+) -> Result<InputData, Box<dyn std::error::Error + Send + Sync>> {
+    // Check and update outside weather data
+    match optimization_data.weather_data.as_ref() {
+        Some(weather_data) => {
+            let weather_series = convert_to_time_series(weather_data.weather_data.clone());
+            if let Some(model_data) = optimization_data.model_data.as_mut() {
+                update_outside_inflow(&mut model_data.input_data, weather_series);
+            } else {
+                println!("Device data is missing, cannot update outside inflow.");
+            }
+        },
+        None => println!("Weather data is missing."),
+    }
+
+    // Check and update elec prices
+    match optimization_data.elec_price_data.as_ref() {
+        Some(elec_price_data) => {
+            let elec_price_series = convert_to_time_series(elec_price_data.price_data.clone());
+            if let Some(model_data) = optimization_data.model_data.as_mut() {
+                update_elec_prices(&mut model_data.input_data, elec_price_series);
+            } else {
+                println!("Device data is missing, cannot update electricity prices.");
+            }
+        },
+        None => println!("Electricity price data is missing."),
+    }
+
+    // Ensure device_data and its input_data are present before returning
+    match optimization_data.model_data {
+        Some(ref model_data) => Ok(model_data.input_data.clone()), // Assuming input_data has the Clone trait
+        None => {
+            println!("Device data is completely missing.");
+            Err("Device data is missing.".into()) // Adjust the error handling as needed
+        },
+    }
+}
 
 /* 
 pub fn create_time_point(string: String, number: f64) -> (String, f64) {

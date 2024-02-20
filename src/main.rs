@@ -30,6 +30,7 @@ use std::error::Error;
 use std::fs::File;
 use std::io::Write;
 use std::collections::HashMap;
+use std::process::Command;
 //use std::time::{SystemTime, UNIX_EPOCH};
 //use tokio::join;
 //use warp::reject::Reject;
@@ -381,6 +382,25 @@ struct OptimizationResult {
     data: f64,
 }
 
+pub fn start_hass_backend_server() {
+
+    Command::new("python")
+    .arg("hass_backend/server.py") // Replace with the actual path to your Python file
+    .spawn() // Spawns the command as a new process, not blocking the current thread
+    .expect("HASS backend server failed to start");
+
+}
+
+pub fn start_weather_forecasst_server() {
+
+    // Start Python server 2
+    Command::new("python")
+    .arg("forecasts/weather_forecast.py") // Replace with the actual path to your Python file
+    .spawn() // Spawns the command as a new process, not blocking the current thread
+    .expect("Weather forecast failed to start");
+
+}
+
 #[tokio::main]
 async fn main()  {
     
@@ -390,6 +410,9 @@ async fn main()  {
         .get(1)
         .expect("First argument should be path to Predicer")
         .to_string();
+
+    start_hass_backend_server();
+    start_weather_forecasst_server();
 
     let options_path = "./src/options.json";
     //let options_path = "/data/options.json";
@@ -442,19 +465,27 @@ async fn main()  {
         println!("Optimization task started and waiting for data...");
         while let Some(optimization_data) = rx_optimization.recv().await {
             println!("Received optimization data, running predicer...");
-
-            let mut input_data = optimization_data.device_data.input_data.clone();
-            let weather_data = input_data::convert_to_time_series(optimization_data.weather_data.weather_data.clone());
-            input_data::update_outside_inflow(&mut input_data, weather_data);
-            
-            match run_predicer(julia_clone.clone(), optimization_data.device_data.input_data.clone(), predicer_dir_clone.clone()).await {
-                Ok(_device_control_values) => {
-                    // Process the results
-                    println!("Optimization successful");
+    
+            let optimization_data = optimization_data.clone(); // No need to make it mutable if you're not modifying it
+            match input_data::update_input_data_task(optimization_data.clone()).await {
+                Ok(updated_input_data) => {
+                    // Now you have updated_input_data to use
+                    println!("Updated Input Data: {:?}", updated_input_data);
+                    
+                    match run_predicer(julia_clone.clone(), updated_input_data.clone(), predicer_dir_clone.clone()).await {
+                        Ok(_device_control_values) => {
+                            // Process the results
+                            println!("Optimization successful");
+                        },
+                        Err(error) => {
+                            // Handle error from run_predicer
+                            println!("An error occurred in optimization: {}", error);
+                        }
+                    }
                 },
                 Err(error) => {
-                    // Handle error
-                    println!("An error occurred in optimization: {}", error);
+                    // Handle error from update_input_data_task
+                    println!("An error occurred while updating input data: {}", error);
                 }
             }
         }
