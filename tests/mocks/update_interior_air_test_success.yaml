@@ -1,7 +1,6 @@
 country: fi
 location: Hervanta
 timezone: Europe/Helsinki
-elec_price_source: Elering
 temporals:
       hours: 12
 elec_price_source:
@@ -274,8 +273,11 @@ model_data:
           ramp_up: 1.0
           sink: interiorair
           source: electricheater
-          vom_cost: 0.0'
+          vom_cost: 0.0
 elec_price_data:
 sensor_data:
-  temp: 296
+  - sensor_name: "interiorair"
+    temp: 296.0
+  - sensor_name: "exteriorair"
+    temp: 278.0
 control_results:

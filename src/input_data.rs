@@ -217,16 +217,47 @@ pub struct TimePoint {
     pub value: f64,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ElecPriceData {
+    pub api_source: String,
+    pub api_key: Option<String>,
+    pub country: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ElecPriceSource {
+    pub api_source: String,
+    pub token: Option<String>,
+    pub country: Option<String>,
+    pub bidding_in_domain: Option<String>,
+    pub bidding_out_domain: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SensorData {
+    pub sensor_name: String,
+    pub temp: f64,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct OptimizationData {
     pub country: Option<String>,
     pub location: Option<String>,
     pub timezone: Option<String>,
+    pub elec_price_source: Option<ElecPriceSource>,
     pub temporals: Option<Temporals>,
     pub time_data: Option<TimeData>,
     pub weather_data: Option<WeatherData>,
     pub model_data: Option<ModelData>,
     pub elec_price_data: Option<ElectricityPriceData>,
+    pub sensor_data: Option<Vec<SensorData>>,
+    pub control_results: Option<Vec<ControlData>>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ControlData {
+    pub device: String,
+    pub control_data: Vec<TimePoint>,
 }
 
 /* 

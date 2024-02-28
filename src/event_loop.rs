@@ -44,32 +44,111 @@ pub async fn event_loop(tx_optimization: mpsc::Sender<OptimizationData>) {
 
     loop {
         interval.tick().await; // Wait for the next interval tick
-    
-    
-        // Assuming tasks complete quickly and you can await the final data directly
-        if let Some(final_data) = rx_final.recv().await {
+
+        // Check if there's data to process
+        while let Some(final_data) = rx_final.recv().await {
             println!("Received final processed OptimizationData: {:?}", final_data);
-            // Process the received final data
-        } else {
-            eprintln!("Did not receive final processed data within the expected time frame.");
+            // Correctly call send_to_server_task with the received data
+            if let Err(e) = send_to_server_task(final_data).await {
+                eprintln!("Error while sending final optimization data to server: {}", e);
+            }
         }
-    
-        // The interval waits for the next tick, which can help to synchronize the cycle.
     }
 }
 
+async fn update_model_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
+    while let Some(mut optimization_data) = rx.recv().await {
+        
+        
+        //Update indoor temperature
+        update_interior_air_initial_state(&mut optimization_data);
+
+        //Update outdoor temp flow
+        // - Convert the data to TimeSeriesData
+        // - Update the input_data.node.outside etc
+
+        //Update elec prices
+        // - Convert the data to TimeSeriesData
+        // - Update the input_data.markets.npe
+
+        if tx.send(optimization_data).await.is_err() {
+            eprintln!("Failed to send updated OptimizationData");
+        }
+    }
+}
+
+fn update_interior_air_initial_state(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
+    // Check if sensor_data is Some
+    if let Some(sensor_data) = &optimization_data.sensor_data {
+        // Ensure model_data is available
+        let model_data = optimization_data.model_data.as_mut().ok_or("Model data is not available.")?;
+        let nodes = &mut model_data.input_data.nodes;
+
+        // Find the sensor data for "interiorair"
+        if let Some(interior_air_sensor) = sensor_data.iter().find(|s| s.sensor_name == "interiorair") {
+            // Update the interiorair initial_state with the sensor temp
+            if let Some(node) = nodes.get_mut("interiorair") {
+                node.state.initial_state = interior_air_sensor.temp; // Correctly update the initial_state
+                return Ok(());
+            } else {
+                // "interiorair" node not found
+                return Err("InteriorAir node not found in nodes.");
+            }
+        } else {
+            // "interiorair" sensor not found
+            return Err("InteriorAir sensor not found in sensor data.");
+        }
+    } else {
+        // sensor_data is None
+        return Err("Sensor data is not available.");
+    }
+}
+
+
+
+async fn send_to_server_task(final_data: OptimizationData) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let client = reqwest::Client::new();
+    let url = "http://127.0.0.1:8000/from_hertta/optimization_results"; // Your server URL
+
+    println!("Sending final optimization data to the server.");
+    match client.post(url)
+        .json(&final_data)
+        .send()
+        .await {
+            Ok(response) => {
+                if response.status().is_success() {
+                    println!("Successfully sent final optimization data.");
+                } else {
+                    eprintln!("Failed to send final optimization data. Status: {}", response.status());
+                }
+            },
+            Err(e) => eprintln!("Error sending request: {:?}", e),
+    }
+
+    Ok(())
+}
+
+
 async fn fetch_model_data_task(tx: mpsc::Sender<OptimizationData>) {
-    let mut interval = time::interval(Duration::from_secs(10)); // Adjusted to fetch data every 10 seconds for this example
+    let mut interval = time::interval(Duration::from_secs(10));
 
     loop {
-        interval.tick().await; // Wait for the next interval tick before fetching new data
+        interval.tick().await;
 
         match fetch_model_data().await {
-            Ok(optimization_data) => {
-                // Print the fetched OptimizationData
+            Ok(mut optimization_data) => {
+                // Update the token in the optimization data
+                /* 
+                if let Err(e) = update_token_in_optimization_data(&mut optimization_data).await {
+                    eprintln!("Failed to update token in OptimizationData: {}", e);
+                    // Optionally, handle the error, such as skipping this iteration, logging, etc.
+                    continue;
+                }
+                */
+
                 println!("OptimizationData successfully fetched or constructed");
-                
-                // Send the fetched or constructed OptimizationData downstream
+
+                // Send the updated OptimizationData downstream
                 if tx.send(optimization_data).await.is_err() {
                     eprintln!("Failed to send OptimizationData.");
                 }
@@ -78,6 +157,27 @@ async fn fetch_model_data_task(tx: mpsc::Sender<OptimizationData>) {
         }
     }
 }
+
+/* 
+async fn update_token_in_optimization_data(optimization_data: &mut OptimizationData) -> Result<(), io::Error> {
+    let token = fs::read_to_string("config/token.txt")?;
+
+    if let Some(ref mut elec_price_source) = optimization_data.elec_price_source {
+        elec_price_source.token = Some(token);
+    } else {
+        // Optionally handle the case where elec_price_source is None
+        optimization_data.elec_price_source = Some(ElecPriceSource {
+            api_source: String::new(), // Or some default value
+            token: Some(token),
+            country: None,
+            bidding_in_domain: None,
+            bidding_out_domain: None,
+        });
+    }
+
+    Ok(())
+}
+*/
 
 
 async fn create_time_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
@@ -264,6 +364,42 @@ async fn fetch_electricity_prices(start_time: String, end_time: String, country:
     }
 }
 
+/* 
+async fn fetch_entsoe_electricity_prices(
+    start_time: String,
+    end_time: String,
+    country: String,
+    token: String, // API token is now a parameter
+) -> Result<input_data::ElectricityPriceData, Box<dyn Error + Send>> {
+    println!("Fetching electricity price data for country: {}, start time: {}, end time: {}", country, start_time, end_time);
+
+    let client = Client::new();
+    let url = format!("https://transparency.entsoe.eu/api?documentType=A44&in_Domain={}&out_Domain={}&periodStart={}&periodEnd={}", 
+                      country, country, start_time, end_time);
+
+    let response = client.get(&url)
+        .header("accept", "application/json")
+        .header("X-API-Key", token) // Use your API key here
+        .send().await
+        .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+
+    let full_data: HashMap<String, serde_json::Value> = response.json().await
+        .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+
+    // Assuming the API returns data in a format that needs parsing similar to your original function.
+    // You will need to adjust the parsing logic based on the actual structure of the ENTSO-E API response.
+
+    // Example placeholder for parsing logic. Replace with actual parsing based on the response structure.
+    let electricity_price_data = input_data::ElectricityPriceData {
+        country: country.clone(),
+        // Placeholder for price data. Replace with actual data parsed from the response.
+        price_data: vec![],
+    };
+
+    Ok(electricity_price_data)
+}
+*/
+
 
 async fn fetch_elec_price_task(mut rx: mpsc::Receiver<input_data::OptimizationData>, tx: mpsc::Sender<input_data::OptimizationData>) {
     let mut interval = time::interval(Duration::from_secs(60)); // Set up the interval right away
@@ -389,10 +525,25 @@ mod tests {
     use super::*;
     use tokio::sync::mpsc;
     use tokio::time::{self, Duration};
-    use tokio::fs::File;
+    use tokio::fs::File as AsyncFile;
     use tokio::io::AsyncReadExt;
     use serde::{Deserialize, Serialize};
     use serde_yaml;
+    use std::fs::File;
+    use std::io::Read;
+    use std::path::PathBuf;
+
+    fn load_test_optimization_data_from_yaml(file_name: &str) -> Result<OptimizationData, Box<dyn std::error::Error>> {
+        let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        d.push("tests/mocks");
+        d.push(file_name);
+
+        let mut file = File::open(d)?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+        let optimization_data: OptimizationData = serde_yaml::from_str(&contents)?;
+        Ok(optimization_data)
+    }
 
     #[tokio::test]
     async fn test_fetch_electricity_prices() {
@@ -411,30 +562,36 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_fetch_electricity_price_task() {
-        // Set up a mock sender channel
-        let (tx, mut rx) = mpsc::channel(1);
-        
-        // Mock country input
-        let country = String::from("fi");
+    #[test]
+    fn test_update_interior_air_initial_state_success() {
+        let mut optimization_data = load_test_optimization_data_from_yaml("update_interior_air_test_success.yaml")
+            .expect("Failed to load test optimization data from YAML");
 
-        // Start the task in a new task
-        tokio::spawn(async move {
-            fetch_electricity_price_task(tx, country).await;
-        });
+        // Accessing the model_data and then the nodes hashmap to check the original value
+        let original_model_data = optimization_data.model_data.as_ref().expect("Model data is missing before update");
+        let original_nodes = &original_model_data.input_data.nodes;
 
-        // Mock wait time or trigger to simulate the passage of time or other conditions
-        time::sleep(Duration::from_secs(1)).await;
+        if let Some(interior_air_node) = original_nodes.get("interiorair") {
+            // Assert the original initial_state before the update
+            assert_eq!(interior_air_node.state.initial_state, 298.15, "The original initial_state of the interiorair node should be 298.15");
+        } else {
+            panic!("InteriorAir node not found in nodes before update.");
+        }
 
-        // Test the expected behavior
-        match rx.recv().await {
-            Some(price_data) => {
-                // Assert conditions or inspect the `price_data` received
-                assert!(!price_data.price_data.is_empty(), "Price data should not be empty");
-                // ... more assertions as needed
-            },
-            None => panic!("No data received"),
+        // Perform the update
+        let result = update_interior_air_initial_state(&mut optimization_data);
+        assert!(result.is_ok());
+
+        // Accessing the model_data again and then the nodes hashmap to check the updated value
+        let updated_model_data = optimization_data.model_data.as_ref().expect("Model data is missing after update");
+        let updated_nodes = &updated_model_data.input_data.nodes;
+
+        // Now, we check the specific node for its updated initial_state
+        if let Some(interior_air_node) = updated_nodes.get("interiorair") {
+            // Assert the updated initial_state after the update
+            assert_eq!(interior_air_node.state.initial_state, 296.0, "The initial_state of the interiorair node should be updated to 296.0");
+        } else {
+            panic!("InteriorAir node not found in nodes after update.");
         }
     }
 
