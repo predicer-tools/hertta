@@ -130,6 +130,28 @@ fn update_outside_node_inflow(optimization_data: &mut OptimizationData) -> Resul
     }
 }
 
+fn update_npe_market_prices(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
+    // Check if ElectricityPriceData is Some
+    if let Some(electricity_price_data) = &optimization_data.elec_price_data {
+        // Ensure model_data is available and contains the "npe" market
+        let model_data = optimization_data.model_data.as_mut().ok_or("Model data is not available.")?;
+        let markets = &mut model_data.input_data.markets;
+
+        // Find the market named "npe"
+        if let Some(npe_market) = markets.get_mut("npe") {
+            // Update the npe market's price with the electricity_price_data
+            npe_market.price.ts_data = electricity_price_data.price_data.ts_data.clone();
+            return Ok(());
+        } else {
+            // "npe" market not found
+            return Err("NPE market not found in markets.");
+        }
+    } else {
+        // ElectricityPriceData is None
+        return Err("Electricity price data is not available.");
+    }
+}
+
 
 async fn send_to_server_task(final_data: OptimizationData) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let client = reqwest::Client::new();
@@ -329,44 +351,33 @@ async fn fetch_electricity_prices(start_time: String, end_time: String, country:
     let response = client.get(&url).header("accept", "*/*").send().await
         .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
 
-    let full_data: HashMap<String, Value> = response.json().await
+    // Assuming the API response directly maps to Vec<(String, f64)>
+    let price_series: Vec<(String, f64)> = response.json().await
         .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
 
-    if let Some(data) = full_data.get("data") {
-        if let Some(country_data) = data.get(&country.to_lowercase()) {
-            // Deserialize JSON into Vec<PricePoint>
-            let raw_price_data: Vec<input_data::PricePoint> = serde_json::from_value(country_data.clone())
-                .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+    // Create two TimeSeries instances with the same series data for scenarios "s1" and "s2"
+    let time_series_s1 = input_data::TimeSeries {
+        scenario: "s1".to_string(),
+        series: price_series.clone(), // Clone since it's used again below
+    };
 
-            // Parse the start_time as DateTime
-            let start_datetime = DateTime::parse_from_rfc3339(&start_time)
-                .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+    let time_series_s2 = input_data::TimeSeries {
+        scenario: "s2".to_string(),
+        series: price_series,
+    };
 
-            // Process and convert timestamps in price_data
-            let processed_price_data: Vec<input_data::TimePoint> = raw_price_data
-                .iter()
-                .enumerate()
-                .map(|(i, price_point)| {
-                    let new_timestamp = start_datetime + ChronoDuration::hours(i as i64);
-                    input_data::TimePoint {
-                        timestamp: new_timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-                        value: price_point.price,
-                    }
-                })
-                .collect();
+    // Wrap these in TimeSeriesData
+    let ts_data = input_data::TimeSeriesData {
+        ts_data: vec![time_series_s1, time_series_s2],
+    };
 
-            let electricity_price_data = input_data::ElectricityPriceData {
-                country: country.clone(),
-                price_data: processed_price_data,
-            };
+    // Create ElectricityPriceData with this TimeSeriesData
+    let electricity_price_data = input_data::ElectricityPriceData {
+        country: country.clone(),
+        price_data: ts_data,
+    };
 
-            Ok(electricity_price_data)
-        } else {
-            Err(Box::new(errors::TaskError::new(&format!("No data found for country: {}", country))))
-        }
-    } else {
-        Err(Box::new(errors::TaskError::new("No data field found in response")))
-    }
+    Ok(electricity_price_data)
 }
 
 /* 
@@ -559,7 +570,7 @@ mod tests {
         match fetch_electricity_prices(start_time, end_time, country).await {
             Ok(data) => {
                 println!("Success! Data: {:?}", data);
-                assert!(!data.price_data.is_empty(), "Price data should not be empty");
+                assert!(!data.price_data.ts_data.is_empty(), "Price data should not be empty");
             },
             Err(e) => {
                 panic!("Test failed with error: {:?}", e);
@@ -628,6 +639,37 @@ mod tests {
             }
         } else {
             panic!("Outside node not found in nodes after update.");
+        }
+    }
+
+    #[test]
+    fn test_update_npe_market_prices_success() {
+        let mut optimization_data = load_test_optimization_data_from_yaml("update_npe_market_prices_success.yaml")
+            .expect("Failed to load test optimization data from YAML");
+
+        // Pre-update check: Ensure "npe" market's price scenarios are as expected before update
+        if let Some(npe_market) = optimization_data.model_data.as_ref().and_then(|md| md.input_data.markets.get("npe")) {
+            // Check that scenarios exist but have empty series
+            for ts in &npe_market.price.ts_data {
+                assert!(ts.series.is_empty(), "Scenario '{}' in NPE market should initially have an empty series.", ts.scenario);
+            }
+        } else {
+            panic!("NPE market not found in markets before update.");
+        }
+
+        // Perform the update
+        let result = update_npe_market_prices(&mut optimization_data);
+        assert!(result.is_ok(), "Updating NPE market's prices failed.");
+
+        // Post-update check: Verify "npe" market's prices have been updated
+        if let Some(npe_market) = optimization_data.model_data.as_ref().and_then(|md| md.input_data.markets.get("npe")) {
+            // Assert that the series for each scenario within price is now non-empty
+            for ts in &npe_market.price.ts_data {
+                assert!(!ts.series.is_empty(), "Scenario '{}' in NPE market should not be empty after update.", ts.scenario);
+                // Further checks can be added here to verify the content of the price matches expectations
+            }
+        } else {
+            panic!("NPE market not found in markets after update.");
         }
     }
 
