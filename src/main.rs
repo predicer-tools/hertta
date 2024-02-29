@@ -466,30 +466,26 @@ async fn main()  {
         while let Some(optimization_data) = rx_optimization.recv().await {
             println!("Received optimization data, running predicer...");
     
-            let optimization_data = optimization_data.clone(); // No need to make it mutable if you're not modifying it
-            match input_data::update_input_data_task(optimization_data.clone()).await {
-                Ok(updated_input_data) => {
-                    // Now you have updated_input_data to use
-                    println!("Updated Input Data: {:?}", updated_input_data);
-                    
-                    match run_predicer(julia_clone.clone(), updated_input_data.clone(), predicer_dir_clone.clone()).await {
-                        Ok(_device_control_values) => {
-                            // Process the results
-                            println!("Optimization successful");
-                        },
-                        Err(error) => {
-                            // Handle error from run_predicer
-                            println!("An error occurred in optimization: {}", error);
-                        }
+            // Check if model_data is present
+            if let Some(model_data) = optimization_data.model_data {
+                // Now you have model_data.input_data to use, assuming input_data is what run_predicer expects
+                match run_predicer(julia_clone.clone(), model_data.input_data.clone(), predicer_dir_clone.clone()).await {
+                    Ok(_device_control_values) => {
+                        // Process the results
+                        println!("Optimization successful");
+                    },
+                    Err(error) => {
+                        // Handle error from run_predicer
+                        println!("An error occurred in optimization: {}", error);
                     }
-                },
-                Err(error) => {
-                    // Handle error from update_input_data_task
-                    println!("An error occurred while updating input data: {}", error);
                 }
+            } else {
+                // Handle case where model_data is None
+                println!("Optimization data is missing model_data. Skipping...");
             }
         }
     });
+    
 
     let shutdown_route = {
         let shutdown_sender_clone = shutdown_sender.clone();

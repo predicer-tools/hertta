@@ -190,7 +190,7 @@ pub struct GenConstraint {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct WeatherData {
     pub place: String,
-    pub weather_data: Vec<TimePoint>,
+    pub weather_data: TimeSeriesData,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -275,24 +275,6 @@ pub fn write_to_json_file_bd(data: &ModelData, file_path: &str) -> Result<(), Bo
 }
 */
 
-pub fn convert_to_time_series(data: Vec<TimePoint>) -> TimeSeriesData {
-    let scenarios = vec!["s1".to_string(), "s2".to_string()];
-
-    let ts_data = scenarios.into_iter().map(|scenario| {
-        let series = data.iter()
-                         .map(|tp| (tp.timestamp.clone(), tp.value))
-                         .collect::<Vec<(String, f64)>>();
-
-        TimeSeries {
-            scenario,
-            series,
-        }
-    }).collect::<Vec<TimeSeries>>();
-
-    TimeSeriesData {
-        ts_data
-    }
-}
 
 pub fn update_outside_inflow(input_data: &mut InputData, outside_inflow: TimeSeriesData) {
     if let Some(outside_node) = input_data.nodes.get_mut("outside") {
@@ -307,45 +289,6 @@ pub fn update_elec_prices(input_data: &mut InputData, elec_prices: TimeSeriesDat
         npe_market.price = elec_prices;
     } else {
         eprintln!("'outside' node not found in InputData");
-    }
-}
-
-pub async fn update_input_data_task(
-    mut optimization_data: OptimizationData,
-) -> Result<InputData, Box<dyn std::error::Error + Send + Sync>> {
-    // Check and update outside weather data
-    match optimization_data.weather_data.as_ref() {
-        Some(weather_data) => {
-            let weather_series = convert_to_time_series(weather_data.weather_data.clone());
-            if let Some(model_data) = optimization_data.model_data.as_mut() {
-                update_outside_inflow(&mut model_data.input_data, weather_series);
-            } else {
-                println!("Device data is missing, cannot update outside inflow.");
-            }
-        },
-        None => println!("Weather data is missing."),
-    }
-
-    // Check and update elec prices
-    match optimization_data.elec_price_data.as_ref() {
-        Some(elec_price_data) => {
-            let elec_price_series = convert_to_time_series(elec_price_data.price_data.clone());
-            if let Some(model_data) = optimization_data.model_data.as_mut() {
-                update_elec_prices(&mut model_data.input_data, elec_price_series);
-            } else {
-                println!("Device data is missing, cannot update electricity prices.");
-            }
-        },
-        None => println!("Electricity price data is missing."),
-    }
-
-    // Ensure device_data and its input_data are present before returning
-    match optimization_data.model_data {
-        Some(ref model_data) => Ok(model_data.input_data.clone()), // Assuming input_data has the Clone trait
-        None => {
-            println!("Device data is completely missing.");
-            Err("Device data is missing.".into()) // Adjust the error handling as needed
-        },
     }
 }
 

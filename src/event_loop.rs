@@ -64,8 +64,7 @@ async fn update_model_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mp
         update_interior_air_initial_state(&mut optimization_data);
 
         //Update outdoor temp flow
-        // - Convert the data to TimeSeriesData
-        // - Update the input_data.node.outside etc
+        update_outside_node_inflow(&mut optimization_data);
 
         //Update elec prices
         // - Convert the data to TimeSeriesData
@@ -104,6 +103,32 @@ fn update_interior_air_initial_state(optimization_data: &mut OptimizationData) -
     }
 }
 
+fn update_outside_node_inflow(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
+    // Check if weather_data is Some
+    if let Some(weather_data) = &optimization_data.weather_data {
+        // Ensure model_data is available and contains the "outside" node
+        let model_data = optimization_data.model_data.as_mut().ok_or("Model data is not available.")?;
+        let nodes = &mut model_data.input_data.nodes;
+
+        // Find the node named "outside"
+        if let Some(outside_node) = nodes.get_mut("outside") {
+            // Check if the node is supposed to have inflow data
+            if outside_node.is_inflow {
+                // Update the outside node's inflow with the weather_data
+                outside_node.inflow = weather_data.weather_data.clone(); // Assuming this is the TimeSeriesData you want to use
+                return Ok(());
+            } else {
+                return Err("Outside node is not marked for inflow.");
+            }
+        } else {
+            // "outside" node not found
+            return Err("Outside node not found in nodes.");
+        }
+    } else {
+        // weather_data is None
+        return Err("Weather data is not available.");
+    }
+}
 
 
 async fn send_to_server_task(final_data: OptimizationData) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -257,58 +282,38 @@ async fn fetch_weather_data(start_time: String, end_time: String, place: String)
     let url = "http://localhost:8001/get_weather_data";
     let params = [("start_time", &start_time), ("end_time", &end_time), ("place", &place)];
 
-    let response = match client.get(url).query(&params).send().await {
-        Ok(res) => {
-            res
-        },
-        Err(e) => {
-            println!("Network request for weather data failed: {}", e);
-            return Err(Box::new(errors::TaskError::new(&format!("Network request failed: {}", e))));
-        },
+    let response = client.get(url)
+        .query(&params)
+        .send()
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+
+    let series: Vec<(String, f64)> = response
+        .json()
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+
+    // Create two TimeSeries instances with the same series data but different scenarios "s1" and "s2"
+    let time_series_s1 = input_data::TimeSeries {
+        scenario: "s1".to_string(),
+        series: series.clone(), // Use clone to use the series data for both TimeSeries
+    };
+    
+    let time_series_s2 = input_data::TimeSeries {
+        scenario: "s2".to_string(),
+        series, // This moves the original series data into the second TimeSeries
     };
 
-    // Get the response text as a String
-    let response_text = response.text().await.unwrap_or_else(|_| "".to_string());
-
-    // Parse JSON from the response text
-    let mut weather_data: input_data::WeatherData = serde_json::from_str(&response_text)
-    .map_err(|e| {
-        println!("Failed to parse weather data JSON response: {}", e);
-        Box::new(errors::TaskError::new(&format!("Failed to parse JSON response: {}", e))) as Box<dyn Error + Send>
-    })?;
-
-    // Parse start_time and end_time, and convert to DateTime<FixedOffset>
-    let start_timestamp = match NaiveDateTime::parse_from_str(&start_time, "%Y-%m-%d %H:%M:%S") {
-        Ok(ndt) => DateTime::<FixedOffset>::from_utc(ndt, FixedOffset::east(0)),
-        Err(_) => Utc::now().with_timezone(&FixedOffset::east(0)), // Fallback to current time if parsing fails
+    // Bundle the two TimeSeries into a TimeSeriesData
+    let weather_ts = input_data::TimeSeriesData {
+        ts_data: vec![time_series_s1, time_series_s2],
     };
 
-    let end_timestamp = match NaiveDateTime::parse_from_str(&end_time, "%Y-%m-%d %H:%M:%S") {
-        Ok(ndt) => DateTime::<FixedOffset>::from_utc(ndt, FixedOffset::east(0)),
-        Err(_) => Utc::now().with_timezone(&FixedOffset::east(0)), // Fallback to current time if parsing fails
+    let weather_data = input_data::WeatherData {
+        place,
+        weather_data: weather_ts,
     };
 
-    let mut current_timestamp = start_timestamp;
-
-    // Loop through the weather_data and replace the timestamp
-    for time_point in &mut weather_data.weather_data {
-        // Convert temperature
-        time_point.value += 273.15;
-
-        // Use generated timestamp, ensure it's formatted correctly
-        let formatted_timestamp = current_timestamp.format("%Y-%m-%dT%H:%M:%S%z").to_string();
-        time_point.timestamp = formatted_timestamp;
-
-        // Increment current_timestamp by 1 hour
-        current_timestamp = current_timestamp + ChronoDuration::hours(1);
-        
-        // Break the loop if the current_timestamp exceeds the end_timestamp
-        if current_timestamp > end_timestamp {
-            break;
-        }
-    }   
-
-    // Print the updated weather data for debugging
     println!("Weather Data: {:?}", weather_data);
     Ok(weather_data)
 }
@@ -592,6 +597,37 @@ mod tests {
             assert_eq!(interior_air_node.state.initial_state, 296.0, "The initial_state of the interiorair node should be updated to 296.0");
         } else {
             panic!("InteriorAir node not found in nodes after update.");
+        }
+    }
+
+    #[test]
+    fn test_update_outside_node_inflow_success() {
+        let mut optimization_data = load_test_optimization_data_from_yaml("update_outside_node_inflow_success.yaml")
+            .expect("Failed to load test optimization data from YAML");
+
+        // Pre-update check: Ensure "outside" node's inflow scenarios are as expected before update
+        if let Some(outside_node) = optimization_data.model_data.as_ref().and_then(|md| md.input_data.nodes.get("outside")) {
+            // Check that scenarios exist but have empty series
+            for ts in &outside_node.inflow.ts_data {
+                assert!(ts.series.is_empty(), "Scenario '{}' should initially have an empty series.", ts.scenario);
+            }
+        } else {
+            panic!("Outside node not found in nodes before update.");
+        }
+
+        // Assuming update_outside_node_inflow is implemented to update the inflow based on weather_data
+        let result = update_outside_node_inflow(&mut optimization_data);
+        assert!(result.is_ok(), "Updating outside node's inflow failed.");
+
+        // Post-update check: Verify "outside" node's inflow has been updated with non-empty series
+        if let Some(outside_node) = optimization_data.model_data.as_ref().and_then(|md| md.input_data.nodes.get("outside")) {
+            // Assert that the series for each scenario within inflow is now non-empty
+            for ts in &outside_node.inflow.ts_data {
+                assert!(!ts.series.is_empty(), "Scenario '{}' should not be empty after update.", ts.scenario);
+                // Further checks can be added here to verify the content of the inflow matches expectations
+            }
+        } else {
+            panic!("Outside node not found in nodes after update.");
         }
     }
 

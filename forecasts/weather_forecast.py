@@ -14,60 +14,46 @@ pd.set_option('display.min_rows', 500)
 
 class WeatherHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        # Parse the URL path and query components
         parsed_path = urlparse.urlparse(self.path)
         path = parsed_path.path
         query = parsed_path.query
         query_components = urlparse.parse_qs(query)
 
-        # Handling the '/get_weather_data' endpoint
         if path == '/get_weather_data':
             start_time = query_components.get('start_time', [None])[0]
             end_time = query_components.get('end_time', [None])[0]
             place = query_components.get('place', [None])[0]
 
-            # Check for missing parameters
             if None in (start_time, end_time, place):
                 self.send_response(400)
                 self.end_headers()
                 self.wfile.write(b'Bad Request: Missing parameters')
             else:
-                # Collect and reshape data
                 data = collect_data(start_time, end_time, place)
                 times = list(data.keys())
                 new_data_dict, locations_list = reshape_dict(data, times)
 
-                # Convert data to match the Rust WeatherData struct
                 for location in locations_list:
-                    # Convert DataFrame to a list of tuples (timestamp, value)
-                    df = pd.DataFrame(index=times, data=new_data_dict[location]).reset_index()
-                    # Convert Timestamp to string
-                    df['index'] = df['index'].astype(str)
-                    weather_data = list(df.itertuples(index=False, name=None))
+                    # Assuming temperature is the parameter we're interested in
+                    temperature_data = new_data_dict[location]['Temperature']
+                    series = [(dt.datetime.strptime(time, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%dT%H:%M:%S%z"), temp + 273.15) for time, temp in zip(times, temperature_data)]
 
-                    # Construct the response
-                    response_data = {
-                        'place': location,
-                        'weather_data': weather_data
-                    }
-
-                    # Send the response
+                    # Send the series directly
                     self.send_response(200)
                     self.send_header('Content-type', 'application/json')
                     self.end_headers()
-                    self.wfile.write(json.dumps(response_data).encode())
-                    return  # Important to return after sending the response
+                    self.wfile.write(json.dumps(series).encode())
+                    return
 
         else:
-            # Handle unknown paths
             self.send_response(404)
             self.end_headers()
             self.wfile.write(b'Not Found')
 
 def run_server(server_class=HTTPServer, handler_class=WeatherHandler):
-    server_address = ('', 8001)  # Host on all available interfaces on port 8000
+    server_address = ('', 8001)
     httpd = server_class(server_address, handler_class)
-    print('Starting httpd...')
+    print('Starting weather forecast server')
     httpd.serve_forever()
 
 # Functions collect_data and reshape_dict remain the same as in your original script
