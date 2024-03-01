@@ -67,8 +67,7 @@ async fn update_model_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mp
         update_outside_node_inflow(&mut optimization_data);
 
         //Update elec prices
-        // - Convert the data to TimeSeriesData
-        // - Update the input_data.markets.npe
+        update_npe_market_prices(&mut optimization_data);
 
         if tx.send(optimization_data).await.is_err() {
             eprintln!("Failed to send updated OptimizationData");
@@ -351,33 +350,47 @@ async fn fetch_electricity_prices(start_time: String, end_time: String, country:
     let response = client.get(&url).header("accept", "*/*").send().await
         .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
 
-    // Assuming the API response directly maps to Vec<(String, f64)>
     let price_series: Vec<(String, f64)> = response.json().await
         .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
 
-    // Create two TimeSeries instances with the same series data for scenarios "s1" and "s2"
+    // Original TimeSeriesData
+    let original_ts_data = create_modified_price_series_data(&price_series, 1.0);
+    // Up Price TimeSeriesData
+    let up_price_ts_data = create_modified_price_series_data(&price_series, 1.1);
+    // Down Price TimeSeriesData
+    let down_price_ts_data = create_modified_price_series_data(&price_series, 0.9);
+
+    let electricity_price_data = input_data::ElectricityPriceData {
+        country: country.clone(),
+        price_data: original_ts_data,
+        up_price_data: up_price_ts_data,
+        down_price_data: down_price_ts_data,
+    };
+
+    Ok(electricity_price_data)
+}
+
+fn create_modified_price_series_data(
+    original_series: &Vec<(String, f64)>,
+    multiplier: f64,
+) -> input_data::TimeSeriesData {
+    let modified_series = original_series.iter()
+        .map(|(timestamp, price)| (timestamp.clone(), price * multiplier))
+        .collect::<Vec<(String, f64)>>();
+
     let time_series_s1 = input_data::TimeSeries {
         scenario: "s1".to_string(),
-        series: price_series.clone(), // Clone since it's used again below
+        series: modified_series.clone(), // Clone for s1
     };
 
     let time_series_s2 = input_data::TimeSeries {
         scenario: "s2".to_string(),
-        series: price_series,
+        series: modified_series, // Re-use for s2
     };
 
-    // Wrap these in TimeSeriesData
-    let ts_data = input_data::TimeSeriesData {
+    input_data::TimeSeriesData {
         ts_data: vec![time_series_s1, time_series_s2],
-    };
-
-    // Create ElectricityPriceData with this TimeSeriesData
-    let electricity_price_data = input_data::ElectricityPriceData {
-        country: country.clone(),
-        price_data: ts_data,
-    };
-
-    Ok(electricity_price_data)
+    }
 }
 
 /* 
@@ -671,6 +684,37 @@ mod tests {
         } else {
             panic!("NPE market not found in markets after update.");
         }
+    }
+
+    #[test]
+    fn test_create_modified_price_series_data() {
+        // Setup test data
+        let original_series = vec![
+            ("2023-01-01T00:00:00Z".to_string(), 100.0),
+            ("2023-01-01T01:00:00Z".to_string(), 200.0),
+        ];
+        let multiplier = 1.1; // Example multiplier
+
+        // Call the function under test
+        let result = create_modified_price_series_data(&original_series, multiplier);
+
+        // Verify that the ts_data contains two scenarios "s1" and "s2"
+        assert_eq!(result.ts_data.len(), 2, "There should be two scenarios in the result.");
+
+        // Check that both scenarios ("s1" and "s2") have the series correctly modified
+        for ts in &result.ts_data {
+            assert_eq!(ts.series.len(), original_series.len(), "Each scenario should have the same number of series as the original.");
+
+            for (i, (timestamp, price)) in ts.series.iter().enumerate() {
+                assert_eq!(timestamp, &original_series[i].0, "Timestamps should match the original series.");
+                let expected_price = original_series[i].1 * multiplier;
+                assert!((price - expected_price).abs() < f64::EPSILON, "Prices should be correctly modified by the multiplier.");
+            }
+        }
+
+        // Additionally, you can check specific scenarios if needed
+        assert_eq!(result.ts_data[0].scenario, "s1", "First scenario should be 's1'.");
+        assert_eq!(result.ts_data[1].scenario, "s2", "Second scenario should be 's2'.");
     }
 
 }

@@ -209,6 +209,8 @@ pub struct ElectricityPriceData {
     // Fields representing weather data
     pub country: String,
     pub price_data: TimeSeriesData,
+    pub up_price_data: TimeSeriesData,
+    pub down_price_data: TimeSeriesData,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
