@@ -1,7 +1,6 @@
 country: fi
 location: Hervanta
 timezone: Europe/Helsinki
-elec_price_source: Elering
 temporals:
       hours: 12
 elec_price_source:
@@ -11,7 +10,23 @@ elec_price_source:
     bidding_in_domain: 10YFI-1--------U
     bidding_out_domain: 10YFI-1--------U
 time_data:
+  start_time: default_start_time
+  end_time: default_end_time
+  series: []
 weather_data:
+  place: "ExamplePlace"
+  weather_data:
+    ts_data:
+      - scenario: "s1"
+        series:
+          - ["2023-03-01T00:00:00Z", 285.15]
+          - ["2023-03-01T01:00:00Z", 286.15]
+          - ["2023-03-01T02:00:00Z", 287.15]
+      - scenario: "s2"
+        series:
+          - ["2023-03-01T00:00:00Z", 288.15]
+          - ["2023-03-01T01:00:00Z", 289.15]
+          - ["2023-03-01T02:00:00Z", 290.15]
 model_data:
   input_data:
     contains_delay: false
@@ -184,15 +199,15 @@ model_data:
       interiorair:
         cost:
           ts_data:
-          - scenario: Scenario1
+          - scenario: s1
             series: []
-          - scenario: Scenario2
+          - scenario: s2
             series: []
         inflow:
           ts_data:
-          - scenario: Scenario1
+          - scenario: s1
             series: []
-          - scenario: Scenario2
+          - scenario: s2
             series: []
         is_commodity: false
         is_inflow: false
@@ -213,9 +228,9 @@ model_data:
       outside:
         cost:
           ts_data:
-          - scenario: Scenario1
+          - scenario: s1
             series: []
-          - scenario: Scenario2
+          - scenario: s2
             series: []
         inflow:
           ts_data:
@@ -276,5 +291,7 @@ model_data:
 elec_price_data:
 sensor_data:
   - sensor_name: "interiorair"
-    temp: 295.15  # Example temperature in Kelvin
+    temp: 296.0
+  - sensor_name: "exteriorair"
+    temp: 278.0
 control_results:

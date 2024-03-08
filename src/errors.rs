@@ -1,4 +1,4 @@
-use std::fmt;
+use std::fmt::{self, Display, Formatter};
 use warp::reject::Reject;
 use std::error::Error;
 
@@ -126,3 +126,33 @@ impl fmt::Display for TaskError {
 }
 
 impl Error for TaskError {}
+
+/// Custom error for handling errors specific to parsing weather data.
+#[derive(Debug)]
+pub struct WeatherDataError {
+    details: String,
+}
+
+impl fmt::Display for WeatherDataError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.details)
+    }
+}
+
+#[derive(Debug)]
+pub struct TimeDataParseError(String);
+
+impl TimeDataParseError {
+    pub fn new(msg: &str) -> Self {
+        TimeDataParseError(msg.to_owned())
+    }
+}
+
+impl std::fmt::Display for TimeDataParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Error for TimeDataParseError {}
+unsafe impl Send for TimeDataParseError {}

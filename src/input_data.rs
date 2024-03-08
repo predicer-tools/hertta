@@ -1,9 +1,20 @@
 
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
+use serde::{self, Serialize, Deserialize, Deserializer, Serializer};
+use chrono::{DateTime, Duration as ChronoDuration, Utc, FixedOffset, TimeZone};
+use tokio::sync::mpsc;
 //use std::fs::File;
-//use std::error::Error;
+use std::error::Error;
+use chrono::format::ParseError;
 //use std::io::Write;
+use serde_json::Value;
+use chrono_tz::Tz;
+use std::str::FromStr;
+use chrono::prelude::*;
+use std::io;
+use std::num::ParseIntError;
+use crate::errors;
+use std::fmt::{self, Display, Formatter};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PricePoint {
@@ -193,15 +204,43 @@ pub struct WeatherData {
     pub weather_data: TimeSeriesData,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WeatherDataResponse {
+    pub place: String,
+    pub weather_values: Vec<f64>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ModelData {
     pub input_data: InputData,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+
+// Serialization function for DateTime<FixedOffset>
+fn serialize<S>(date: &DateTime<FixedOffset>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let s = date.to_rfc3339();
+    serializer.serialize_str(&s)
+}
+
+// Deserialization function for DateTime<FixedOffset>
+fn deserialize<'de, D>(deserializer: D) -> Result<DateTime<FixedOffset>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    s.parse::<DateTime<FixedOffset>>().map_err(serde::de::Error::custom)
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TimeData {
-    pub start_time: String,
-    pub end_time: String,
+    #[serde(serialize_with = "serialize", deserialize_with = "deserialize")]
+    pub start_time: DateTime<FixedOffset>,
+    #[serde(serialize_with = "serialize", deserialize_with = "deserialize")]
+    pub end_time: DateTime<FixedOffset>,
+    pub series: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -277,6 +316,52 @@ pub fn write_to_json_file_bd(data: &ModelData, file_path: &str) -> Result<(), Bo
 }
 */
 
+// Function to get the current time in a given named timezone
+pub fn get_current_time_in_timezone(timezone_name: &str) -> Result<DateTime<FixedOffset>, errors::TimeDataParseError> {
+    let timezone: Tz = timezone_name.parse().map_err(|_| {
+        errors::TimeDataParseError::new("Invalid timezone string")
+    })?;
+
+    let now_utc = Utc::now();
+    let now_in_timezone = now_utc.with_timezone(&timezone);
+
+    // Convert the timezone-aware DateTime object to a DateTime<FixedOffset>
+    let fixed_offset = FixedOffset::east(now_in_timezone.offset().fix().local_minus_utc());
+    let now_with_fixed_offset = now_utc.with_timezone(&fixed_offset);
+
+    Ok(now_with_fixed_offset)
+}
+
+pub fn calculate_time_range(timezone_str: &str, temporals: &Option<Temporals>) -> Result<(DateTime<FixedOffset>, DateTime<FixedOffset>), errors::TimeDataParseError> {
+    let timezone: Tz = timezone_str.parse().map_err(|_| errors::TimeDataParseError::new("Invalid timezone string"))?;
+
+    let now_utc = Utc::now();
+    let now_in_timezone = now_utc.with_timezone(&timezone);
+
+    // Get the FixedOffset from now_in_timezone
+    let fixed_offset = FixedOffset::east_opt(now_in_timezone.offset().fix().local_minus_utc()).ok_or_else(|| errors::TimeDataParseError::new("Invalid FixedOffset"))?;
+
+    let start_time = now_utc.with_timezone(&fixed_offset);
+    let hours_to_add = temporals.as_ref().map_or(12, |t| t.hours as i64);
+    let end_time = start_time + ChronoDuration::hours(hours_to_add);
+
+    Ok((start_time, end_time))
+}
+
+pub async fn generate_hourly_timestamps(start_time: DateTime<FixedOffset>, end_time: DateTime<FixedOffset>) -> Result<Vec<String>, Box<dyn Error + Send>> {
+    let mut current = start_time;
+    let mut timestamps = Vec::new();
+
+    // Loop to generate hourly timestamps between start_time and end_time
+    while current <= end_time {
+        // Convert each DateTime<FixedOffset> to an RFC 3339 formatted string
+        timestamps.push(current.to_rfc3339());
+        // Increment current time by one hour
+        current = current + ChronoDuration::hours(1);
+    }
+
+    Ok(timestamps)
+}
 
 pub fn update_outside_inflow(input_data: &mut InputData, outside_inflow: TimeSeriesData) {
     if let Some(outside_node) = input_data.nodes.get_mut("outside") {
@@ -920,71 +1005,39 @@ pub fn _create_data(init_temp: f64) -> InputData {
 
 }
 */
-/* 
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{TimeZone, Utc};
+
+    #[tokio::test]
+    async fn test_generate_hourly_timestamps_valid() {
+        let start_time = "2022-04-20T00:00:00+00:00";
+        let end_time = "2022-04-20T03:00:00+00:00";
+        let expected = vec![
+            "2022-04-20T00:00:00+00:00",
+            "2022-04-20T01:00:00+00:00",
+            "2022-04-20T02:00:00+00:00",
+            "2022-04-20T03:00:00+00:00",
+        ];
+
+        let result = generate_hourly_timestamps(start_time, end_time).await.unwrap();
+        assert_eq!(result, expected);
+    } 
 
     #[test]
-    fn test_create_time_point() {
-        let result = create_time_point("Test".to_string(), 42.0);
-        assert_eq!(result, ("Test".to_string(), 42.0));
-    }
+    pub fn test_calculate_time_range() {
+        let timezone_str = "UTC";
+        let temporals = Some(Temporals { hours: 12 }); // Assume Temporals is defined elsewhere
+        let (start_time, end_time) = calculate_time_range(timezone_str, &temporals).expect("Should calculate time range successfully");
 
-    #[test]
-    fn test_create_time_point_empty_string() {
-        let result = create_time_point("".to_string(), 0.0);
-        assert_eq!(result, ("".to_string(), 0.0));
-    }
-
-    #[test]
-    fn test_create_time_point_extreme_values() {
-        let result = create_time_point("Extreme".to_string(), std::f64::MAX);
-        assert_eq!(result, ("Extreme".to_string(), std::f64::MAX));
-    }
-
-    #[test]
-    fn test_add_time_point() {
-        let mut ts_vec = Vec::new();
-        add_time_point(&mut ts_vec, ("Test".to_string(), 42.0));
-
-        assert_eq!(ts_vec, vec![("Test".to_string(), 42.0)]);
-    }
-
-    #[test]
-    fn test_add_multiple_time_points() {
-        let mut ts_vec = Vec::new();
-        add_time_point(&mut ts_vec, ("First".to_string(), 1.0));
-        add_time_point(&mut ts_vec, ("Second".to_string(), 2.0));
-
-        assert_eq!(ts_vec, vec![("First".to_string(), 1.0), ("Second".to_string(), 2.0)]);
-    }
-
-    #[test]
-    fn test_add_time_serie() {
-        let mut ts_data_vec = Vec::new();
-        let time_series = TimeSeries::new("Scenario 1".to_string());
-
-        add_time_serie(&mut ts_data_vec, time_series);
-
-        assert_eq!(ts_data_vec.len(), 1);
-        assert_eq!(ts_data_vec[0].scenario, "Scenario 1");
-    }
-
-    #[test]
-    fn test_add_multiple_time_series() {
-        let mut ts_data_vec = Vec::new();
-        let time_series1 = TimeSeries::new("Scenario 1".to_string());
-        let time_series2 = TimeSeries::new("Scenario 2".to_string());
-
-        add_time_serie(&mut ts_data_vec, time_series1);
-        add_time_serie(&mut ts_data_vec, time_series2);
-
-        assert_eq!(ts_data_vec.len(), 2);
-        assert_eq!(ts_data_vec[0].scenario, "Scenario 1");
-        assert_eq!(ts_data_vec[1].scenario, "Scenario 2");
+        // Assertions on start_time and end_time
+        // For example, you might want to check that the start_time and end_time are not empty and possibly that they reflect the expected difference given by `temporals.hours`
+        assert!(!start_time.is_empty(), "Start time should not be empty");
+        assert!(!end_time.is_empty(), "End time should not be empty");
+        // Further assertions can be added based on the expected format and content of start_time and end_time
     }
 
 }
 
-*/

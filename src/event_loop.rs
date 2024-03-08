@@ -10,6 +10,7 @@ use crate::input_data::{OptimizationData, ElectricityPriceData};
 use serde_json::{self, Value};
 use serde_yaml;
 use chrono_tz::Tz;
+use std::fs;
 
 
 pub async fn event_loop(tx_optimization: mpsc::Sender<OptimizationData>) {
@@ -17,6 +18,7 @@ pub async fn event_loop(tx_optimization: mpsc::Sender<OptimizationData>) {
     let (tx_time, mut rx_time) = mpsc::channel::<OptimizationData>(32);
     let (tx_weather, mut rx_weather) = mpsc::channel::<OptimizationData>(32);
     let (tx_elec, mut rx_elec) = mpsc::channel::<OptimizationData>(32);
+    let (tx_update, mut rx_update) = mpsc::channel::<OptimizationData>(32);
     let (tx_final, mut rx_final) = mpsc::channel::<OptimizationData>(32);
 
 
@@ -37,7 +39,12 @@ pub async fn event_loop(tx_optimization: mpsc::Sender<OptimizationData>) {
 
     // Spawn the electricity price data task to process and potentially finalize the data
     tokio::spawn(async move {
-        fetch_elec_price_task(rx_elec, tx_final).await; // Final output sent to tx_final
+        fetch_elec_price_task(rx_elec, tx_update).await; // Final output sent to tx_final
+    });
+
+    // Spawn the update_model_data_task
+    tokio::spawn(async move {
+        update_model_data_task(rx_update, tx_final).await; // Final updated output sent to tx_final
     });
 
     let mut interval = time::interval(Duration::from_secs(10));
@@ -225,104 +232,122 @@ async fn update_token_in_optimization_data(optimization_data: &mut OptimizationD
 }
 */
 
-
-async fn create_time_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
+async fn create_time_data_task(
+    mut rx: mpsc::Receiver<OptimizationData>,
+    tx: mpsc::Sender<OptimizationData>,
+) {
     while let Some(mut optimization_data) = rx.recv().await {
-        if let Some(timezone_str) = &optimization_data.timezone {
-            // Attempt to parse the timezone string
-            match timezone_str.parse::<Tz>() {
-                Ok(timezone) => {
-                    let now = Utc::now();
-                    let now_timezone = now.with_timezone(&timezone);
-
-                    let start_time = now_timezone.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-
-                    // Ensure that temporals and hours exist and are accessible
-                    let hours_to_add = optimization_data.temporals.as_ref().map_or(12, |temporals| temporals.hours); //
-                    let end_time = (now_timezone + chrono::Duration::hours(hours_to_add)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
-
-                    optimization_data.time_data = Some(input_data::TimeData { start_time, end_time });
-                },
-                Err(_) => {
-                    eprintln!("Invalid timezone '{}', defaulting to UTC.", timezone_str);
-                    // Handle the error as needed
+        if let Some(timezone_str) = optimization_data.timezone.as_deref() {
+            if let Ok((start_time, end_time)) = input_data::calculate_time_range(timezone_str, &optimization_data.temporals) {
+                // Generate the series of timestamps based on the DateTime<FixedOffset> objects
+                // Here, convert DateTime<FixedOffset> to strings only if necessary for the generate_hourly_timestamps function or any subsequent operation
+                match input_data::generate_hourly_timestamps(start_time, end_time).await {
+                    Ok(series) => {
+                        // Update optimization_data.time_data with the new TimeData
+                        // Here we keep start_time and end_time as DateTime<FixedOffset> objects
+                        optimization_data.time_data = Some(input_data::TimeData {
+                            start_time,
+                            end_time,
+                            series,
+                        });
+                    },
+                    Err(e) => {
+                        eprintln!("Error generating hourly timestamps: {}", e);
+                        continue;
+                    }
                 }
+            } else {
+                eprintln!("Error calculating time range.");
+                continue;
             }
         } else {
             eprintln!("Timezone is missing from OptimizationData.");
+            continue;
         }
 
+        // Send the updated optimization data
         if tx.send(optimization_data).await.is_err() {
             eprintln!("Failed to send updated OptimizationData");
         }
     }
 }
 
+/* 
+async fn update_series_in_optimization_data(
+    optimization_data: &mut OptimizationData,
+    start_time: DateTime<FixedOffset>,
+    end_time: DateTime<FixedOffset>,
+) -> Result<(), Box<dyn Error + Send>> {
+
+    let series = input_data::generate_hourly_timestamps(start_time, end_time)
+        .await
+        .map_err(|e| Box::<dyn Error + Send>::from(e))?; 
+
+    optimization_data.time_data = Some(input_data::TimeData {
+        start_time: start_time.to_rfc3339(), // Convert DateTime<FixedOffset> to String
+        end_time: end_time.to_rfc3339(),     // Convert DateTime<FixedOffset> to String
+        series,
+    });
+
+    Ok(())
+}
+*/
+pub fn pair_timeseries_with_values(series: &[String], values: &[f64]) -> Vec<(String, f64)> {
+    series.iter().zip(values.iter())
+        .map(|(timestamp, &value)| (timestamp.clone(), value))
+        .collect()
+}
+
 
 async fn fetch_weather_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
-    let mut interval = time::interval(Duration::from_secs(10));
+    let mut interval = time::interval(tokio::time::Duration::from_secs(10));
 
     loop {
         tokio::select! {
-            Some(mut optimization_data) = rx.recv() => { // Directly match against Some or None
+            Some(mut optimization_data) = rx.recv() => {
                 if let Some(time_data) = &optimization_data.time_data {
-                    let location = optimization_data.location.clone().unwrap_or_else(|| "Default Location".to_string());
-                    let start_time = time_data.start_time.clone();
-                    let end_time = time_data.end_time.clone();
+                    let location = optimization_data.location.clone().unwrap_or_default();
 
-                    match fetch_weather_data(start_time, end_time, location).await {
-                        Ok(weather_data) => {
-                            optimization_data.weather_data = Some(weather_data);
-                            if tx.send(optimization_data).await.is_err() {
-                                eprintln!("Failed to send updated optimization data");
-                            }
+                    // Format start_time and end_time to the desired string representation
+                    let start_time_formatted = time_data.start_time.format("%Y-%m-%dT%H:00:00Z").to_string();
+                    let end_time_formatted = time_data.end_time.format("%Y-%m-%dT%H:00:00Z").to_string();
+
+                    // Log the formatted times for debugging
+                    println!("Formatted start_time: {}", start_time_formatted);
+                    println!("Formatted end_time: {}", end_time_formatted);
+
+                    // Pass formatted times as strings to fetch_weather_data
+                    match fetch_weather_data(start_time_formatted, end_time_formatted, location).await {
+                        Ok(fmi_data) => {
+                            println!("Fetched weather data: {:?}", fmi_data);
+                            // Placeholder for further processing
                         },
-                        Err(e) => {
-                            eprintln!("fetch_weather_data_task: Failed to fetch weather data: {:?}", e);
-                        },
+                        Err(e) => eprintln!("fetch_weather_data_task: Failed to fetch weather data: {}", e),
                     }
                 } else {
                     println!("fetch_weather_data_task: Time data is missing.");
                 }
             },
-            _ = interval.tick() => {
-                println!("Interval ticked, but no new optimization data received.");
-            },
-            else => break, // Handle the case when all channels are closed and no more messages will be received.
+            _ = interval.tick() => println!("Interval ticked, but no new optimization data received."),
+            else => break,
         }
     }
 }
 
 
-async fn fetch_weather_data(start_time: String, end_time: String, place: String) 
-    -> Result<input_data::WeatherData, Box<dyn Error + Send>> {
-    
-    println!("Fetching weather data for place: {}, start time: {}, end time: {}", place, start_time, end_time);
-
-    let client = reqwest::Client::new();
-    let url = "http://localhost:8001/get_weather_data";
-    let params = [("start_time", &start_time), ("end_time", &end_time), ("place", &place)];
-
-    let response = client.get(url)
-        .query(&params)
-        .send()
-        .await
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
-
-    let series: Vec<(String, f64)> = response
-        .json()
-        .await
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
-
+fn create_weather_data_with_scenarios(
+    paired_series: Vec<(String, f64)>, 
+    place: String
+) -> input_data::WeatherData {
     // Create two TimeSeries instances with the same series data but different scenarios "s1" and "s2"
     let time_series_s1 = input_data::TimeSeries {
         scenario: "s1".to_string(),
-        series: series.clone(), // Use clone to use the series data for both TimeSeries
+        series: paired_series.clone(), // Use clone to use the series data for both TimeSeries
     };
-    
+
     let time_series_s2 = input_data::TimeSeries {
         scenario: "s2".to_string(),
-        series, // This moves the original series data into the second TimeSeries
+        series: paired_series, // This moves the original series data into the second TimeSeries
     };
 
     // Bundle the two TimeSeries into a TimeSeriesData
@@ -330,13 +355,50 @@ async fn fetch_weather_data(start_time: String, end_time: String, place: String)
         ts_data: vec![time_series_s1, time_series_s2],
     };
 
+    // Create the WeatherData with the TimeSeriesData
     let weather_data = input_data::WeatherData {
         place,
         weather_data: weather_ts,
     };
 
-    println!("Weather Data: {:?}", weather_data);
-    Ok(weather_data)
+    weather_data
+}
+
+
+
+async fn fetch_weather_data(start_time: String, end_time: String, place: String) -> Result<Vec<f64>, Box<dyn Error + Send>> {
+    println!("Fetching weather data for place: {}, start time: {}, end time: {}", place, start_time, end_time);
+
+    let client = reqwest::Client::new();
+    let url = format!("http://localhost:8001/get_weather_data?start_time={}&end_time={}&place={}", start_time, end_time, place);
+    println!("Request URL: {}", url);
+
+    let response = client.get(&url).send().await.map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+
+    // Check response status
+    println!("Response status: {}", response.status());
+    // Print headers
+    for (key, value) in response.headers().iter() {
+        println!("{:?}: {:?}", key, value);
+    }
+
+    let response_body = response.text().await.map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+    // Print raw response body
+    println!("Raw response body: {}", response_body);
+
+    // Attempt to deserialize response body into FMIData structure
+    match serde_json::from_str::<input_data::WeatherDataResponse>(&response_body) {
+        Ok(fmi_data) => {
+            // Print deserialized data
+            println!("Deserialized Weather Data: {:?}", fmi_data.weather_values);
+            Ok(fmi_data.weather_values)
+        },
+        Err(e) => {
+            // Print error if deserialization fails
+            eprintln!("Error deserializing response body: {}", e);
+            Err(Box::new(e))
+        },
+    }
 }
 
 async fn fetch_electricity_prices(start_time: String, end_time: String, country: String) 
@@ -431,44 +493,43 @@ async fn fetch_entsoe_electricity_prices(
 
 
 async fn fetch_elec_price_task(mut rx: mpsc::Receiver<input_data::OptimizationData>, tx: mpsc::Sender<input_data::OptimizationData>) {
-    let mut interval = time::interval(Duration::from_secs(60)); // Set up the interval right away
+    let mut interval = time::interval(Duration::from_secs(60)); // Adjust the interval as needed
 
-    println!("Fetch elec prices");
+    println!("Fetching electricity prices...");
 
     loop {
-        interval.tick().await; // Wait for the next interval tick before the next fetch
+        interval.tick().await; // Wait for the next interval tick
 
         if let Some(mut optimization_data) = rx.recv().await {
-            // Ensure country and time_data are both present
+            // Ensure both country and time_data are present
             if let (Some(country), Some(time_data)) = (&optimization_data.country, &optimization_data.time_data) {
-                let start_time = time_data.start_time.clone();
-                let end_time = time_data.end_time.clone();
+                // Convert DateTime<FixedOffset> to string in the specified format
+                let start_time_str = time_data.start_time.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+                let end_time_str = time_data.end_time.format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
-                match fetch_electricity_prices(start_time, end_time, country.clone()).await {
+                match fetch_electricity_prices(start_time_str, end_time_str, country.clone()).await {
                     Ok(price_data) => {
-                        // Update the electricity price data
-                        optimization_data.elec_price_data = Some(price_data.clone()); // Assuming price_data can be cloned for printing
+                        // Update electricity price data
+                        optimization_data.elec_price_data = Some(price_data.clone()); // Clone if necessary
                         
-                        // Print the fetched electricity price data
                         println!("Fetched electricity price data for country '{}': {:?}", country, price_data);
 
-                        // Send updated data
                         tx.send(optimization_data).await.expect("Failed to send updated optimization data");
                     },
                     Err(e) => {
-                        eprintln!("fetch_electricity_price_task: Failed to fetch electricity price data for country '{}': {:?}", country, e);
+                        eprintln!("Failed to fetch electricity price data for country '{}': {:?}", country, e);
                     },
                 }
             } else {
                 if optimization_data.country.is_none() {
-                    eprintln!("fetch_electricity_price_task: Country data is missing.");
+                    eprintln!("Country data is missing.");
                 }
                 if optimization_data.time_data.is_none() {
-                    eprintln!("fetch_electricity_price_task: Time data is missing.");
+                    eprintln!("Time data is missing.");
                 }
             }
         } else {
-            println!("fetch_electricity_price_task: Channel closed, stopping task.");
+            println!("Channel closed, stopping task.");
             break; // Exit the loop if the channel is closed
         }
     }
@@ -561,6 +622,7 @@ mod tests {
     use std::fs::File;
     use std::io::Read;
     use std::path::PathBuf;
+    use tokio::runtime::Runtime;
 
     fn load_test_optimization_data_from_yaml(file_name: &str) -> Result<OptimizationData, Box<dyn std::error::Error>> {
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -716,5 +778,33 @@ mod tests {
         assert_eq!(result.ts_data[0].scenario, "s1", "First scenario should be 's1'.");
         assert_eq!(result.ts_data[1].scenario, "s2", "Second scenario should be 's2'.");
     }
+
+    /* 
+    #[tokio::test]
+    async fn test_update_series_in_optimization_data() {
+        // Mock the OptimizationData
+        let mut optimization_data = load_test_optimization_data_from_yaml("time_data_generation_test.yaml")
+            .expect("Failed to load optimization data from YAML");
+
+        // Define start and end times
+        let start_time = "2022-04-20T00:00:00+00:00";
+        let end_time = "2022-04-20T03:00:00+00:00";
+
+        // Perform the update
+        update_series_in_optimization_data(&mut optimization_data, start_time, end_time)
+            .await
+            .expect("Failed to update series in optimization data");
+
+        // Assert the series was updated as expected
+        assert!(optimization_data.time_data.is_some(), "Time data should be present");
+        let time_data = optimization_data.time_data.unwrap();
+        assert_eq!(time_data.start_time, start_time);
+        assert_eq!(time_data.end_time, end_time);
+        assert_eq!(time_data.series.len(), 4); // Expecting 4 timestamps
+        assert_eq!(time_data.series[0], "2022-04-20T00:00:00+00:00");
+        // Further assertions can be made on the series if necessary
+    }
+    */
+
 
 }
