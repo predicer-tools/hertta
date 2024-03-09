@@ -54,7 +54,6 @@ pub async fn event_loop(tx_optimization: mpsc::Sender<OptimizationData>) {
 
         // Check if there's data to process
         while let Some(final_data) = rx_final.recv().await {
-            println!("Received final processed OptimizationData: {:?}", final_data);
             // Correctly call send_to_server_task with the received data
             if let Err(e) = send_to_server_task(final_data).await {
                 eprintln!("Error while sending final optimization data to server: {}", e);
@@ -453,35 +452,56 @@ async fn fetch_weather_data(start_time: String, end_time: String, place: String)
     }
 }
 
-async fn fetch_electricity_prices(start_time: String, end_time: String, country: String) 
-    -> Result<input_data::ElectricityPriceData, Box<dyn Error + Send>> {
-    
-    println!("Fetching electricity price data for country: {}, start time: {}, end time: {}", country, start_time, end_time);
+async fn fetch_electricity_prices(start_time: String, end_time: String, country: String) -> Result<Vec<f64>, Box<dyn Error + Send>> {
+    println!("Fetching electricity price data for country: {}, start time: {}, end_time: {}", country, start_time, end_time);
 
     let client = reqwest::Client::new();
     let url = format!("https://dashboard.elering.ee/api/nps/price?start={}&end={}", start_time, end_time);
-    
-    let response = client.get(&url).header("accept", "*/*").send().await
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
 
-    let price_series: Vec<(String, f64)> = response.json().await
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+    // Fetch the response
+    let response = client.get(&url).header("accept", "*/*").send().await.map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
 
-    // Original TimeSeriesData
-    let original_ts_data = create_modified_price_series_data(&price_series, 1.0);
-    // Up Price TimeSeriesData
-    let up_price_ts_data = create_modified_price_series_data(&price_series, 1.1);
-    // Down Price TimeSeriesData
-    let down_price_ts_data = create_modified_price_series_data(&price_series, 0.9);
+    // Deserialize the response into a custom ApiResponse structure you need to define based on the JSON structure
+    let api_response: input_data::EleringData = response.json().await.map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
 
-    let electricity_price_data = input_data::ElectricityPriceData {
-        country: country.clone(),
-        price_data: original_ts_data,
-        up_price_data: up_price_ts_data,
-        down_price_data: down_price_ts_data,
-    };
+    // Extract only the prices for the specified country
+    let prices = api_response.data.get(&country)
+        .ok_or_else(|| Box::new(std::io::Error::new(std::io::ErrorKind::NotFound, "Country data not found")) as Box<dyn Error + Send>)?
+        .iter()
+        .map(|entry| entry.price)
+        .collect::<Vec<f64>>();
 
-    Ok(electricity_price_data)
+    Ok(prices)
+}
+
+pub fn create_and_update_elec_price_data(optimization_data: &mut OptimizationData, prices: Vec<f64>) {
+    if let Some(time_data) = &optimization_data.time_data {
+        let series = &time_data.series;
+
+        // Pair the series with the provided prices
+        let price_series = pair_timeseries_with_values(series, &prices);
+
+        // Generating modified TimeSeriesData for original, up, and down price scenarios
+        let original_ts_data = create_modified_price_series_data(&price_series, 1.0); // No modification for the original
+        let up_price_ts_data = create_modified_price_series_data(&price_series, 1.1); // Increase by 10%
+        let down_price_ts_data = create_modified_price_series_data(&price_series, 0.9); // Decrease by 10%
+
+        // Assuming the country is defined somewhere within optimization_data, for example in the location field
+        let country = optimization_data.location.clone().unwrap_or_default();
+
+        // Constructing the ElectricityPriceData structure
+        let electricity_price_data = input_data::ElectricityPriceData {
+            country,
+            price_data: original_ts_data,
+            up_price_data: up_price_ts_data,
+            down_price_data: down_price_ts_data,
+        };
+
+        // Updating the elec_price_data in optimization_data
+        optimization_data.elec_price_data = Some(electricity_price_data);
+    } else {
+        eprintln!("TimeData is missing in optimization_data. Cannot update elec_price_data.");
+    }
 }
 
 fn create_modified_price_series_data(
@@ -544,29 +564,26 @@ async fn fetch_entsoe_electricity_prices(
 */
 
 
-async fn fetch_elec_price_task(mut rx: mpsc::Receiver<input_data::OptimizationData>, tx: mpsc::Sender<input_data::OptimizationData>) {
-    let mut interval = time::interval(Duration::from_secs(60)); // Adjust the interval as needed
+async fn fetch_elec_price_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
+    let mut interval = time::interval(tokio::time::Duration::from_secs(60));
 
     println!("Fetching electricity prices...");
 
     loop {
-        interval.tick().await; // Wait for the next interval tick
+        interval.tick().await;
 
         if let Some(mut optimization_data) = rx.recv().await {
-            // Ensure both country and time_data are present
             if let (Some(country), Some(time_data)) = (&optimization_data.country, &optimization_data.time_data) {
-                // Convert DateTime<FixedOffset> to string in the specified format
                 let start_time_str = time_data.start_time.format("%Y-%m-%dT%H:%M:%SZ").to_string();
                 let end_time_str = time_data.end_time.format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
                 match fetch_electricity_prices(start_time_str, end_time_str, country.clone()).await {
-                    Ok(price_data) => {
-                        // Update electricity price data
-                        optimization_data.elec_price_data = Some(price_data.clone()); // Clone if necessary
-                        
-                        println!("Fetched electricity price data for country '{}': {:?}", country, price_data);
-
-                        tx.send(optimization_data).await.expect("Failed to send updated optimization data");
+                    Ok(prices) => {
+                        println!("Fetched electricity prices for country '{}': {:?}", country, prices);
+                        create_and_update_elec_price_data(&mut optimization_data, prices);
+                        if tx.send(optimization_data).await.is_err() {
+                            eprintln!("Failed to send updated optimization data");
+                        }
                     },
                     Err(e) => {
                         eprintln!("Failed to fetch electricity price data for country '{}': {:?}", country, e);
@@ -582,12 +599,10 @@ async fn fetch_elec_price_task(mut rx: mpsc::Receiver<input_data::OptimizationDa
             }
         } else {
             println!("Channel closed, stopping task.");
-            break; // Exit the loop if the channel is closed
+            break;
         }
     }
 }
-
-
 
 pub async fn fetch_model_data() -> Result<input_data::OptimizationData, errors::ModelDataError> {
     let url = "http://localhost:8000/to_hertta/model_data"; // Replace with the actual URL

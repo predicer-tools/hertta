@@ -301,6 +301,18 @@ pub struct ControlData {
     pub control_data: Vec<TimePoint>,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct EleringData {
+    pub success: bool,
+    pub data: HashMap<String, Vec<PriceData>>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PriceData {
+    pub timestamp: i64, 
+    pub price: f64,
+}
+
 /* 
 pub fn write_to_json_file_bd(data: &ModelData, file_path: &str) -> Result<(), Box<dyn Error>> {
     // Serialize the data to JSON
