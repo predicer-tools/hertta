@@ -109,33 +109,6 @@ fn update_interior_air_initial_state(optimization_data: &mut OptimizationData) -
     }
 }
 
-fn update_outside_node_inflow(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
-    // Check if weather_data is Some
-    if let Some(weather_data) = &optimization_data.weather_data {
-        // Ensure model_data is available and contains the "outside" node
-        let model_data = optimization_data.model_data.as_mut().ok_or("Model data is not available.")?;
-        let nodes = &mut model_data.input_data.nodes;
-
-        // Find the node named "outside"
-        if let Some(outside_node) = nodes.get_mut("outside") {
-            // Check if the node is supposed to have inflow data
-            if outside_node.is_inflow {
-                // Update the outside node's inflow with the weather_data
-                outside_node.inflow = weather_data.weather_data.clone(); // Assuming this is the TimeSeriesData you want to use
-                return Ok(());
-            } else {
-                return Err("Outside node is not marked for inflow.");
-            }
-        } else {
-            // "outside" node not found
-            return Err("Outside node not found in nodes.");
-        }
-    } else {
-        // weather_data is None
-        return Err("Weather data is not available.");
-    }
-}
-
 fn update_npe_market_prices(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
     // Check if ElectricityPriceData is Some
     if let Some(electricity_price_data) = &optimization_data.elec_price_data {
@@ -292,15 +265,10 @@ async fn update_series_in_optimization_data(
     Ok(())
 }
 */
-pub fn pair_timeseries_with_values(series: &[String], values: &[f64]) -> Vec<(String, f64)> {
-    series.iter().zip(values.iter())
-        .map(|(timestamp, &value)| (timestamp.clone(), value))
-        .collect()
-}
 
 
 async fn fetch_weather_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
-    let mut interval = time::interval(tokio::time::Duration::from_secs(10));
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
 
     loop {
         tokio::select! {
@@ -318,11 +286,19 @@ async fn fetch_weather_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: m
 
                     // Pass formatted times as strings to fetch_weather_data
                     match fetch_weather_data(start_time_formatted, end_time_formatted, location).await {
-                        Ok(fmi_data) => {
-                            println!("Fetched weather data: {:?}", fmi_data);
-                            // Placeholder for further processing
+                        Ok(weather_values) => {
+                            println!("Fetched weather data: {:?}", weather_values);
+
+                            // Now that we have fetched weather values, create and update WeatherData
+                            // Note: You must define the function create_and_update_weather_data if not already defined
+                            create_and_update_weather_data(&mut optimization_data, &weather_values);
                         },
                         Err(e) => eprintln!("fetch_weather_data_task: Failed to fetch weather data: {}", e),
+                    }
+
+                    // Attempt to send the updated optimization data back
+                    if tx.send(optimization_data).await.is_err() {
+                        eprintln!("Failed to send updated optimization data");
                     }
                 } else {
                     println!("fetch_weather_data_task: Time data is missing.");
@@ -334,8 +310,84 @@ async fn fetch_weather_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: m
     }
 }
 
+pub fn update_outside_node_inflow(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
+    // Check if weather_data is Some
+    if let Some(weather_data) = &optimization_data.weather_data {
+        // Ensure model_data is available and contains the "outside" node
+        let model_data = optimization_data.model_data.as_mut().ok_or("Model data is not available.")?;
+        let nodes = &mut model_data.input_data.nodes;
 
-fn create_weather_data_with_scenarios(
+        // Find the node named "outside"
+        if let Some(outside_node) = nodes.get_mut("outside") {
+            // Check if the node is supposed to have inflow data
+            if outside_node.is_inflow {
+                // Update the outside node's inflow with the weather_data
+                outside_node.inflow = weather_data.weather_data.clone(); // Assuming this is the TimeSeriesData you want to use
+                return Ok(());
+            } else {
+                return Err("Outside node is not marked for inflow.");
+            }
+        } else {
+            // "outside" node not found
+            return Err("Outside node not found in nodes.");
+        }
+    } else {
+        // weather_data is None
+        return Err("Weather data is not available.");
+    }
+}
+
+// Function to create TimeSeriesData from weather values and update the weather_data field in optimization_data
+pub fn create_and_update_weather_data(optimization_data: &mut OptimizationData, values: &[f64]) {
+    if let Some(time_data) = &optimization_data.time_data {
+        // Extract series from TimeData
+        let series = &time_data.series;
+
+        // Use the extracted series and the provided values to pair them together
+        let paired_series = pair_timeseries_with_values(series, values);
+
+        // Generate TimeSeriesData from the paired series
+        let ts_data = create_time_series_data_with_scenarios(paired_series);
+
+        // Assuming you have the place information somewhere in optimization_data. If not, adjust as necessary.
+        let place = optimization_data.location.clone().unwrap_or_default();
+
+        // Update the weather_data field in optimization_data with the new TimeSeriesData and place
+        optimization_data.weather_data = Some(input_data::WeatherData {
+            place,
+            weather_data: ts_data,
+        });
+    } else {
+        eprintln!("TimeData is missing in optimization_data. Cannot update weather_data.");
+    }
+}
+
+// Function to create TimeSeriesData with scenarios "s1" and "s2" using paired series
+fn create_time_series_data_with_scenarios(paired_series: Vec<(String, f64)>) -> input_data::TimeSeriesData {
+    // Create TimeSeries instances for scenarios "s1" and "s2" with the same series data
+    let time_series_s1 = input_data::TimeSeries {
+        scenario: "s1".to_string(),
+        series: paired_series.clone(), // Clone to use the series data for both TimeSeries
+    };
+
+    let time_series_s2 = input_data::TimeSeries {
+        scenario: "s2".to_string(),
+        series: paired_series, // Use the original series data here
+    };
+
+    // Bundle the two TimeSeries into TimeSeriesData
+    input_data::TimeSeriesData {
+        ts_data: vec![time_series_s1, time_series_s2],
+    }
+}
+
+pub fn pair_timeseries_with_values(series: &[String], values: &[f64]) -> Vec<(String, f64)> {
+    series.iter().zip(values.iter())
+        .map(|(timestamp, &value)| (timestamp.clone(), value))
+        .collect()
+}
+
+pub fn create_weather_data_with_scenarios(
     paired_series: Vec<(String, f64)>, 
     place: String
 ) -> input_data::WeatherData {
