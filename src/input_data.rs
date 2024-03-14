@@ -29,6 +29,7 @@ pub struct Temporals {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InputData {
+    pub timeseries: Vec<String>,
     pub contains_reserves: bool,
     pub contains_online: bool,
     pub contains_state: bool,
@@ -301,13 +302,13 @@ pub struct ControlData {
     pub control_data: Vec<TimePoint>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct EleringData {
     pub success: bool,
     pub data: HashMap<String, Vec<PriceData>>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PriceData {
     pub timestamp: i64, 
     pub price: f64,
@@ -366,10 +367,13 @@ pub async fn generate_hourly_timestamps(start_time: DateTime<FixedOffset>, end_t
 
     // Loop to generate hourly timestamps between start_time and end_time
     while current <= end_time {
-        // Convert each DateTime<FixedOffset> to an RFC 3339 formatted string
-        timestamps.push(current.to_rfc3339());
+        // Format DateTime<FixedOffset> to "YYYY-MM-DDTHH:00:00±HH:MM"
+        let formatted_timestamp = current.format("%Y-%m-%dT%H:00:00%:z").to_string();
+        
+        timestamps.push(formatted_timestamp);
+
         // Increment current time by one hour
-        current = current + ChronoDuration::hours(1);
+        current = current + chrono::Duration::hours(1);
     }
 
     Ok(timestamps)

@@ -14,6 +14,7 @@ time_data:
 weather_data:
 model_data:
   input_data:
+    timeseries: []
     contains_delay: false
     contains_diffusion: true
     contains_online: false

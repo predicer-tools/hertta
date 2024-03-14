@@ -455,36 +455,10 @@ async fn main()  {
 
     // Set up an mpsc channel for graceful shutdown
     let (shutdown_sender, mut shutdown_receiver) = mpsc::channel::<()>(1);
-    let (tx_optimization, mut rx_optimization) = mpsc::channel::<input_data::OptimizationData>(32);
 
     // Define the asynchronous task to handle optimization
     let julia_clone = julia.clone();
     let predicer_dir_clone = predicer_dir.clone();
-
-    let _optimization_task = tokio::spawn(async move {
-        println!("Optimization task started and waiting for data...");
-        while let Some(optimization_data) = rx_optimization.recv().await {
-            println!("Received optimization data, running predicer...");
-    
-            // Check if model_data is present
-            if let Some(model_data) = optimization_data.model_data {
-                // Now you have model_data.input_data to use, assuming input_data is what run_predicer expects
-                match run_predicer(julia_clone.clone(), model_data.input_data.clone(), predicer_dir_clone.clone()).await {
-                    Ok(_device_control_values) => {
-                        // Process the results
-                        println!("Optimization successful");
-                    },
-                    Err(error) => {
-                        // Handle error from run_predicer
-                        println!("An error occurred in optimization: {}", error);
-                    }
-                }
-            } else {
-                // Handle case where model_data is None
-                println!("Optimization data is missing model_data. Skipping...");
-            }
-        }
-    });
     
 
     let shutdown_route = {
@@ -506,7 +480,7 @@ async fn main()  {
         shutdown_receiver.recv().await;
     });
 
-    let event_loop_task = event_loop::event_loop(tx_optimization);
+    let event_loop_task = event_loop::event_loop(julia_clone, predicer_dir_clone);
 
     tokio::select! {
         _ = event_loop_task => {

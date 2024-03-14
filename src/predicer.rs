@@ -34,8 +34,39 @@ impl AsyncTask for RunPredicer {
 
             let mut list: Vec<Value> = Vec::new();
 
+            //Create temporals
+
+            let create_new_hertta_ts = julia_interface::call(
+                &mut frame,
+                &["Predicer", "create_new_hertta_ts"],
+                &[],
+            );
+
+            match create_new_hertta_ts {
+                Ok(hertta_ts) => {
+
+                    add_timestamp_to_hertta_ts(&mut frame, hertta_ts, &self.data.timeseries);
+
+                    let create_hertta_temporals = julia_interface::call(
+                        &mut frame,
+                        &["Predicer", "create_hertta_temporals"],
+                        &[hertta_ts],
+                    );
+
+                    match create_hertta_temporals {
+                        Ok(hertta_temporals) => {
+                            list.push(hertta_temporals.clone());
+        
+                        }
+                        Err(error) => println!("Error creating hertta temporals: {:?}", error),
+                    }
+
+                }
+                Err(error) => println!("Error creating hertta timeseries: {:?}", error),
+            }
+
             //Create processes
-            
+
             let dict_processes = julia_interface::call(
                 &mut frame,
                 &["Predicer", "create_processes"],
@@ -231,18 +262,19 @@ impl AsyncTask for RunPredicer {
             //Parameters for creating input data
 
             let i_args = [
-                list[0], //processes
-                list[1], //nodes
-                list[2], //node diffusions
-                list[3], //node delay
-                list[4], //node histories
-                list[5], //markets
-                list[6], //groups
-                list[7], //gengonstraints
+                list[0], //temporals
+                list[1], //processes
+                list[2], //nodes
+                list[3], //node diffusions
+                list[4], //node delay
+                list[5], //node histories
+                list[6], //markets
+                list[7], //groups
+                list[8], //gengonstraints
                 j_scenarios, //scenarios
                 j_reserve_type, //reserve_type
                 j_risk, //risk
-                list[8], //inflowblocks
+                list[9], //inflowblocks
                 j_contains_reserves, //contains reserves
                 j_contains_online, //contains online
                 j_contains_state, //contains state
@@ -293,11 +325,16 @@ impl AsyncTask for RunPredicer {
                         Ok(df) => {
 
                             for (process_name, data_column_name) in predicer_data_columns.iter() {
+
+                                println!("moi1");
+
                                 let ts_vector_function = julia_interface::call(
                                     &mut frame, 
                                     &["Predicer", "extract_column_as_vector"], 
                                     &[df, ts_column_name]
                                 );
+
+                                println!("moi2");
                     
                                 let ts_vector = match ts_vector_function {
                                     Ok(df) => julia_interface::make_rust_vector_string(&mut frame, &df),
@@ -307,6 +344,8 @@ impl AsyncTask for RunPredicer {
                                     },
                                 };
 
+                                println!("moi3");
+
                                 let j_data_column_name = JuliaString::new(&mut frame, data_column_name).as_value();
                     
                                 let df_vector_function = julia_interface::call(
@@ -314,6 +353,8 @@ impl AsyncTask for RunPredicer {
                                     &["Predicer", "extract_column_as_vector"], 
                                     &[df, j_data_column_name]
                                 );
+
+                                println!("moi4");
                     
                                 let data_vector = match df_vector_function {
                                     Ok(df) => julia_interface::make_rust_vector_f64(&mut frame, &df),
@@ -323,9 +364,12 @@ impl AsyncTask for RunPredicer {
                                     },
                                 };
 
+                                println!("moi5");
+
                                 match utilities::combine_vectors(ts_vector, data_vector) {
                                     Ok(control_values_for_device) => {
                                         // Insert the control data for the device
+                                        println!("moi1");
                                         all_device_controls.insert(process_name.to_string(), control_values_for_device);
                                         
                                     },
@@ -396,6 +440,27 @@ pub fn add_topology<'target, 'data>(frame: &mut frame::GcFrame<'target>, process
                 }
                 Err(error) => println!("Error adding topology to process: {:?}", error),
             }
+
+        }
+
+        Ok(())
+
+    }).unwrap();
+
+}
+
+pub fn add_timestamp_to_hertta_ts<'target, 'data>(frame: &mut frame::GcFrame<'target>, hertta_ts: Value<'_, '_>, timeseries: &Vec<String>) {
+
+    frame.scope(|mut frame| {
+
+        for timestamp in timeseries {
+            let t_timestamp = JuliaString::new(&mut frame, timestamp).as_value();
+
+            let _add_to_hertta_ts = julia_interface::call(
+                &mut frame,
+                &["Predicer", "add_to_hertta_ts"],
+                &[hertta_ts, t_timestamp],
+            );
 
         }
 
@@ -682,6 +747,8 @@ pub fn create_confactors<'target, 'data>(frame: &mut frame::GcFrame<'target>, gc
     }).unwrap();
 
 }
+
+
 
 pub fn create_processes<'target, 'data>(frame: &mut frame::GcFrame<'target>, processes: &HashMap<String, input_data::Process>, j_processes: Value<'_, '_>) {
 
