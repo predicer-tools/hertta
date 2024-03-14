@@ -326,16 +326,21 @@ fn update_timeseries(optimization_data: &mut OptimizationData) {
     }
 }
 
+/* 
 fn update_gen_constraints(optimization_data: &mut OptimizationData)  -> Result<(), &'static str> {
 
-    if let Some(sensor_data) = &optimization_data.model_data {
+    if let Some(time_data) = &optimization_data.time_data {
+
+        let model_data = optimization_data.model_data.as_mut().ok_or("Model data is not available.")?;
+
     } else {
         // ModelData is None
-        return Err("Model data is not available.");
+        return Err("Time Data is not available.");
     }
 
 
 }
+*/
 
 fn update_interior_air_initial_state(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
     // Check if sensor_data is Some
@@ -621,6 +626,10 @@ pub fn pair_timeseries_with_values(series: &[String], values: &[f64]) -> Vec<(St
     series.iter().zip(values.iter())
         .map(|(timestamp, &value)| (timestamp.clone(), value))
         .collect()
+}
+
+pub fn create_gen_constraints_timeseries(optimization_data: &mut OptimizationData) {
+
 }
 
 pub fn create_weather_data_with_scenarios(
