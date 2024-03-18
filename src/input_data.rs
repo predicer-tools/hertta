@@ -1,20 +1,16 @@
 
 use std::collections::HashMap;
 use serde::{self, Serialize, Deserialize, Deserializer, Serializer};
-use chrono::{DateTime, Duration as ChronoDuration, Utc, FixedOffset, TimeZone};
-use tokio::sync::mpsc;
+use chrono::{DateTime, Duration as ChronoDuration, Utc, FixedOffset};
+//use tokio::sync::mpsc;
 //use std::fs::File;
 use std::error::Error;
-use chrono::format::ParseError;
 //use std::io::Write;
-use serde_json::Value;
 use chrono_tz::Tz;
-use std::str::FromStr;
 use chrono::prelude::*;
-use std::io;
-use std::num::ParseIntError;
+//use std::io;
 use crate::errors;
-use std::fmt::{self, Display, Formatter};
+//use std::fmt::{self, Display, Formatter};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PricePoint {
@@ -314,37 +310,6 @@ pub struct PriceData {
     pub price: f64,
 }
 
-/* 
-pub fn write_to_json_file_bd(data: &ModelData, file_path: &str) -> Result<(), Box<dyn Error>> {
-    // Serialize the data to JSON
-    let json = serde_json::to_string_pretty(data)?;
-
-    // Open a file in write mode
-    let mut file = File::create(file_path)?;
-
-    // Write the JSON data to the file
-    file.write_all(json.as_bytes())?;
-
-    Ok(())
-}
-*/
-
-// Function to get the current time in a given named timezone
-pub fn get_current_time_in_timezone(timezone_name: &str) -> Result<DateTime<FixedOffset>, errors::TimeDataParseError> {
-    let timezone: Tz = timezone_name.parse().map_err(|_| {
-        errors::TimeDataParseError::new("Invalid timezone string")
-    })?;
-
-    let now_utc = Utc::now();
-    let now_in_timezone = now_utc.with_timezone(&timezone);
-
-    // Convert the timezone-aware DateTime object to a DateTime<FixedOffset>
-    let fixed_offset = FixedOffset::east(now_in_timezone.offset().fix().local_minus_utc());
-    let now_with_fixed_offset = now_utc.with_timezone(&fixed_offset);
-
-    Ok(now_with_fixed_offset)
-}
-
 pub fn calculate_time_range(timezone_str: &str, temporals: &Option<Temporals>) -> Result<(DateTime<FixedOffset>, DateTime<FixedOffset>), errors::TimeDataParseError> {
     let timezone: Tz = timezone_str.parse().map_err(|_| errors::TimeDataParseError::new("Invalid timezone string"))?;
 
@@ -377,22 +342,6 @@ pub async fn generate_hourly_timestamps(start_time: DateTime<FixedOffset>, end_t
     }
 
     Ok(timestamps)
-}
-
-pub fn update_outside_inflow(input_data: &mut InputData, outside_inflow: TimeSeriesData) {
-    if let Some(outside_node) = input_data.nodes.get_mut("outside") {
-        outside_node.inflow = outside_inflow;
-    } else {
-        eprintln!("'outside' node not found in InputData");
-    }
-}
-
-pub fn update_elec_prices(input_data: &mut InputData, elec_prices: TimeSeriesData) {
-    if let Some(npe_market) = input_data.markets.get_mut("npe") {
-        npe_market.price = elec_prices;
-    } else {
-        eprintln!("'outside' node not found in InputData");
-    }
 }
 
 /* 

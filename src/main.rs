@@ -5,6 +5,7 @@ mod utilities;
 mod input_data;
 mod errors;
 mod event_loop;
+mod arrow_data;
 
 use std::env;
 use hertta::julia_interface;
@@ -139,7 +140,7 @@ fn init_julia_runtime() -> Result<(AsyncJulia<Tokio>, JoinHandle<Result<(), Box<
 /// # Errors
 /// - Returns `JuliaError` if there is an issue with the channel communication or if the Julia task execution fails.
 
-async fn execute_task(julia: &AsyncJulia<Tokio>) -> Result<(), errors::JuliaError> {
+async fn _execute_task(julia: &AsyncJulia<Tokio>) -> Result<(), errors::JuliaError> {
     // Create a one-shot channel for task communication. `sender` is used to send the task result,
     // and `receiver` is used to await this result.
     let (sender, receiver) = tokio::sync::oneshot::channel();
@@ -178,7 +179,7 @@ async fn execute_task(julia: &AsyncJulia<Tokio>) -> Result<(), errors::JuliaErro
 /// # Errors
 /// Returns `JuliaError` with a message indicating failure in dispatching the task to the runtime.
 
-async fn send_task_to_runtime(
+async fn _send_task_to_runtime(
     julia: &AsyncJulia<Tokio>,
     data: input_data::InputData, 
     predicer_dir: String, 
@@ -224,7 +225,7 @@ async fn send_task_to_runtime(
 /// - If the task execution itself fails, a `JuliaError` with the execution error message is returned.
 /// - If there is an error in receiving the task result from the channel, a `JuliaError` indicating this failure is returned.
 ///
-async fn receive_task_result(
+async fn _receive_task_result(
     receiver: tokio::sync::oneshot::Receiver<Result<HashMap<String, predicer::ControlValues>, Box<JlrsError>>>,
 ) -> Result<HashMap<String, predicer::ControlValues>, errors::JuliaError> {
     match receiver.await {
@@ -291,7 +292,7 @@ async fn _shutdown_julia_runtime(julia: AsyncJulia<Tokio>, handle: JoinHandle<Re
 /// - Errors can occur during task execution, sending the task to runtime, or receiving the task results.
 /// - All errors are converted to `JuliaError` for a consistent error handling experience.
 ///
-async fn run_predicer(
+async fn _run_predicer(
     julia: Arc<Mutex<AsyncJulia<Tokio>>>,
     data: input_data::InputData,
     predicer_dir: String,
@@ -301,7 +302,7 @@ async fn run_predicer(
     let julia_guard = julia.lock().await;
 
     // Attempt to execute the task using the Julia runtime.
-    match execute_task(&*julia_guard).await {
+    match _execute_task(&*julia_guard).await {
         Ok(()) => println!("Task executed successfully"),
         Err(e) => eprintln!("Task execution failed: {}", e),
     }
@@ -310,13 +311,13 @@ async fn run_predicer(
     let (sender, receiver) = tokio::sync::oneshot::channel();
 
     // Send the prediction task to the runtime, handling any errors.
-    if let Err(e) = send_task_to_runtime(&*julia_guard, data, predicer_dir, sender).await {
+    if let Err(e) = _send_task_to_runtime(&*julia_guard, data, predicer_dir, sender).await {
         eprintln!("Failed to send task to runtime: {}", e);
         return Err(e);
     }
 
     // Wait for and handle the task result.
-    let result = match receive_task_result(receiver).await {
+    let result = match _receive_task_result(receiver).await {
         Ok(value) => {
             println!("Results received.");
             value // value is of type Vec<(String, f64)>
@@ -391,7 +392,7 @@ pub fn start_hass_backend_server() {
 
 }
 
-pub fn start_weather_forecasst_server() {
+pub fn start_weather_forecast_server() {
 
     // Start Python server 2
     Command::new("python")
@@ -402,7 +403,24 @@ pub fn start_weather_forecasst_server() {
 }
 
 #[tokio::main]
-async fn main()  {
+async fn main() -> Result<(), Box<dyn Error>> {
+
+    let mut julia_process = arrow_data::JuliaProcess::new("Predicer/src/process_arrow.jl")?;
+    let arrow_data_buffer = arrow_data::create_arrow_data_buffer()?;
+    println!("Arrow buffer size: {}", arrow_data_buffer.len());
+
+    // Directly send the Arrow data buffer to JuliaProcess, 
+    // which will handle the base64 encoding internally.
+    julia_process.send_data(arrow_data_buffer)?;
+
+    println!("Data sent to Julia");
+
+    julia_process.terminate()?;
+
+
+    Ok(())
+
+    /* 
     
     // Parse command line arguments
     let args: Vec<String> = env::args().collect();
@@ -498,6 +516,8 @@ async fn main()  {
     .expect("The runtime thread panicked");
 
     println!("Server has been shut down");
+
+    */
 
     
 }

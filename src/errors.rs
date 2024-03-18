@@ -1,6 +1,8 @@
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self};
 use warp::reject::Reject;
 use std::error::Error;
+use arrow::error::ArrowError;
+use serde::{Serialize, Deserialize};
 
 /// A custom error type for representing errors from Julia.
 ///
@@ -114,7 +116,7 @@ pub struct TaskError {
 }
 
 impl TaskError {
-    pub fn new(msg: &str) -> TaskError {
+    pub fn _new(msg: &str) -> TaskError {
         TaskError { message: msg.to_string() }
     }
 }
@@ -156,3 +158,36 @@ impl std::fmt::Display for TimeDataParseError {
 
 impl Error for TimeDataParseError {}
 unsafe impl Send for TimeDataParseError {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum CustomError {
+    IoError(String),
+    OtherError(String),
+    ArrowError(String),
+    // Add other error variants as needed
+}
+
+impl fmt::Display for CustomError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            CustomError::IoError(ref cause) => write!(f, "IO Error: {}", cause),
+            CustomError::OtherError(ref cause) => write!(f, "Other Error: {}", cause),
+            CustomError::ArrowError(ref cause) => write!(f, "Arrow Error: {}", cause),
+            // Handle other variants as needed
+        }
+    }
+}
+
+impl Error for CustomError {}
+
+impl From<std::io::Error> for CustomError {
+    fn from(error: std::io::Error) -> Self {
+        CustomError::IoError(error.to_string())
+    }
+}
+
+impl From<ArrowError> for CustomError {
+    fn from(error: ArrowError) -> Self {
+        CustomError::ArrowError(error.to_string())
+    }
+}

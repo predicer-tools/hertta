@@ -1,50 +1,31 @@
-use tokio::time::{self, Duration, Interval};
+use tokio::time::{self, Duration};
 //use serde_json::json;
-use tokio::sync::{mpsc, broadcast};
+use tokio::sync::{mpsc};
 use crate::errors;
 use crate::input_data;
 use crate::predicer;
-use crate::julia_interface;
 use std::error::Error;
-use chrono::{Utc, Duration as ChronoDuration, Timelike, DateTime, TimeZone, FixedOffset, NaiveDateTime};
 use std::collections::HashMap;
-use crate::input_data::{OptimizationData, ElectricityPriceData};
-use serde_json::{self, Value};
+use crate::input_data::{OptimizationData};
 use serde_yaml;
-use chrono_tz::Tz;
-use std::fs;
-use std::env;
-use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, AUTHORIZATION};
-use serde_json::json;
-//use tokio::time::{self, Duration, Instant};
-use warp::Filter;
-use serde::{Deserialize, Serialize};
-use std::num::NonZeroUsize;
 use jlrs::prelude::*;
 use predicer::RunPredicer;
 use jlrs::error::JlrsError;
-use tokio::task::JoinHandle;
-//use std::fmt;
-use reqwest::Client;
 use tokio::sync::Mutex;
 use std::sync::Arc;
-use std::net::SocketAddr;
-use std::fs::File;
-use std::io::Write;
-use std::process::Command;
 
 
 pub async fn event_loop(
     julia: Arc<Mutex<AsyncJulia<Tokio>>>,
     predicer_dir: String,
 ) {
-    let (tx_model, rx_model) = mpsc::channel::<OptimizationData>(32);
-    let (tx_time, mut rx_time) = mpsc::channel::<OptimizationData>(32);
-    let (tx_weather, mut rx_weather) = mpsc::channel::<OptimizationData>(32);
-    let (tx_elec, mut rx_elec) = mpsc::channel::<OptimizationData>(32);
-    let (tx_update, mut rx_update) = mpsc::channel::<OptimizationData>(32);
-    let (tx_optimization, mut rx_optimization) = mpsc::channel::<OptimizationData>(32);
-    let (tx_final, mut rx_final) = mpsc::channel::<OptimizationData>(32);
+    let (_tx_model, _rx_model) = mpsc::channel::<OptimizationData>(32);
+    let (tx_time, rx_time) = mpsc::channel::<OptimizationData>(32);
+    let (tx_weather, rx_weather) = mpsc::channel::<OptimizationData>(32);
+    let (tx_elec, rx_elec) = mpsc::channel::<OptimizationData>(32);
+    let (tx_update, rx_update) = mpsc::channel::<OptimizationData>(32);
+    let (tx_optimization, rx_optimization) = mpsc::channel::<OptimizationData>(32);
+    let (_tx_final, mut _rx_final) = mpsc::channel::<OptimizationData>(32);
 
 
     // Spawn the model data task
@@ -64,7 +45,7 @@ pub async fn event_loop(
 
     // Spawn the electricity price data task to process and potentially finalize the data
     tokio::spawn(async move {
-        fetch_elec_price_task(rx_elec, tx_update).await; // Final output sent to tx_final
+        fetch_elec_price_task(rx_elec, tx_update).await; // Final output sent to _tx_final
     });
 
     tokio::spawn(async move {
@@ -85,7 +66,7 @@ pub async fn event_loop(
         interval.tick().await; // Wait for the next interval tick
 
         // Check if there's data to process
-        while let Some(final_data) = rx_final.recv().await {
+        while let Some(final_data) = _rx_final.recv().await {
             // Correctly call send_to_server_task with the received data
             if let Err(e) = send_to_server_task(final_data).await {
                 eprintln!("Error while sending final optimization data to server: {}", e);
@@ -298,17 +279,29 @@ async fn receive_task_result(
 async fn update_model_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
     while let Some(mut optimization_data) = rx.recv().await {
         
-        //Update temporals to model data
-        update_timeseries(&mut optimization_data);
+        // Update temporals to model data
+        if let Err(e) = update_timeseries(&mut optimization_data) {
+            eprintln!("Failed to update timeseries: {}", e);
+            // Optionally, continue to attempt other updates even if one fails.
+        }
         
-        //Update indoor temperature
-        update_interior_air_initial_state(&mut optimization_data);
+        // Update indoor temperature
+        if let Err(e) = update_interior_air_initial_state(&mut optimization_data) {
+            eprintln!("Failed to update indoor air initial state: {}", e);
+            // Optionally, continue to attempt other updates even if one fails.
+        }
 
-        //Update outdoor temp flow
-        update_outside_node_inflow(&mut optimization_data);
+        // Update outdoor temp flow
+        if let Err(e) = update_outside_node_inflow(&mut optimization_data) {
+            eprintln!("Failed to update outside node inflow: {}", e);
+            // Optionally, continue to attempt other updates even if one fails.
+        }
 
-        //Update elec prices
-        update_npe_market_prices(&mut optimization_data);
+        // Update elec prices
+        match update_npe_market_prices(&mut optimization_data) {
+            Ok(_) => (),
+            Err(e) => eprintln!("Failed to update NPE market prices: {}", e),
+        }
 
         if tx.send(optimization_data).await.is_err() {
             eprintln!("Failed to send updated OptimizationData");
@@ -318,11 +311,16 @@ async fn update_model_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mp
     }
 }
 
-fn update_timeseries(optimization_data: &mut OptimizationData) {
-    if let Some(time_data) = &optimization_data.time_data {
-        if let Some(model_data) = &mut optimization_data.model_data {
-            model_data.input_data.timeseries = time_data.series.clone();
-        }
+fn update_timeseries(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
+    // Check if time_data is available
+    let time_data = optimization_data.time_data.as_ref().ok_or("Time data is not available.")?;
+    
+    // Check if model_data is available and update timeseries
+    if let Some(model_data) = &mut optimization_data.model_data {
+        model_data.input_data.timeseries = time_data.series.clone();
+        Ok(())
+    } else {
+        Err("Model data is not available.")
     }
 }
 
@@ -424,7 +422,7 @@ async fn fetch_model_data_task(tx: mpsc::Sender<OptimizationData>) {
         interval.tick().await;
 
         match fetch_model_data().await {
-            Ok(mut optimization_data) => {
+            Ok(optimization_data) => {
                 // Update the token in the optimization data
                 /* 
                 if let Err(e) = update_token_in_optimization_data(&mut optimization_data).await {
@@ -628,37 +626,8 @@ pub fn pair_timeseries_with_values(series: &[String], values: &[f64]) -> Vec<(St
         .collect()
 }
 
-pub fn create_gen_constraints_timeseries(optimization_data: &mut OptimizationData) {
+pub fn _create_gen_constraints_timeseries(_optimization_data: &mut OptimizationData) {
 
-}
-
-pub fn create_weather_data_with_scenarios(
-    paired_series: Vec<(String, f64)>, 
-    place: String
-) -> input_data::WeatherData {
-    // Create two TimeSeries instances with the same series data but different scenarios "s1" and "s2"
-    let time_series_s1 = input_data::TimeSeries {
-        scenario: "s1".to_string(),
-        series: paired_series.clone(), // Use clone to use the series data for both TimeSeries
-    };
-
-    let time_series_s2 = input_data::TimeSeries {
-        scenario: "s2".to_string(),
-        series: paired_series, // This moves the original series data into the second TimeSeries
-    };
-
-    // Bundle the two TimeSeries into a TimeSeriesData
-    let weather_ts = input_data::TimeSeriesData {
-        ts_data: vec![time_series_s1, time_series_s2],
-    };
-
-    // Create the WeatherData with the TimeSeriesData
-    let weather_data = input_data::WeatherData {
-        place,
-        weather_data: weather_ts,
-    };
-
-    weather_data
 }
 
 
@@ -866,7 +835,7 @@ pub async fn fetch_model_data() -> Result<input_data::OptimizationData, errors::
             errors::ModelDataError::from(e) // Convert reqwest::Error to errors::ModelDataError
         })?;
     
-    let mut optimization_data = serde_yaml::from_str::<input_data::OptimizationData>(&text)
+    let optimization_data = serde_yaml::from_str::<input_data::OptimizationData>(&text)
     .map_err(|e| {
         println!("Failed to parse YAML response: {}", e);
         errors::ModelDataError::from(e) // Convert serde_yaml::Error to errors::ModelDataError
