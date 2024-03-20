@@ -12,12 +12,78 @@ use std::fs::File;
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::io::{BufWriter, Write};
-use arrow::{array::{Int32Array, StringArray}, datatypes::{DataType, Field, Schema}, ipc::writer::StreamWriter, record_batch::RecordBatch};
+use arrow::{array::{ArrayRef, Int32Array, StringArray}, datatypes::{DataType, Field, Schema}, ipc::writer::StreamWriter, record_batch::RecordBatch};
 use std::sync::Arc;
 use std::io::Cursor;
 use base64::{encode};
 use std::env;
+use std::collections::HashMap;
+use serde_arrow;
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TestNode {
+    pub name: String,
+    pub value: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TestInputData {
+    pub nodes: HashMap<String, TestNode>,
+    pub metadata: String,
+}
+
+pub fn create_example_input_data() -> TestInputData {
+    let nodes = HashMap::from([
+        ("node1".to_string(), TestNode { name: "Node One".to_string(), value: 100 }),
+        ("node2".to_string(), TestNode { name: "Node Two".to_string(), value: 200 }),
+    ]);
+    TestInputData {
+        nodes,
+        metadata: "Example Metadata".to_string(),
+    }
+}
+
+/* 
+pub fn convert_test_input_data_to_record_batch(input_data: &TestInputData) -> Result<RecordBatch, Box<dyn std::error::Error>> {
+    let node_keys: Vec<String> = input_data.nodes.keys().cloned().collect();
+    let node_names: Vec<String> = input_data.nodes.values().map(|v| v.name.clone()).collect();
+    let node_values: Vec<i32> = input_data.nodes.values().map(|v| v.value).collect();
+
+    // Metadata is repeated for each node to keep the table size consistent
+    let metadata: Vec<String> = vec![input_data.metadata.clone(); input_data.nodes.len()];
+
+    let node_keys_array: ArrayRef = Arc::new(StringArray::from(node_keys));
+    let node_names_array: ArrayRef = Arc::new(StringArray::from(node_names));
+    let node_values_array: ArrayRef = Arc::new(Int32Array::from(node_values));
+    let metadata_array: ArrayRef = Arc::new(StringArray::from(metadata));
+
+    let fields = vec![
+        Field::new("node_key", DataType::Utf8, false),
+        Field::new("node_name", DataType::Utf8, false),
+        Field::new("node_value", DataType::Int32, false),
+        Field::new("metadata", DataType::Utf8, false),
+    ];
+    let schema = Arc::new(Schema::new(fields));
+
+    let record_batch = RecordBatch::try_new(schema, vec![node_keys_array, node_names_array, node_values_array, metadata_array])?;
+
+    Ok(record_batch)
+}
+*/
+
+pub fn serialize_record_batch_to_vec(batch: &RecordBatch) -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        // Place the writer in a scoped block
+        let mut writer = StreamWriter::try_new(&mut buf, &batch.schema())?;
+        writer.write(batch)?;
+        writer.finish()?;
+        // `writer` gets dropped here, at the end of the scoped block, releasing the borrow on `buf`
+    }
+    // Now that the writer is dropped, it's safe to move `buf`
+    println!("Buffer size after serialization: {}", buf.len());
+    Ok(buf)
+}
 
 pub fn create_arrow_data_buffer() -> Result<Vec<u8>, Box<dyn Error>> {
     let schema = Arc::new(Schema::new(vec![
@@ -64,10 +130,9 @@ impl JuliaProcess {
         })
     }
 
-    // Adjusted to accept Vec<u8> directly and encode it
     pub fn send_data(&mut self, data: Vec<u8>) -> Result<(), Box<dyn Error>> {
-        let encoded = encode(data); // Directly encode the Arrow binary data to base64
-        writeln!(self.stdin, "data:{}", encoded)?;
+        // No need to encode as `data` is already expected to be a base64-encoded string
+        self.stdin.write_all(&data)?;
         self.stdin.flush()?;
         Ok(())
     }
@@ -77,13 +142,6 @@ impl JuliaProcess {
         self.stdin.flush()?;
         Ok(())
     }
-}
-
-
-// Assuming `input_data` is an instance of `InputData`
-pub fn serialize_input_data(input_data: &InputData) -> Result<Vec<u8>, Box<dyn Error>> {
-    let serialized_data = bincode::serialize(input_data)?;
-    Ok(serialized_data)
 }
 
 pub fn read_input_data_from_yaml<P: AsRef<Path>>(path: P) -> Result<InputData, Box<dyn Error>> {

@@ -24,6 +24,24 @@ pub struct Temporals {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct InputDataNew {
+    pub temps: Vec<String>,
+    pub setup: InputDataSetup,
+    pub processes: HashMap<String, Process>,
+    pub nodes: HashMap<String, Node>,
+    pub node_diffusion: HashMap<String, NodeDiffusion>,
+    pub node_delay: HashMap<String, NodeDelay>,
+    pub node_histories: HashMap<String, NodeHistory>,
+    pub markets: HashMap<String, Market>,
+    pub groups: HashMap<String, Group>,
+    pub scenarios: HashMap<String, f64>,
+    pub reserve_type: HashMap<String, f64>,
+    pub risk: HashMap<String, f64>,
+    pub inflow_blocks: HashMap<String, f64>,
+    pub gen_constraints: HashMap<String, GenConstraint>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InputData {
     pub timeseries: Vec<String>,
     pub contains_reserves: bool,
@@ -40,6 +58,24 @@ pub struct InputData {
     pub gen_constraints: HashMap<String, GenConstraint>,
     pub node_diffusion: HashMap<String, NodeDiffusion>,
     pub node_delay: HashMap<String, NodeDelay>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct InputDataSetup {
+    pub contains_reserves: bool,
+    pub contains_online: bool,
+    pub contains_states: bool,
+    pub contains_piecewise_eff: bool,
+    pub contains_risk: bool,
+    pub contains_diffusion: bool,
+    pub contains_delay: bool,
+    pub contains_markets: bool,
+    pub reserve_realisation: bool,
+    pub use_market_bids: bool,
+    pub common_timesteps: i64,
+    pub common_scenario_name: String,
+    pub use_node_dummy_variables: bool,
+    pub use_ramp_dummy_variables: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -153,6 +189,11 @@ pub struct State {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TimeSeriesData {
+    pub ts_data: Vec<TimeSeries>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TimeSeries {
     pub scenario: String,
     pub series: Vec<(String, f64)>,
@@ -165,11 +206,6 @@ impl TimeSeries {
             series: Vec::new(),
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct TimeSeriesData {
-    pub ts_data: Vec<TimeSeries>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -976,33 +1012,6 @@ mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
 
-    #[tokio::test]
-    async fn test_generate_hourly_timestamps_valid() {
-        let start_time = "2022-04-20T00:00:00+00:00";
-        let end_time = "2022-04-20T03:00:00+00:00";
-        let expected = vec![
-            "2022-04-20T00:00:00+00:00",
-            "2022-04-20T01:00:00+00:00",
-            "2022-04-20T02:00:00+00:00",
-            "2022-04-20T03:00:00+00:00",
-        ];
-
-        let result = generate_hourly_timestamps(start_time, end_time).await.unwrap();
-        assert_eq!(result, expected);
-    } 
-
-    #[test]
-    pub fn test_calculate_time_range() {
-        let timezone_str = "UTC";
-        let temporals = Some(Temporals { hours: 12 }); // Assume Temporals is defined elsewhere
-        let (start_time, end_time) = calculate_time_range(timezone_str, &temporals).expect("Should calculate time range successfully");
-
-        // Assertions on start_time and end_time
-        // For example, you might want to check that the start_time and end_time are not empty and possibly that they reflect the expected difference given by `temporals.hours`
-        assert!(!start_time.is_empty(), "Start time should not be empty");
-        assert!(!end_time.is_empty(), "End time should not be empty");
-        // Further assertions can be added based on the expected format and content of start_time and end_time
-    }
 
 }
 

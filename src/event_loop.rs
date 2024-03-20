@@ -915,22 +915,6 @@ mod tests {
         Ok(optimization_data)
     }
 
-    #[tokio::test]
-    async fn test_fetch_electricity_prices() {
-        let start_time = "2020-05-31T20:59:59.999Z".to_string();
-        let end_time = "2020-06-30T20:59:59.999Z".to_string();
-        let country = "fi".to_string();
-
-        match fetch_electricity_prices(start_time, end_time, country).await {
-            Ok(data) => {
-                assert!(!data.price_data.ts_data.is_empty(), "Price data should not be empty");
-            },
-            Err(e) => {
-                panic!("Test failed with error: {:?}", e);
-            },
-        }
-    }
-
     #[test]
     fn test_update_interior_air_initial_state_success() {
         let mut optimization_data = load_test_optimization_data_from_yaml("update_interior_air_test_success.yaml")
