@@ -120,6 +120,19 @@ pub struct Node {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct NodeNew {
+    pub name: String,
+    pub is_commodity: bool,
+    pub is_state: bool,
+    pub is_res: bool,
+    pub is_market: bool,
+    pub is_inflow: bool,
+    //pub cost: TimeSeriesData,
+    //pub inflow: TimeSeriesData,
+    pub state: StateNew,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Market {
     pub name: String,
     pub m_type: String,
@@ -183,6 +196,21 @@ pub struct State {
     pub state_max: f64,
     pub state_min: f64,
     pub initial_state: f64,
+    pub is_temp: bool,
+    pub t_e_conversion: f64,
+    pub residual_value: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Default)]
+pub struct StateNew {
+    pub state_max: f64,
+    pub state_min: f64,
+    pub in_max: f64,
+    pub out_max: f64,
+    pub initial_state: f64,
+    pub state_loss_proportional: f64,
+    pub scenario_independent_state: bool,
     pub is_temp: bool,
     pub t_e_conversion: f64,
     pub residual_value: f64,

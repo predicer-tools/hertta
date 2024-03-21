@@ -7,11 +7,191 @@ use std::collections::HashMap;
 use std::error::Error;
 use arrow::ipc::writer::StreamWriter;
 use base64::{encode};
+use serde::{Serialize, Deserialize};
+use crate::input_data::InputData;
+use std::fs::File;
+use std::io::Read;
+use bincode;
+use std::path::Path;
 
-//LETS MAKE INPUTDATA.YAML STRAIGHT TO ARROW TABLES THAN PREDICER CAN USE
+// Define the new function
+pub fn create_and_encode_inputdatasetup() -> Result<String, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let setup = create_test_inputdatasetup();
 
-pub fn struct_to_arrow(setup: &input_data::InputDataSetup) -> Result<RecordBatch, ArrowError> {
-    println!("Starting struct_to_arrow function.");
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = inputdatasetup_to_arrow(&setup)?;
+
+    // Serialize the RecordBatch to a Vec<u8>
+    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
+
+    // Encode the Vec<u8> into a base64 String
+    let encoded_arrow_data: String = encode(&arrow_data);
+
+    // Return the base64 encoded string
+    Ok(encoded_arrow_data)
+}
+
+// Define the new function
+pub fn create_and_encode_nodes() -> Result<String, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let nodes = create_test_nodes_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = nodes_to_arrow(&nodes)?;
+
+    // Serialize the RecordBatch to a Vec<u8>
+    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
+
+    // Encode the Vec<u8> into a base64 String
+    let encoded_arrow_data: String = encode(&arrow_data);
+
+    // Return the base64 encoded string
+    Ok(encoded_arrow_data)
+}
+
+pub fn serialize_record_batch_to_vec(batch: &RecordBatch) -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        // Place the writer in a scoped block
+        let mut writer = StreamWriter::try_new(&mut buf, &batch.schema())?;
+        writer.write(batch)?;
+        writer.finish()?;
+        // `writer` gets dropped here, at the end of the scoped block, releasing the borrow on `buf`
+    }
+    // Now that the writer is dropped, it's safe to move `buf`
+    println!("Buffer size after serialization: {}", buf.len());
+    Ok(buf)
+}
+
+pub fn create_arrow_data_buffer() -> Result<Vec<u8>, Box<dyn Error>> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let id_values = vec![1, 2, 3, 4];
+    let name_values = vec!["Alice", "Bob", "Cindy", "David"];
+    let ids = Int32Array::from(id_values);
+    let names = StringArray::from(name_values);
+
+    let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(ids), Arc::new(names)])?;
+
+    let mut buffer: Vec<u8> = Vec::new();
+    {
+        let mut writer = StreamWriter::try_new(&mut buffer, &schema)?;
+        writer.write(&batch)?;
+        writer.finish()?;
+    }
+
+    Ok(buffer)
+}
+
+// Convert HashMap<String, Node> to RecordBatch
+pub fn nodes_to_arrow(nodes: &HashMap<String, input_data::NodeNew>) -> Result<RecordBatch, ArrowError> {
+    // Define the schema for the Arrow RecordBatch
+    let schema = Schema::new(vec![
+        Field::new("node", DataType::Utf8, false),
+        Field::new("is_commodity", DataType::Boolean, false),
+        Field::new("is_state", DataType::Boolean, false),
+        Field::new("is_res", DataType::Boolean, false),
+        Field::new("is_market", DataType::Boolean, false),
+        Field::new("is_inflow", DataType::Boolean, false),
+        Field::new("state_max", DataType::Float64, false),
+        Field::new("state_min", DataType::Float64, false),
+        Field::new("in_max", DataType::Float64, false),
+        Field::new("out_max", DataType::Float64, false),
+        Field::new("initial_state", DataType::Float64, false),
+        Field::new("state_loss_proportional", DataType::Float64, false),
+        Field::new("scenario_independent_state", DataType::Boolean, false),
+        Field::new("is_temp", DataType::Boolean, false),
+        Field::new("t_e_conversion", DataType::Float64, false),
+        Field::new("residual_value", DataType::Float64, false),
+    ]);
+
+    let mut names: Vec<String> = Vec::new();
+    let mut is_commodity: Vec<bool> = Vec::new();
+    let mut is_state: Vec<bool> = Vec::new();
+    let mut is_res: Vec<bool> = Vec::new();
+    let mut is_market: Vec<bool> = Vec::new();
+    let mut is_inflow: Vec<bool> = Vec::new();
+    let mut state_maxs: Vec<f64> = Vec::new();
+    let mut state_mins: Vec<f64> = Vec::new();
+    let mut in_maxs: Vec<f64> = Vec::new();
+    let mut out_maxs: Vec<f64> = Vec::new();
+    let mut initial_states: Vec<f64> = Vec::new();
+    let mut state_loss_proportionals: Vec<f64> = Vec::new();
+    let mut scenario_independent_states: Vec<bool> = Vec::new();
+    let mut is_temps: Vec<bool> = Vec::new();
+    let mut t_e_conversions: Vec<f64> = Vec::new();
+    let mut residual_values: Vec<f64> = Vec::new();
+
+    for (node_name, node) in nodes {
+        names.push(node_name.clone());
+        is_commodity.push(node.is_commodity);
+        is_state.push(node.is_state);
+        is_res.push(node.is_res);
+        is_market.push(node.is_market);
+        is_inflow.push(node.is_inflow);
+        state_maxs.push(node.state.state_max);
+        state_mins.push(node.state.state_min);
+        in_maxs.push(node.state.in_max);
+        out_maxs.push(node.state.out_max);
+        initial_states.push(node.state.initial_state);
+        state_loss_proportionals.push(node.state.state_loss_proportional);
+        scenario_independent_states.push(node.state.scenario_independent_state); // Adjust if you have a specific field for this
+        is_temps.push(node.state.is_temp);
+        t_e_conversions.push(node.state.t_e_conversion);
+        residual_values.push(node.state.residual_value);
+    }
+
+    // Create arrays from the vectors
+    let names_array = Arc::new(StringArray::from(names)) as ArrayRef;
+    let is_commodity_array = Arc::new(BooleanArray::from(is_commodity)) as ArrayRef;
+    let is_state_array = Arc::new(BooleanArray::from(is_state)) as ArrayRef;
+    let is_res_array = Arc::new(BooleanArray::from(is_res)) as ArrayRef;
+    let is_market_array = Arc::new(BooleanArray::from(is_market)) as ArrayRef;
+    let is_inflow_array = Arc::new(BooleanArray::from(is_inflow)) as ArrayRef;
+    let state_maxs_array = Arc::new(Float64Array::from(state_maxs)) as ArrayRef;
+    let state_mins_array = Arc::new(Float64Array::from(state_mins)) as ArrayRef;
+    let in_maxs_array = Arc::new(Float64Array::from(in_maxs)) as ArrayRef;
+    let out_maxs_array = Arc::new(Float64Array::from(out_maxs)) as ArrayRef;
+    let initial_states_array = Arc::new(Float64Array::from(initial_states)) as ArrayRef;
+    let state_loss_proportionals_array = Arc::new(Float64Array::from(state_loss_proportionals)) as ArrayRef;
+    let scenario_independent_states_array = Arc::new(BooleanArray::from(scenario_independent_states)) as ArrayRef;
+    let is_temps_array = Arc::new(BooleanArray::from(is_temps)) as ArrayRef;
+    let t_e_conversions_array = Arc::new(Float64Array::from(t_e_conversions)) as ArrayRef;
+    let residual_values_array = Arc::new(Float64Array::from(residual_values)) as ArrayRef;
+
+
+    // Now you can create the RecordBatch using these arrays
+    let record_batch = RecordBatch::try_new(
+        Arc::new(schema),
+        vec![
+            names_array,
+            is_commodity_array,
+            is_state_array,
+            is_res_array,
+            is_market_array,
+            is_inflow_array,
+            state_maxs_array,
+            state_mins_array,
+            in_maxs_array,
+            out_maxs_array,
+            initial_states_array,
+            state_loss_proportionals_array,
+            scenario_independent_states_array,
+            is_temps_array,
+            t_e_conversions_array,
+            residual_values_array,
+        ],
+    );
+
+    record_batch
+}
+
+pub fn inputdatasetup_to_arrow(setup: &input_data::InputDataSetup) -> Result<RecordBatch, ArrowError> {
+    println!("Starting inputdatasetup_to_arrow function.");
 
     // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
@@ -175,6 +355,142 @@ pub fn time_series_data_to_record_batch_with_node_id(ts_data: input_data::TimeSe
     // Create the RecordBatch with the node_id column included
     RecordBatch::try_new(Arc::new(schema), vec![node_id_array, scenario_array, date_array, value_array])
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TestNode {
+    pub name: String,
+    pub value: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TestInputData {
+    pub nodes: HashMap<String, TestNode>,
+    pub metadata: String,
+}
+
+pub fn create_example_input_data() -> TestInputData {
+    let nodes = HashMap::from([
+        ("node1".to_string(), TestNode { name: "Node One".to_string(), value: 100 }),
+        ("node2".to_string(), TestNode { name: "Node Two".to_string(), value: 200 }),
+    ]);
+    TestInputData {
+        nodes,
+        metadata: "Example Metadata".to_string(),
+    }
+}
+
+// Function to create a test instance of InputDataSetup
+pub fn create_test_inputdatasetup() -> input_data::InputDataSetup {
+    input_data::InputDataSetup {
+        contains_reserves: true,
+        contains_online: true,
+        contains_states: false,
+        contains_piecewise_eff: true,
+        contains_risk: false,
+        contains_diffusion: true,
+        contains_delay: false,
+        contains_markets: true,
+        reserve_realisation: true,
+        use_market_bids: true,
+        common_timesteps: 10,
+        common_scenario_name: "TestScenario".to_string(),
+        use_node_dummy_variables: true,
+        use_ramp_dummy_variables: false,
+    }
+}
+
+pub fn create_test_nodes_hashmap() -> HashMap<String, input_data::NodeNew> {
+    let mut nodes: HashMap<String, input_data::NodeNew> = HashMap::new();
+
+    let node1_state = create_statenew();
+    let node2_state = create_statenew();
+
+    // Example nodes
+    let node1 = input_data::NodeNew {
+        name: "Node1".to_string(),
+        is_commodity: true,
+        is_state: false,
+        is_res: false,
+        is_market: false,
+        is_inflow: true,
+        state: node1_state.clone(),
+    };
+
+    let node2 = input_data::NodeNew {
+        name: "Node2".to_string(),
+        is_commodity: false,
+        is_state: true,
+        is_res: false,
+        is_market: false,
+        is_inflow: false,
+        state: node2_state.clone(),
+    };
+
+    // Insert nodes into the hashmap
+    nodes.insert(node1.name.clone(), node1);
+    nodes.insert(node2.name.clone(), node2);
+
+    nodes
+}
+
+pub fn create_statenew() -> input_data::StateNew {
+    // Initialize default values for StateNew
+    input_data::StateNew {
+        state_max: 100.0,
+        state_min: 0.0,
+        in_max: 50.0,
+        out_max: 50.0,
+        initial_state: 25.0,
+        state_loss_proportional: 0.1,
+        scenario_independent_state: true,
+        is_temp: false,
+        t_e_conversion: 0.8,
+        residual_value: 10.0,
+    }
+}
+
+/* 
+pub fn convert_test_input_data_to_record_batch(input_data: &TestInputData) -> Result<RecordBatch, Box<dyn std::error::Error>> {
+    let node_keys: Vec<String> = input_data.nodes.keys().cloned().collect();
+    let node_names: Vec<String> = input_data.nodes.values().map(|v| v.name.clone()).collect();
+    let node_values: Vec<i32> = input_data.nodes.values().map(|v| v.value).collect();
+
+    // Metadata is repeated for each node to keep the table size consistent
+    let metadata: Vec<String> = vec![input_data.metadata.clone(); input_data.nodes.len()];
+
+    let node_keys_array: ArrayRef = Arc::new(StringArray::from(node_keys));
+    let node_names_array: ArrayRef = Arc::new(StringArray::from(node_names));
+    let node_values_array: ArrayRef = Arc::new(Int32Array::from(node_values));
+    let metadata_array: ArrayRef = Arc::new(StringArray::from(metadata));
+
+    let fields = vec![
+        Field::new("node_key", DataType::Utf8, false),
+        Field::new("node_name", DataType::Utf8, false),
+        Field::new("node_value", DataType::Int32, false),
+        Field::new("metadata", DataType::Utf8, false),
+    ];
+    let schema = Arc::new(Schema::new(fields));
+
+    let record_batch = RecordBatch::try_new(schema, vec![node_keys_array, node_names_array, node_values_array, metadata_array])?;
+
+    Ok(record_batch)
+}
+*/
+
+pub fn read_input_data_from_yaml<P: AsRef<Path>>(path: P) -> Result<InputData, Box<dyn Error>> {
+    // Open the file
+    let mut file = File::open(path)?;
+    
+    // Read the contents into a string
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+    
+    // Deserialize the YAML string into InputData
+    let input_data: InputData = serde_yaml::from_str(&contents)?;
+    
+    Ok(input_data)
+}
+
 
 /* 
 pub fn nodes_to_record_batches(nodes: HashMap<String, input_data::Node>) -> ArrowResult<Vec<RecordBatch>> {

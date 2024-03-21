@@ -5,8 +5,8 @@ mod utilities;
 mod input_data;
 mod errors;
 mod event_loop;
-mod arrow_data;
 mod arrow_input;
+mod julia_process;
 
 use std::env;
 use hertta::julia_interface;
@@ -404,60 +404,17 @@ pub fn start_weather_forecast_server() {
 
 }
 
-// Function to create a test instance of InputDataSetup
-pub fn create_test_inputdatasetup() -> input_data::InputDataSetup {
-    input_data::InputDataSetup {
-        contains_reserves: true,
-        contains_online: true,
-        contains_states: false,
-        contains_piecewise_eff: true,
-        contains_risk: false,
-        contains_diffusion: true,
-        contains_delay: false,
-        contains_markets: true,
-        reserve_realisation: true,
-        use_market_bids: true,
-        common_timesteps: 10,
-        common_scenario_name: "TestScenario".to_string(),
-        use_node_dummy_variables: true,
-        use_ramp_dummy_variables: false,
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
 
-    /* 
 
-    let mut julia_process = arrow_data::JuliaProcess::new("Predicer/src/process_arrow.jl")?;
-    let arrow_data_buffer = arrow_data::create_arrow_data_buffer()?;
-
-    */
-
-    // Assuming `create_example_input_data` and `convert_to_arrow` are correctly implemented
-    // Assuming `create_test_inputdatasetup` and `struct_to_arrow` are correctly implemented
-    let setup = create_test_inputdatasetup();
-
-    //println!("InputDataSetup created: {:?}", setup);
-
-    // Here, `?` is used to unwrap the Result; it will return the function early if there's an error
-    let batch = arrow_input::struct_to_arrow(&setup)?;
-
-    // Now `batch` is of type `RecordBatch` and can be passed to `serialize_record_batch_to_vec`
-    let arrow_data = arrow_data::serialize_record_batch_to_vec(&batch)?;
-    let encoded_arrow_data = encode(&arrow_data);
-
-    //println!("Encoded data length: {}", encoded_arrow_data.len());
-    //println!("Encoded data sample: {}", &encoded_arrow_data[0..50.min(encoded_arrow_data.len())]);
-
-    // 3. Decode and compare
-    //let decoded_arrow_data = decode(&encoded_arrow_data).expect("Failed to decode");
-    //assert_eq!(arrow_data, decoded_arrow_data, "The decoded data does not match the original");
-
-    //println!("Encoding and decoding verification passed.");
 
     // Initialize the JuliaProcess
-    let mut julia_process = arrow_data::JuliaProcess::new("Predicer/src/arrow_test.jl")?;
+    let mut julia_process = julia_process::JuliaProcess::new("Predicer/src/arrow_test.jl")?;
+
+    // Use the function to create base64 encoded Arrow data
+    //let encoded_arrow_data = arrow_input::create_and_encode_inputdatasetup()?;
+    let encoded_arrow_data = arrow_input::create_and_encode_nodes()?;
 
     // Send the encoded data to the Julia process
     julia_process.send_data(format!("data:{}\n", encoded_arrow_data).into_bytes())?;
