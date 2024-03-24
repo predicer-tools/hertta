@@ -86,6 +86,23 @@ pub fn create_and_encode_process_topologys() -> Result<String, Box<dyn Error>> {
     Ok(encoded_arrow_data)
 }
 
+pub fn create_and_encode_groups() -> Result<String, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let groups = create_test_groups_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = groups_to_arrow(&groups)?;
+
+    // Serialize the RecordBatch to a Vec<u8>
+    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
+
+    // Encode the Vec<u8> into a base64 String
+    let encoded_arrow_data: String = encode(&arrow_data);
+
+    // Return the base64 encoded string
+    Ok(encoded_arrow_data)
+}
+
 pub fn serialize_record_batch_to_vec(batch: &RecordBatch) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut buf: Vec<u8> = Vec::new();
     {
@@ -462,6 +479,49 @@ pub fn inputdatasetup_to_arrow(setup: &input_data::InputDataSetup) -> Result<Rec
     }
 }
 
+// Function to convert HashMap<String, GroupNew> to RecordBatch
+pub fn groups_to_arrow(groups: &HashMap<String, input_data::GroupNew>) -> Result<RecordBatch, ArrowError> {
+    // Define the schema for the Arrow RecordBatch
+    let schema = Schema::new(vec![
+        Field::new("name", DataType::Utf8, false),
+        Field::new("g_type", DataType::Utf8, false),
+        Field::new("entity", DataType::Utf8, false),
+        Field::new("group", DataType::Utf8, false),
+    ]);
+
+    // Initialize vectors to hold group data
+    let mut names: Vec<String> = Vec::new();
+    let mut g_types: Vec<String> = Vec::new();
+    let mut entities: Vec<String> = Vec::new();
+    let mut groups_vec: Vec<String> = Vec::new();
+
+    for (_, group) in groups {
+        names.push(group.name.clone());
+        g_types.push(group.g_type.clone());
+        entities.push(group.entity.clone());
+        groups_vec.push(group.group.clone());
+    }
+
+    // Create arrays from the vectors
+    let names_array = Arc::new(StringArray::from(names)) as ArrayRef;
+    let g_types_array = Arc::new(StringArray::from(g_types)) as ArrayRef;
+    let entities_array = Arc::new(StringArray::from(entities)) as ArrayRef;
+    let groups_array = Arc::new(StringArray::from(groups_vec)) as ArrayRef;
+
+    // Now you can create the RecordBatch using these arrays
+    let record_batch = RecordBatch::try_new(
+        Arc::new(schema),
+        vec![
+            names_array,
+            g_types_array,
+            entities_array,
+            groups_array,
+        ],
+    );
+
+    record_batch
+}
+
 pub fn vec_to_record_batch(timeseries: Vec<String>) -> ArrowResult<RecordBatch> {
     // Convert the Vec<String> to a StringArray
     let array: ArrayRef = Arc::new(StringArray::from(timeseries));
@@ -647,6 +707,40 @@ pub fn create_test_nodes_hashmap() -> HashMap<String, input_data::NodeNew> {
     nodes.insert(node2.name.clone(), node2);
 
     nodes
+}
+
+// Function to create a test HashMap for GroupNew
+pub fn create_test_groups_hashmap() -> HashMap<String, input_data::GroupNew> {
+    let mut groups: HashMap<String, input_data::GroupNew> = HashMap::new();
+
+    // Example groups
+    let group1 = input_data::GroupNew {
+        name: "Group1".to_string(),
+        g_type: "Type1".to_string(),
+        entity: "Entity1".to_string(),
+        group: "GroupA".to_string(),
+    };
+
+    let group2 = input_data::GroupNew {
+        name: "Group2".to_string(),
+        g_type: "Type2".to_string(),
+        entity: "Entity2".to_string(),
+        group: "GroupB".to_string(),
+    };
+
+    let group3 = input_data::GroupNew {
+        name: "Group3".to_string(),
+        g_type: "Type3".to_string(),
+        entity: "Entity3".to_string(),
+        group: "GroupC".to_string(),
+    };
+
+    // Insert groups into the hashmap
+    groups.insert(group1.name.clone(), group1);
+    groups.insert(group2.name.clone(), group2);
+    groups.insert(group3.name.clone(), group3);
+
+    groups
 }
 
 pub fn create_test_process_topologys_hashmap() -> HashMap<String, input_data::ProcessTopology> {

@@ -195,6 +195,14 @@ pub struct Group {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GroupNew {
+    pub name: String,
+    pub g_type: String,
+    pub entity: String,
+    pub group: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NodeDiffusion {
     pub name: String,
     pub node1: String,
