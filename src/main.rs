@@ -414,7 +414,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Use the function to create base64 encoded Arrow data
     //let encoded_arrow_data = arrow_input::create_and_encode_inputdatasetup()?;
-    let encoded_arrow_data = arrow_input::create_and_encode_nodes()?;
+    //let encoded_arrow_data = arrow_input::create_and_encode_nodes()?;
+    //let encoded_arrow_data = arrow_input::create_and_encode_process_topologys()?;
+    let encoded_arrow_data = arrow_input::create_and_encode_processes()?;
 
     // Send the encoded data to the Julia process
     julia_process.send_data(format!("data:{}\n", encoded_arrow_data).into_bytes())?;

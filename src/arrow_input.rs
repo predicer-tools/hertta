@@ -1,4 +1,4 @@
-use arrow::array::{StringArray, Float64Array, Int32Array, BooleanArray, ArrayRef, Array};
+use arrow::array::{StringArray, Float64Array, Int32Array, Int64Array, BooleanArray, ArrayRef, Array};
 use arrow::{datatypes::{DataType, Field, Schema}, error::ArrowError, record_batch::RecordBatch};
 use std::sync::Arc;
 use arrow::error::Result as ArrowResult;
@@ -50,6 +50,42 @@ pub fn create_and_encode_nodes() -> Result<String, Box<dyn Error>> {
     Ok(encoded_arrow_data)
 }
 
+// Define the new function
+pub fn create_and_encode_processes() -> Result<String, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let processes = create_test_processes_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = processes_to_arrow(&processes)?;
+
+    // Serialize the RecordBatch to a Vec<u8>
+    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
+
+    // Encode the Vec<u8> into a base64 String
+    let encoded_arrow_data: String = encode(&arrow_data);
+
+    // Return the base64 encoded string
+    Ok(encoded_arrow_data)
+}
+
+// Define the new function
+pub fn create_and_encode_process_topologys() -> Result<String, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let processes = create_test_process_topologys_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = process_topos_to_arrow(&processes)?;
+
+    // Serialize the RecordBatch to a Vec<u8>
+    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
+
+    // Encode the Vec<u8> into a base64 String
+    let encoded_arrow_data: String = encode(&arrow_data);
+
+    // Return the base64 encoded string
+    Ok(encoded_arrow_data)
+}
+
 pub fn serialize_record_batch_to_vec(batch: &RecordBatch) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut buf: Vec<u8> = Vec::new();
     {
@@ -85,6 +121,186 @@ pub fn create_arrow_data_buffer() -> Result<Vec<u8>, Box<dyn Error>> {
     }
 
     Ok(buffer)
+}
+
+// Convert HashMap<String, ProcessTopology> to RecordBatch
+pub fn process_topos_to_arrow(process_topologys: &HashMap<String, input_data::ProcessTopology>) -> Result<RecordBatch, ArrowError> {
+    // Define the schema for the Arrow RecordBatch
+    let schema = Schema::new(vec![
+        Field::new("process", DataType::Utf8, false),
+        Field::new("source_sink", DataType::Utf8, false),
+        Field::new("node", DataType::Utf8, false),
+        Field::new("conversion_coeff", DataType::Float64, false),
+        Field::new("capacity", DataType::Float64, false),
+        Field::new("vom_cost", DataType::Float64, false),
+        Field::new("ramp_up", DataType::Float64, false),
+        Field::new("ramp_down", DataType::Float64, false),
+        Field::new("initial_load", DataType::Float64, false),
+        Field::new("initial_flow", DataType::Float64, false),
+    ]);
+
+    let mut processes: Vec<String> = Vec::new();
+    let mut source_sinks: Vec<String> = Vec::new();
+    let mut nodes: Vec<String> = Vec::new();
+    let mut conversion_coeffs: Vec<f64> = Vec::new();
+    let mut capacities: Vec<f64> = Vec::new();
+    let mut vom_costs: Vec<f64> = Vec::new();
+    let mut ramp_ups: Vec<f64> = Vec::new();
+    let mut ramp_downs: Vec<f64> = Vec::new();
+    let mut initial_loads: Vec<f64> = Vec::new();
+    let mut initial_flows: Vec<f64> = Vec::new();
+
+    for (process_name, process) in process_topologys {
+        processes.push(process.process.clone());
+        source_sinks.push(process.source_sink.clone());
+        nodes.push(process.node.clone());
+        conversion_coeffs.push(process.conversion_coeff);
+        capacities.push(process.capacity);
+        vom_costs.push(process.vom_cost);
+        ramp_ups.push(process.ramp_up);
+        ramp_downs.push(process.ramp_down);
+        initial_loads.push(process.initial_load);
+        initial_flows.push(process.initial_flow);
+    }    
+
+    // Create arrays from the vectors
+    let processes_array = Arc::new(StringArray::from(processes)) as ArrayRef;
+    let source_sinks_array = Arc::new(StringArray::from(source_sinks)) as ArrayRef;
+    let nodes_array = Arc::new(StringArray::from(nodes)) as ArrayRef;
+    let conversion_coeffs_array = Arc::new(Float64Array::from(conversion_coeffs)) as ArrayRef;
+    let capacities_array = Arc::new(Float64Array::from(capacities)) as ArrayRef;
+    let vom_costs_array = Arc::new(Float64Array::from(vom_costs)) as ArrayRef;
+    let ramp_ups_array = Arc::new(Float64Array::from(ramp_ups)) as ArrayRef;
+    let ramp_downs_array = Arc::new(Float64Array::from(ramp_downs)) as ArrayRef;
+    let initial_loads_array = Arc::new(Float64Array::from(initial_loads)) as ArrayRef;
+    let initial_flows_array = Arc::new(Float64Array::from(initial_flows)) as ArrayRef;
+
+    let record_batch = RecordBatch::try_new(
+        Arc::new(schema),
+        vec![
+            processes_array,
+            source_sinks_array,
+            nodes_array,
+            conversion_coeffs_array,
+            capacities_array,
+            vom_costs_array,
+            ramp_ups_array,
+            ramp_downs_array,
+            initial_loads_array,
+            initial_flows_array,
+        ],
+    );    
+
+    record_batch
+}
+
+// Convert HashMap<String, ProcessNew> to RecordBatch
+pub fn processes_to_arrow(processes: &HashMap<String, input_data::ProcessNew>) -> Result<RecordBatch, ArrowError> {
+    // Define the schema for the Arrow RecordBatch
+    let schema = Schema::new(vec![
+        Field::new("name", DataType::Utf8, false),
+        Field::new("is_cf", DataType::Boolean, false),
+        Field::new("is_cf_fix", DataType::Boolean, false),
+        Field::new("is_online", DataType::Boolean, false),
+        Field::new("is_res", DataType::Boolean, false),
+        Field::new("conversion", DataType::Int64, false),
+        Field::new("eff", DataType::Float64, false),
+        Field::new("load_min", DataType::Float64, false),
+        Field::new("load_max", DataType::Float64, false),
+        Field::new("start_cost", DataType::Float64, false),
+        Field::new("min_online", DataType::Float64, false),
+        Field::new("min_offline", DataType::Float64, false),
+        Field::new("max_online", DataType::Float64, false),
+        Field::new("max_offline", DataType::Float64, false),
+        Field::new("initial_state", DataType::Float64, false),
+        Field::new("scenario_independent_online", DataType::Float64, false),
+        Field::new("delay", DataType::Float64, false),
+    ]);
+
+    // Initialize vectors to hold process data
+    let mut names: Vec<String> = Vec::new();
+    let mut is_cfs: Vec<bool> = Vec::new();
+    let mut is_cf_fixes: Vec<bool> = Vec::new();
+    let mut is_onlines: Vec<bool> = Vec::new();
+    let mut is_reses: Vec<bool> = Vec::new();
+    let mut conversions: Vec<i64> = Vec::new();
+    let mut effs: Vec<f64> = Vec::new();
+    let mut load_mins: Vec<f64> = Vec::new();
+    let mut load_maxs: Vec<f64> = Vec::new();
+    let mut start_costs: Vec<f64> = Vec::new();
+    let mut min_onlines: Vec<f64> = Vec::new();
+    let mut min_offlines: Vec<f64> = Vec::new();
+    let mut max_onlines: Vec<f64> = Vec::new();
+    let mut max_offlines: Vec<f64> = Vec::new();
+    let mut initial_states: Vec<f64> = Vec::new();
+    let mut scenario_independent_onlines: Vec<f64> = Vec::new();
+    let mut delays: Vec<f64> = Vec::new();
+
+    for (name, process) in processes {
+        names.push(process.name.clone());
+        is_cfs.push(process.is_cf);
+        is_cf_fixes.push(process.is_cf_fix);
+        is_onlines.push(process.is_online);
+        is_reses.push(process.is_res);
+        conversions.push(process.conversion);
+        effs.push(process.eff);
+        load_mins.push(process.load_min);
+        load_maxs.push(process.load_max);
+        start_costs.push(process.start_cost);
+        min_onlines.push(process.min_online);
+        min_offlines.push(process.min_offline);
+        max_onlines.push(process.max_online);
+        max_offlines.push(process.max_offline);
+        initial_states.push(process.initial_state);
+        scenario_independent_onlines.push(process.scenario_independent_online);
+        delays.push(process.delay);
+    }
+
+    // Create arrays from the vectors
+    let names_array = Arc::new(StringArray::from(names)) as ArrayRef;
+    let is_cfs_array = Arc::new(BooleanArray::from(is_cfs)) as ArrayRef;
+    let is_cf_fixes_array = Arc::new(BooleanArray::from(is_cf_fixes)) as ArrayRef;
+    let is_onlines_array = Arc::new(BooleanArray::from(is_onlines)) as ArrayRef;
+    let is_reses_array = Arc::new(BooleanArray::from(is_reses)) as ArrayRef;
+    let conversions_array = Arc::new(Int64Array::from(conversions)) as ArrayRef;
+    let effs_array = Arc::new(Float64Array::from(effs)) as ArrayRef;
+    let load_mins_array = Arc::new(Float64Array::from(load_mins)) as ArrayRef;
+    let load_maxs_array = Arc::new(Float64Array::from(load_maxs)) as ArrayRef;
+    let start_costs_array = Arc::new(Float64Array::from(start_costs)) as ArrayRef;
+    let min_onlines_array = Arc::new(Float64Array::from(min_onlines)) as ArrayRef;
+    let min_offlines_array = Arc::new(Float64Array::from(min_offlines)) as ArrayRef;
+    let max_onlines_array = Arc::new(Float64Array::from(max_onlines)) as ArrayRef;
+    let max_offlines_array = Arc::new(Float64Array::from(max_offlines)) as ArrayRef;
+    let initial_states_array = Arc::new(Float64Array::from(initial_states)) as ArrayRef;
+    let scenario_independent_onlines_array = Arc::new(Float64Array::from(scenario_independent_onlines)) as ArrayRef;
+    let delays_array = Arc::new(Float64Array::from(delays)) as ArrayRef;
+
+    // Now you can create the RecordBatch using these arrays
+    let record_batch = RecordBatch::try_new(
+        Arc::new(schema),
+        vec![
+            names_array,
+            is_cfs_array,
+            is_cf_fixes_array,
+            is_onlines_array,
+            is_reses_array,
+            conversions_array,
+            effs_array,
+            load_mins_array,
+            load_maxs_array,
+            start_costs_array,
+            min_onlines_array,
+            min_offlines_array,
+            max_onlines_array,
+            max_offlines_array,
+            initial_states_array,
+            scenario_independent_onlines_array,
+            delays_array,
+        ],
+    );
+
+    record_batch
+
 }
 
 // Convert HashMap<String, Node> to RecordBatch
@@ -431,6 +647,125 @@ pub fn create_test_nodes_hashmap() -> HashMap<String, input_data::NodeNew> {
     nodes.insert(node2.name.clone(), node2);
 
     nodes
+}
+
+pub fn create_test_process_topologys_hashmap() -> HashMap<String, input_data::ProcessTopology> {
+    let mut process_topos: HashMap<String, input_data::ProcessTopology> = HashMap::new();
+
+    // Example process topologys
+    let process_topo1 = input_data::ProcessTopology {
+        name: "process_topo1".to_string(),
+        process: "Process1".to_string(),
+        source_sink: "source".to_string(),
+        node: "node1".to_string(),
+        conversion_coeff: 1.0,
+        capacity: 20.0,
+        vom_cost: 3.0,
+        ramp_up: 0.5,
+        ramp_down: 0.5,
+        initial_load: 0.6,
+        initial_flow: 0.6,
+    };
+
+    let process_topo2 = input_data::ProcessTopology {
+        name: "process_topo2".to_string(),
+        process: "Process1".to_string(),
+        source_sink: "sink".to_string(),
+        node: "node1".to_string(),
+        conversion_coeff: 1.0,
+        capacity: 20.0,
+        vom_cost: 3.0,
+        ramp_up: 0.5,
+        ramp_down: 0.5,
+        initial_load: 0.6,
+        initial_flow: 0.6,
+    };
+
+    let process_topo3 = input_data::ProcessTopology {
+        name: "process_topo3".to_string(),
+        process: "Process2".to_string(),
+        source_sink: "source".to_string(),
+        node: "node1".to_string(),
+        conversion_coeff: 1.0,
+        capacity: 20.0,
+        vom_cost: 3.0,
+        ramp_up: 0.5,
+        ramp_down: 0.5,
+        initial_load: 0.6,
+        initial_flow: 0.6,
+    };
+
+    let process_topo4 = input_data::ProcessTopology {
+        name: "process_topo4".to_string(),
+        process: "Process2".to_string(),
+        source_sink: "sink".to_string(),
+        node: "node1".to_string(),
+        conversion_coeff: 1.0,
+        capacity: 20.0,
+        vom_cost: 3.0,
+        ramp_up: 0.5,
+        ramp_down: 0.5,
+        initial_load: 0.6,
+        initial_flow: 0.6,
+    };
+
+    // Insert nodes into the hashmap
+    process_topos.insert(process_topo1.name.clone(), process_topo1);
+    process_topos.insert(process_topo2.name.clone(), process_topo2);
+    process_topos.insert(process_topo3.name.clone(), process_topo3);
+    process_topos.insert(process_topo4.name.clone(), process_topo4);
+
+    process_topos
+}
+
+pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew> {
+    let mut processes = HashMap::new();
+
+    let process1 = input_data::ProcessNew {
+        name: "Process1".to_string(),
+        is_cf: true,
+        is_cf_fix: false,
+        is_online: true,
+        is_res: false,
+        conversion: 100,
+        eff: 0.9,
+        load_min: 10.0,
+        load_max: 100.0,
+        start_cost: 500.0,
+        min_online: 1.0,
+        min_offline: 1.0,
+        max_online: 24.0,
+        max_offline: 24.0,
+        initial_state: 0.0,
+        scenario_independent_online: 0.0,
+        delay: 0.0,
+    };
+
+    let process2 = input_data::ProcessNew {
+        name: "Process2".to_string(),
+        is_cf: false,
+        is_cf_fix: true,
+        is_online: false,
+        is_res: true,
+        conversion: 200,
+        eff: 0.8,
+        load_min: 20.0,
+        load_max: 200.0,
+        start_cost: 1000.0,
+        min_online: 2.0,
+        min_offline: 2.0,
+        max_online: 48.0,
+        max_offline: 48.0,
+        initial_state: 0.0,
+        scenario_independent_online: 0.0,
+        delay: 1.0,
+    };
+
+    // Insert processes into the hashmap
+    processes.insert(process1.name.clone(), process1);
+    processes.insert(process2.name.clone(), process2);
+
+    processes
 }
 
 pub fn create_statenew() -> input_data::StateNew {

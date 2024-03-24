@@ -107,6 +107,42 @@ pub struct Process {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ProcessNew {
+    pub name: String,
+    pub is_cf: bool,
+    pub is_cf_fix: bool,
+    pub is_online: bool,
+    pub is_res: bool,
+    pub conversion: i64,
+    pub eff: f64,
+    pub load_min: f64,
+    pub load_max: f64,
+    pub start_cost: f64,
+    pub min_online: f64,
+    pub min_offline: f64,
+    pub max_online: f64,
+    pub max_offline: f64,
+    pub initial_state: f64,
+    pub scenario_independent_online: f64,
+    pub delay: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ProcessTopology {
+    pub name: String,
+    pub process: String,
+    pub source_sink: String,
+    pub node: String,
+    pub conversion_coeff: f64,
+    pub capacity: f64,
+    pub vom_cost: f64,
+    pub ramp_up: f64,
+    pub ramp_down: f64,
+    pub initial_load: f64,
+    pub initial_flow: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Node {
     pub name: String,
     pub is_commodity: bool,
