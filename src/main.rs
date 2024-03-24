@@ -417,7 +417,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //let encoded_arrow_data = arrow_input::create_and_encode_nodes()?;
     //let encoded_arrow_data = arrow_input::create_and_encode_process_topologys()?;
     //let encoded_arrow_data = arrow_input::create_and_encode_processes()?;
-    let encoded_arrow_data = arrow_input::create_and_encode_groups()?;
+    //let encoded_arrow_data = arrow_input::create_and_encode_groups()?;
+    let encoded_arrow_data = arrow_input::create_and_encode_markets()?;
 
     // Send the encoded data to the Julia process
     julia_process.send_data(format!("data:{}\n", encoded_arrow_data).into_bytes())?;

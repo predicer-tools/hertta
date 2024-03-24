@@ -103,6 +103,23 @@ pub fn create_and_encode_groups() -> Result<String, Box<dyn Error>> {
     Ok(encoded_arrow_data)
 }
 
+pub fn create_and_encode_markets() -> Result<String, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let markets = create_test_markets_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = markets_to_arrow(&markets)?;
+
+    // Serialize the RecordBatch to a Vec<u8>
+    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
+
+    // Encode the Vec<u8> into a base64 String
+    let encoded_arrow_data: String = encode(&arrow_data);
+
+    // Return the base64 encoded string
+    Ok(encoded_arrow_data)
+}
+
 pub fn serialize_record_batch_to_vec(batch: &RecordBatch) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut buf: Vec<u8> = Vec::new();
     {
@@ -138,6 +155,85 @@ pub fn create_arrow_data_buffer() -> Result<Vec<u8>, Box<dyn Error>> {
     }
 
     Ok(buffer)
+}
+
+// Convert HashMap<String, MarketNew> to RecordBatch
+pub fn markets_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -> Result<RecordBatch, ArrowError> {
+    // Define the schema for the Arrow RecordBatch
+    let schema = Schema::new(vec![
+        Field::new("market", DataType::Utf8, false),
+        Field::new("m_type", DataType::Utf8, false),
+        Field::new("node", DataType::Utf8, false),
+        Field::new("processgroup", DataType::Utf8, false),
+        Field::new("direction", DataType::Utf8, false),
+        Field::new("reserve_type", DataType::Utf8, false),
+        Field::new("is_bid", DataType::Boolean, false),
+        Field::new("is_limited", DataType::Boolean, false),
+        Field::new("min_bid", DataType::Float64, false),
+        Field::new("max_bid", DataType::Float64, false),
+        Field::new("fee", DataType::Float64, false),
+    ]);
+
+    // Initialize vectors to hold market data
+    let mut markets_vec: Vec<String> = Vec::new();
+    let mut m_types: Vec<String> = Vec::new();
+    let mut nodes: Vec<String> = Vec::new();
+    let mut processgroups: Vec<String> = Vec::new();
+    let mut directions: Vec<String> = Vec::new();
+    let mut reserve_types: Vec<String> = Vec::new();
+    let mut is_bids: Vec<bool> = Vec::new();
+    let mut is_limiteds: Vec<bool> = Vec::new();
+    let mut min_bids: Vec<f64> = Vec::new();
+    let mut max_bids: Vec<f64> = Vec::new();
+    let mut fees: Vec<f64> = Vec::new();
+
+    for (market_name, market) in markets {
+        markets_vec.push(market.market.clone());
+        m_types.push(market.m_type.clone());
+        nodes.push(market.node.clone());
+        processgroups.push(market.processgroup.clone());
+        directions.push(market.direction.clone());
+        reserve_types.push(market.reserve_type.clone());
+        is_bids.push(market.is_bid);
+        is_limiteds.push(market.is_limited);
+        min_bids.push(market.min_bid);
+        max_bids.push(market.max_bid);
+        fees.push(market.fee);
+    }
+
+    // Create arrays from the vectors
+    let markets_array = Arc::new(StringArray::from(markets_vec)) as ArrayRef;
+    let m_types_array = Arc::new(StringArray::from(m_types)) as ArrayRef;
+    let nodes_array = Arc::new(StringArray::from(nodes)) as ArrayRef;
+    let processgroups_array = Arc::new(StringArray::from(processgroups)) as ArrayRef;
+    let directions_array = Arc::new(StringArray::from(directions)) as ArrayRef;
+    let reserve_types_array = Arc::new(StringArray::from(reserve_types)) as ArrayRef;
+    let is_bids_array = Arc::new(BooleanArray::from(is_bids)) as ArrayRef;
+    let is_limiteds_array = Arc::new(BooleanArray::from(is_limiteds)) as ArrayRef;
+    let min_bids_array = Arc::new(Float64Array::from(min_bids)) as ArrayRef;
+    let max_bids_array = Arc::new(Float64Array::from(max_bids)) as ArrayRef;
+    let fees_array = Arc::new(Float64Array::from(fees)) as ArrayRef;
+
+    // Now you can create the RecordBatch using these arrays
+    let record_batch = RecordBatch::try_new(
+        Arc::new(schema),
+        vec![
+            markets_array,
+            m_types_array,
+            nodes_array,
+            processgroups_array,
+            directions_array,
+            reserve_types_array,
+            is_bids_array,
+            is_limiteds_array,
+            min_bids_array,
+            max_bids_array,
+            fees_array,
+        ],
+    );
+
+    record_batch
+
 }
 
 // Convert HashMap<String, ProcessTopology> to RecordBatch
@@ -653,6 +749,48 @@ pub fn create_example_input_data() -> TestInputData {
         nodes,
         metadata: "Example Metadata".to_string(),
     }
+}
+
+// Function to create a test HashMap for MarketNew
+pub fn create_test_markets_hashmap() -> HashMap<String, input_data::MarketNew> {
+    let mut markets: HashMap<String, input_data::MarketNew> = HashMap::new();
+
+    // Example markets
+    let market1 = input_data::MarketNew {
+        name: "Market1".to_string(),
+        market: "Energy".to_string(),
+        m_type: "Spot".to_string(),
+        node: "Node1".to_string(),
+        processgroup: "GroupA".to_string(),
+        direction: "Supply".to_string(),
+        reserve_type: "Primary".to_string(),
+        is_bid: true,
+        is_limited: false,
+        min_bid: 10.0,
+        max_bid: 100.0,
+        fee: 1.0,
+    };
+
+    let market2 = input_data::MarketNew {
+        name: "Market2".to_string(),
+        market: "Reserve".to_string(),
+        m_type: "Tertiary".to_string(),
+        node: "Node2".to_string(),
+        processgroup: "GroupB".to_string(),
+        direction: "Demand".to_string(),
+        reserve_type: "Secondary".to_string(),
+        is_bid: false,
+        is_limited: true,
+        min_bid: 20.0,
+        max_bid: 200.0,
+        fee: 2.0,
+    };
+
+    // Insert markets into the hashmap
+    markets.insert(market1.name.clone(), market1);
+    markets.insert(market2.name.clone(), market2);
+
+    markets
 }
 
 // Function to create a test instance of InputDataSetup

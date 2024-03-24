@@ -188,6 +188,22 @@ pub struct Market {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MarketNew {
+    pub name: String,
+    pub market: String,
+    pub m_type: String,
+    pub node: String, //mikä tyyppi
+    pub processgroup: String,
+    pub direction: String,
+    pub reserve_type: String,
+    pub is_bid: bool,
+    pub is_limited: bool,
+    pub min_bid: f64,
+    pub max_bid: f64,
+    pub fee: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Group {
     pub name: String,
     pub g_type: String,
