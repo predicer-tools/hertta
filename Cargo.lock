@@ -1269,6 +1269,7 @@ dependencies = [
  "mockito",
  "ordered-float",
  "pathbuf",
+ "rand 0.8.5",
  "reqwest",
  "serde",
  "serde_arrow",

@@ -63,6 +63,7 @@ pub struct InputData {
     pub processes: HashMap<String, Process>,
     pub markets: HashMap<String, Market>,
     pub groups: HashMap<String, Group>,
+    pub scenarios: HashMap<String, f64>,
     pub gen_constraints: HashMap<String, GenConstraint>,
     pub node_diffusion: HashMap<String, NodeDiffusion>,
     pub node_delay: HashMap<String, NodeDelay>,
@@ -133,6 +134,7 @@ pub struct ProcessNew {
     pub initial_state: f64,
     pub scenario_independent_online: f64,
     pub delay: f64,
+    pub eff_ops: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

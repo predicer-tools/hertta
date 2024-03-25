@@ -191,7 +191,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //let encoded_arrow_data = arrow_input::create_and_encode_groups()?;
     //let encoded_arrow_data = arrow_input::create_and_encode_markets()?;
     //let encoded_arrow_data = arrow_input::create_and_encode_timeseries()?;
-    let encoded_arrow_data = arrow_input::create_and_encode_node_inflows()?;
+    //let encoded_arrow_data = arrow_input::create_and_encode_node_inflows()?;
+    //let encoded_arrow_data = arrow_input::create_and_encode_process_eff_ops()?; EI TOIMI VIELÄ
+    let encoded_arrow_data = arrow_input::create_and_encode_scenarios()?;
 
     // Send the encoded data to the Julia process
     julia_process.send_data(format!("data:{}\n", encoded_arrow_data).into_bytes())?;

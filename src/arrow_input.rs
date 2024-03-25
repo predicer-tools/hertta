@@ -88,6 +88,24 @@ pub fn create_and_encode_processes() -> Result<String, Box<dyn Error>> {
 }
 
 // Define the new function
+pub fn create_and_encode_process_eff_ops() -> Result<String, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let processes = arrow_test_data::create_test_processes_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = processes_eff_ops_to_arrow(&processes)?;
+
+    // Serialize the RecordBatch to a Vec<u8>
+    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
+
+    // Encode the Vec<u8> into a base64 String
+    let encoded_arrow_data: String = encode(&arrow_data);
+
+    // Return the base64 encoded string
+    Ok(encoded_arrow_data)
+}
+
+// Define the new function
 pub fn create_and_encode_process_topologys() -> Result<String, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
     let processes = arrow_test_data::create_test_process_topologys_hashmap();
@@ -145,6 +163,23 @@ pub fn create_and_encode_timeseries() -> Result<String, Box<dyn Error>> {
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = timeseries_to_arrow(timeseries)?;
+
+    // Serialize the RecordBatch to a Vec<u8>
+    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
+
+    // Encode the Vec<u8> into a base64 String
+    let encoded_arrow_data: String = encode(&arrow_data);
+
+    // Return the base64 encoded string
+    Ok(encoded_arrow_data)
+}
+
+pub fn create_and_encode_scenarios() -> Result<String, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let scenarios = arrow_test_data::create_test_scenarios();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = scenarios_to_arrow(&scenarios)?;
 
     // Serialize the RecordBatch to a Vec<u8>
     let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
@@ -214,6 +249,42 @@ pub fn nodes_inflow_to_arrow(nodes: &HashMap<String, input_data::NodeNew>) -> Re
             let value_array = Arc::new(Float64Array::from(values)) as ArrayRef;
             columns.push(value_array);
         }
+    }
+
+    let schema = Arc::new(Schema::new(fields));
+    RecordBatch::try_new(schema, columns)
+}
+
+// Function to convert eff_ops of Process to an Arrow RecordBatch
+pub fn processes_eff_ops_to_arrow(processes: &HashMap<String, input_data::ProcessNew>) -> Result<RecordBatch, ArrowError> {
+    let mut fields: Vec<Field> = Vec::new();
+    let mut columns: Vec<ArrayRef> = Vec::new();
+
+    // Create a column for each possible index in eff_ops, assuming all Process have the same number of operations
+    let max_ops = processes.values().map(|p| p.eff_ops.len()).max().unwrap_or(0);
+    for i in 1..=max_ops {
+        let column_name = i.to_string();
+        fields.push(Field::new(&column_name, DataType::Float64, true)); // true for nullable
+    }
+
+    for (process_name, process) in processes {
+        // Process name is used as part of the row identifier
+        let row_name = format!("{},op", process_name);
+        let mut ops_values: Vec<Option<f64>> = Vec::new();
+
+        for op in &process.eff_ops {
+            // Attempt to parse the string as f64. If it fails, use None which will be converted to null in the RecordBatch
+            let value = op.parse::<f64>().ok();
+            ops_values.push(value);
+        }
+
+        // Make all rows the same length by filling in with None
+        while ops_values.len() < max_ops {
+            ops_values.push(None);
+        }
+
+        let ops_array = Arc::new(Float64Array::from(ops_values)) as ArrayRef;
+        columns.push(ops_array);
     }
 
     let schema = Arc::new(Schema::new(fields));
@@ -297,6 +368,37 @@ pub fn markets_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -> Res
 
     record_batch
 
+}
+
+// Function to convert scenarios HashMap into an Arrow RecordBatch
+pub fn scenarios_to_arrow(scenarios: &HashMap<String, f64>) -> Result<RecordBatch, ArrowError> {
+    // Define the schema for the Arrow RecordBatch
+    let schema = Schema::new(vec![
+        Field::new("name", DataType::Utf8, false),
+        Field::new("probability", DataType::Float64, false),
+    ]);
+
+    // Initialize vectors to hold scenario data
+    let mut names: Vec<String> = Vec::new();
+    let mut probabilities: Vec<f64> = Vec::new();
+
+    // Populate vectors with data from the HashMap
+    for (name, probability) in scenarios {
+        names.push(name.clone());
+        probabilities.push(*probability);
+    }
+
+    // Create arrays from the vectors
+    let names_array = Arc::new(StringArray::from(names)) as ArrayRef;
+    let probabilities_array = Arc::new(Float64Array::from(probabilities)) as ArrayRef;
+
+    // Create the RecordBatch using these arrays
+    let record_batch = RecordBatch::try_new(
+        Arc::new(schema),
+        vec![names_array, probabilities_array],
+    )?;
+
+    Ok(record_batch)
 }
 
 // Convert HashMap<String, ProcessTopology> to RecordBatch

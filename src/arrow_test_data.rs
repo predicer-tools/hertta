@@ -4,6 +4,7 @@ use crate::input_data::InputData;
 use std::collections::HashMap;
 use std::error::Error;
 use chrono::{NaiveTime, NaiveDate};
+use rand::Rng;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TestNode {
@@ -38,6 +39,17 @@ pub fn create_test_timeseries() -> Vec<String> {
     }
 
     timeseries
+}
+
+pub fn create_test_scenarios() -> HashMap<String, f64> {
+    let mut scenarios = HashMap::new();
+
+    // Example scenarios with their probabilities
+    scenarios.insert("s1".to_string(), 0.3);
+    scenarios.insert("s2".to_string(), 0.5);
+    scenarios.insert("s3".to_string(), 0.2);
+
+    scenarios
 }
 
 // Example function that creates a TimeSeriesData with example timeseries data
@@ -316,8 +328,21 @@ pub fn create_test_process_topologys_hashmap() -> HashMap<String, input_data::Pr
     process_topos
 }
 
+pub fn create_test_eff_ops(num_ops: usize, min_val: f64, max_val: f64) -> Vec<String> {
+    let mut rng = rand::thread_rng();
+    (0..num_ops).map(|_| {
+        // Generate a random f64 value within the specified range
+        let val = rng.gen_range(min_val..max_val);
+        // Convert the f64 value to a String
+        format!("{:.2}", val)
+    }).collect()
+}
+
 pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew> {
     let mut processes = HashMap::new();
+
+    let p1_eff_ops = create_test_eff_ops(10, 0.5, 1.0);
+    let p2_eff_ops = create_test_eff_ops(10, 0.5, 1.0);
 
     let process1 = input_data::ProcessNew {
         name: "Process1".to_string(),
@@ -337,6 +362,7 @@ pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew
         initial_state: 0.0,
         scenario_independent_online: 0.0,
         delay: 0.0,
+        eff_ops: p1_eff_ops.clone(),
     };
 
     let process2 = input_data::ProcessNew {
@@ -357,6 +383,7 @@ pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew
         initial_state: 0.0,
         scenario_independent_online: 0.0,
         delay: 1.0,
+        eff_ops: p2_eff_ops.clone(),
     };
 
     // Insert processes into the hashmap
