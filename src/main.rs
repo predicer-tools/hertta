@@ -1,15 +1,14 @@
 
 
-mod predicer;
 mod utilities;
 mod input_data;
 mod errors;
 mod event_loop;
 mod arrow_input;
 mod julia_process;
+mod arrow_test_data;
 
 use std::env;
-use hertta::julia_interface;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, AUTHORIZATION};
 use serde_json::json;
 //use tokio::time::{self, Duration, Instant};
@@ -19,7 +18,6 @@ use serde_json;
 use tokio::sync::mpsc;
 use std::num::NonZeroUsize;
 use jlrs::prelude::*;
-use predicer::RunPredicer;
 use jlrs::error::JlrsError;
 use tokio::task::JoinHandle;
 //use std::fmt;
@@ -127,125 +125,6 @@ fn init_julia_runtime() -> Result<(AsyncJulia<Tokio>, JoinHandle<Result<(), Box<
     }
 }
 
-/// Executes a specific task using the Julia runtime.
-///
-/// This asynchronous function sends a task to the Julia runtime for execution and awaits its result.
-/// The task communication is managed through a one-shot channel.
-///
-/// # Parameters
-/// - `julia`: Reference to the initialized AsyncJulia runtime.
-///
-/// # Returns
-/// Returns `Ok(())` if the task is successfully executed, or `JuliaError` in case of any failure
-/// during task dispatch or execution.
-///
-/// # Errors
-/// - Returns `JuliaError` if there is an issue with the channel communication or if the Julia task execution fails.
-
-async fn _execute_task(julia: &AsyncJulia<Tokio>) -> Result<(), errors::JuliaError> {
-    // Create a one-shot channel for task communication. `sender` is used to send the task result,
-    // and `receiver` is used to await this result.
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-
-    // Register and dispatch a task to the Julia runtime. The specific task type and parameters are
-    // determined by `RunPredicer`. An error here would typically indicate issues in task registration or dispatch.
-    julia
-        .register_task::<RunPredicer, _>(sender)
-        .dispatch_any()
-        .await;
-
-    // Await the task result from the receiver. If the receiver encounters a channel error,
-    // it is converted to `JuliaError`.
-    let task_result = receiver.await.map_err(|e| errors::JuliaError(format!("Channel error in executing Julia task: {:?}", e)))?;
-    
-    // If the task was received but resulted in an execution error, convert this error to `JuliaError`.
-    // This typically indicates a failure within the task's logic or processing.
-    task_result.map_err(|e| errors::JuliaError(format!("Task execution error: {:?}", e)))
-}
-
-/// Asynchronously sends a task to the Julia runtime for execution.
-///
-/// This function prepares a task with the provided input data and Predicer directory, then dispatches it
-/// to the Julia runtime. The result of the task execution is communicated back through a one-shot channel.
-///
-/// # Parameters
-/// - `julia`: Reference to the initialized AsyncJulia runtime.
-/// - `data`: The input data for the task.
-/// - `predicer_dir`: Predicer directory. 
-/// - `sender`: A one-shot channel sender used to send the result of the task execution back.
-///
-/// # Returns
-/// Returns `Ok(())` if the task is successfully dispatched to the runtime.
-/// Returns `JuliaError` if the task fails to be dispatched.
-///
-/// # Errors
-/// Returns `JuliaError` with a message indicating failure in dispatching the task to the runtime.
-
-async fn _send_task_to_runtime(
-    julia: &AsyncJulia<Tokio>,
-    data: input_data::InputData, 
-    predicer_dir: String, 
-    sender: tokio::sync::oneshot::Sender<Result<HashMap<String, predicer::ControlValues>, Box<JlrsError>>>,
-) -> Result<(), errors::JuliaError> {
-
-    // Dispatch a task with the provided data and directory to the Julia runtime.
-    // Runs task "RunPredicer"
-    let dispatch_result = julia
-        .task(
-            RunPredicer {
-                data,
-                predicer_dir,
-            },
-            sender,
-        )
-        .try_dispatch_any();
-    
-    // Handle the result of the dispatch attempt.
-    match dispatch_result {
-        Ok(()) => Ok(()), // Indicates successful dispatch of the task.
-        Err(_dispatcher) => {
-            // This branch handles the case where the task could not be dispatched.
-            // An appropriate error message is returned wrapped in `JuliaError`.
-            Err(errors::JuliaError("Failed to dispatch task in sending task to runtime".to_string()))
-        }
-    }
-}
-
-/// Asynchronously receives the result of a Julia task execution.
-///
-/// This function waits for the result of a task sent to the Julia runtime, which is received via a one-shot channel.
-/// It handles both successful and erroneous results, converting them into appropriate Rust Result types.
-///
-/// # Parameters
-/// - `receiver`: A one-shot channel receiver that awaits the result of the Julia task.
-///
-/// # Returns
-/// - On success, returns a vector of tuples containing the task results.
-/// - On failure, returns a `JuliaError` indicating the nature of the failure.
-///
-/// # Errors
-/// - If the task execution itself fails, a `JuliaError` with the execution error message is returned.
-/// - If there is an error in receiving the task result from the channel, a `JuliaError` indicating this failure is returned.
-///
-async fn _receive_task_result(
-    receiver: tokio::sync::oneshot::Receiver<Result<HashMap<String, predicer::ControlValues>, Box<JlrsError>>>,
-) -> Result<HashMap<String, predicer::ControlValues>, errors::JuliaError> {
-    match receiver.await {
-        Ok(result) => match result {
-            // The task result is successfully received from the channel.
-            Ok(value) => 
-            // The task executed successfully and returned a value.
-            Ok(value),
-            Err(e) => 
-            // The task executed but resulted in an error. This error is converted to a `JuliaError`.
-            Err(errors::JuliaError(format!("Task execution error: {:?}", e))),
-        },
-        Err(e) => 
-        // An error occurred in receiving the result from the channel, which is converted to a `JuliaError`.
-        Err(errors::JuliaError(format!("Failed to receive task result from channel in julia task: {:?}", e))),
-    }
-}
-
 /// Shuts down the Julia runtime and waits for the completion of its associated tasks.
 ///
 /// This function drops the Julia runtime object to initiate its shutdown and then waits for
@@ -276,114 +155,6 @@ async fn _shutdown_julia_runtime(julia: AsyncJulia<Tokio>, handle: JoinHandle<Re
 }
 
 
-/// Executes Run Predicer task using a Julia runtime.
-///
-/// This function handles the execution of optimization task by interfacing with a Julia runtime.
-/// It involves sending Predicer task to the runtime, waiting for its completion, and retrieving the results.
-///
-/// # Parameters
-/// - `julia`: An `Arc<Mutex<AsyncJulia<Tokio>>>` providing shared, thread-safe access to the Julia runtime.
-/// - `data`: The input data required for the prediction task.
-/// - `predicer_dir`: The directory path to optimization tool
-///
-/// # Returns
-/// Returns a `Result` with a vector of tuples (String, f64) representing the prediction results,
-/// or a `JuliaError` if any part of the process fails.
-///
-/// # Errors
-/// - Errors can occur during task execution, sending the task to runtime, or receiving the task results.
-/// - All errors are converted to `JuliaError` for a consistent error handling experience.
-///
-async fn _run_predicer(
-    julia: Arc<Mutex<AsyncJulia<Tokio>>>,
-    data: input_data::InputData,
-    predicer_dir: String,
-) -> Result<HashMap<String, predicer::ControlValues>, errors::JuliaError> {
-
-    // Acquire a lock on the Julia runtime.
-    let julia_guard = julia.lock().await;
-
-    // Attempt to execute the task using the Julia runtime.
-    match _execute_task(&*julia_guard).await {
-        Ok(()) => println!("Task executed successfully"),
-        Err(e) => eprintln!("Task execution failed: {}", e),
-    }
-
-    // Create a one-shot channel for task result communication.
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-
-    // Send the prediction task to the runtime, handling any errors.
-    if let Err(e) = _send_task_to_runtime(&*julia_guard, data, predicer_dir, sender).await {
-        eprintln!("Failed to send task to runtime: {}", e);
-        return Err(e);
-    }
-
-    // Wait for and handle the task result.
-    let result = match _receive_task_result(receiver).await {
-        Ok(value) => {
-            println!("Results received.");
-            value // value is of type Vec<(String, f64)>
-        },
-        Err(e) => {
-            eprintln!("Error receiving task result: {}", e);
-            return Err(errors::JuliaError(format!("Error receiving task result: {:?}", e))); // Updated error handling
-        }
-    };
-
-    // Return the successful result.
-    Ok(result)
-
-}
-
-async fn _control_values_to_hass(result: Vec<(String, f64)>, entity_id: &str, server_1_url: &str) -> Result<(), reqwest::Error> {
-    // Create JSON payload
-    let json_payload = json!({
-        "entity_id": entity_id,
-        "control_values": result
-    });
-
-    // Create a client and make a POST request
-    let client = reqwest::Client::new();
-    client.post(server_1_url)
-          .json(&json_payload)
-          .send()
-          .await?;
-
-    Ok(())
-}
-
-// Example of Options for the development phase
-// Configuration options saved into a json file in the addon data directory.
-#[derive(Deserialize, Debug)]
-struct Options {
-    listen_ip: String,
-    port: String,
-}
-
-pub fn write_to_json_file(data: &input_data::InputData, file_path: &str) -> Result<(), Box<dyn Error>> {
-    // Serialize the data to JSON
-    let json = serde_json::to_string_pretty(data)?;
-
-    // Open a file in write mode
-    let mut file = File::create(file_path)?;
-
-    // Write the JSON data to the file
-    file.write_all(json.as_bytes())?;
-
-    Ok(())
-}
-
-pub fn serialize_device_control_values(
-    device_control_values: &HashMap<String, Vec<(String, f64)>>,
-) -> Result<String, Box<dyn Error>> {
-    // Serialize the HashMap to a JSON string
-    serde_json::to_string(device_control_values).map_err(|e| e.into())
-}
-
-#[derive(Serialize, Deserialize)]
-struct OptimizationResult {
-    data: f64,
-}
 
 pub fn start_hass_backend_server() {
 
@@ -418,7 +189,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //let encoded_arrow_data = arrow_input::create_and_encode_process_topologys()?;
     //let encoded_arrow_data = arrow_input::create_and_encode_processes()?;
     //let encoded_arrow_data = arrow_input::create_and_encode_groups()?;
-    let encoded_arrow_data = arrow_input::create_and_encode_markets()?;
+    //let encoded_arrow_data = arrow_input::create_and_encode_markets()?;
+    //let encoded_arrow_data = arrow_input::create_and_encode_timeseries()?;
+    let encoded_arrow_data = arrow_input::create_and_encode_node_inflows()?;
 
     // Send the encoded data to the Julia process
     julia_process.send_data(format!("data:{}\n", encoded_arrow_data).into_bytes())?;

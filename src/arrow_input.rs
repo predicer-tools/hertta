@@ -3,6 +3,7 @@ use arrow::{datatypes::{DataType, Field, Schema}, error::ArrowError, record_batc
 use std::sync::Arc;
 use arrow::error::Result as ArrowResult;
 use crate::input_data;
+use crate::arrow_test_data;
 use std::collections::HashMap;
 use std::error::Error;
 use arrow::ipc::writer::StreamWriter;
@@ -13,11 +14,12 @@ use std::fs::File;
 use std::io::Read;
 use bincode;
 use std::path::Path;
+use chrono::{NaiveDate, NaiveDateTime};
 
 // Define the new function
 pub fn create_and_encode_inputdatasetup() -> Result<String, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
-    let setup = create_test_inputdatasetup();
+    let setup = arrow_test_data::create_test_inputdatasetup();
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = inputdatasetup_to_arrow(&setup)?;
@@ -35,7 +37,7 @@ pub fn create_and_encode_inputdatasetup() -> Result<String, Box<dyn Error>> {
 // Define the new function
 pub fn create_and_encode_nodes() -> Result<String, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
-    let nodes = create_test_nodes_hashmap();
+    let nodes = arrow_test_data::create_test_nodes_hashmap();
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = nodes_to_arrow(&nodes)?;
@@ -50,10 +52,27 @@ pub fn create_and_encode_nodes() -> Result<String, Box<dyn Error>> {
     Ok(encoded_arrow_data)
 }
 
+pub fn create_and_encode_node_inflows() -> Result<String, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let nodes = arrow_test_data::create_test_nodes_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = nodes_inflow_to_arrow(&nodes)?;
+
+    // Serialize the RecordBatch to a Vec<u8>
+    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
+
+    // Encode the Vec<u8> into a base64 String
+    let encoded_arrow_data: String = encode(&arrow_data);
+
+    // Return the base64 encoded string
+    Ok(encoded_arrow_data)
+}
+
 // Define the new function
 pub fn create_and_encode_processes() -> Result<String, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
-    let processes = create_test_processes_hashmap();
+    let processes = arrow_test_data::create_test_processes_hashmap();
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = processes_to_arrow(&processes)?;
@@ -71,7 +90,7 @@ pub fn create_and_encode_processes() -> Result<String, Box<dyn Error>> {
 // Define the new function
 pub fn create_and_encode_process_topologys() -> Result<String, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
-    let processes = create_test_process_topologys_hashmap();
+    let processes = arrow_test_data::create_test_process_topologys_hashmap();
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = process_topos_to_arrow(&processes)?;
@@ -88,7 +107,7 @@ pub fn create_and_encode_process_topologys() -> Result<String, Box<dyn Error>> {
 
 pub fn create_and_encode_groups() -> Result<String, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
-    let groups = create_test_groups_hashmap();
+    let groups = arrow_test_data::create_test_groups_hashmap();
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = groups_to_arrow(&groups)?;
@@ -105,10 +124,27 @@ pub fn create_and_encode_groups() -> Result<String, Box<dyn Error>> {
 
 pub fn create_and_encode_markets() -> Result<String, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
-    let markets = create_test_markets_hashmap();
+    let markets = arrow_test_data::create_test_markets_hashmap();
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = markets_to_arrow(&markets)?;
+
+    // Serialize the RecordBatch to a Vec<u8>
+    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
+
+    // Encode the Vec<u8> into a base64 String
+    let encoded_arrow_data: String = encode(&arrow_data);
+
+    // Return the base64 encoded string
+    Ok(encoded_arrow_data)
+}
+
+pub fn create_and_encode_timeseries() -> Result<String, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let timeseries = arrow_test_data::create_test_timeseries();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = timeseries_to_arrow(timeseries)?;
 
     // Serialize the RecordBatch to a Vec<u8>
     let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
@@ -155,6 +191,33 @@ pub fn create_arrow_data_buffer() -> Result<Vec<u8>, Box<dyn Error>> {
     }
 
     Ok(buffer)
+}
+
+// This function converts a HashMap<String, Node> of inflow TimeSeriesData to an Arrow RecordBatch
+pub fn nodes_inflow_to_arrow(nodes: &HashMap<String, input_data::NodeNew>) -> Result<RecordBatch, ArrowError> {
+    let mut fields = vec![Field::new("t", DataType::Utf8, false)];
+    let mut columns: Vec<ArrayRef> = Vec::new();
+    
+    // Assume all nodes have the same timestamps
+    if let Some((_, first_node)) = nodes.iter().next() {
+        let timestamps: Vec<String> = first_node.inflow.ts_data[0].series.iter().map(|(t, _)| t.clone()).collect();
+        let timestamp_array = Arc::new(StringArray::from(timestamps)) as ArrayRef;
+        columns.push(timestamp_array);
+    }
+
+    for (node_name, node) in nodes {
+        for ts in &node.inflow.ts_data {
+            let column_name = format!("{},{}", node_name, ts.scenario);
+            fields.push(Field::new(&column_name, DataType::Float64, false));
+    
+            let values: Vec<f64> = ts.series.iter().map(|(_, v)| *v).collect();
+            let value_array = Arc::new(Float64Array::from(values)) as ArrayRef;
+            columns.push(value_array);
+        }
+    }
+
+    let schema = Arc::new(Schema::new(fields));
+    RecordBatch::try_new(schema, columns)
 }
 
 // Convert HashMap<String, MarketNew> to RecordBatch
@@ -618,6 +681,25 @@ pub fn groups_to_arrow(groups: &HashMap<String, input_data::GroupNew>) -> Result
     record_batch
 }
 
+// Function to convert Vec<String> of timeseries data to RecordBatch
+pub fn timeseries_to_arrow(timeseries: Vec<String>) -> Result<RecordBatch, ArrowError> {
+    // Define the schema for the Arrow RecordBatch with a single column of strings
+    let schema = Schema::new(vec![
+        Field::new("t", DataType::Utf8, false),
+    ]);
+
+    // Create a StringArray from the timeseries vector
+    let timeseries_array = Arc::new(StringArray::from(timeseries)) as ArrayRef;
+
+    // Create the RecordBatch
+    let record_batch = RecordBatch::try_new(
+        Arc::new(schema),
+        vec![timeseries_array],
+    );
+
+    record_batch
+}
+
 pub fn vec_to_record_batch(timeseries: Vec<String>) -> ArrowResult<RecordBatch> {
     // Convert the Vec<String> to a StringArray
     let array: ArrayRef = Arc::new(StringArray::from(timeseries));
@@ -726,294 +808,6 @@ pub fn time_series_data_to_record_batch_with_node_id(ts_data: input_data::TimeSe
 
     // Create the RecordBatch with the node_id column included
     RecordBatch::try_new(Arc::new(schema), vec![node_id_array, scenario_array, date_array, value_array])
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct TestNode {
-    pub name: String,
-    pub value: i32,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct TestInputData {
-    pub nodes: HashMap<String, TestNode>,
-    pub metadata: String,
-}
-
-pub fn create_example_input_data() -> TestInputData {
-    let nodes = HashMap::from([
-        ("node1".to_string(), TestNode { name: "Node One".to_string(), value: 100 }),
-        ("node2".to_string(), TestNode { name: "Node Two".to_string(), value: 200 }),
-    ]);
-    TestInputData {
-        nodes,
-        metadata: "Example Metadata".to_string(),
-    }
-}
-
-// Function to create a test HashMap for MarketNew
-pub fn create_test_markets_hashmap() -> HashMap<String, input_data::MarketNew> {
-    let mut markets: HashMap<String, input_data::MarketNew> = HashMap::new();
-
-    // Example markets
-    let market1 = input_data::MarketNew {
-        name: "Market1".to_string(),
-        market: "Energy".to_string(),
-        m_type: "Spot".to_string(),
-        node: "Node1".to_string(),
-        processgroup: "GroupA".to_string(),
-        direction: "Supply".to_string(),
-        reserve_type: "Primary".to_string(),
-        is_bid: true,
-        is_limited: false,
-        min_bid: 10.0,
-        max_bid: 100.0,
-        fee: 1.0,
-    };
-
-    let market2 = input_data::MarketNew {
-        name: "Market2".to_string(),
-        market: "Reserve".to_string(),
-        m_type: "Tertiary".to_string(),
-        node: "Node2".to_string(),
-        processgroup: "GroupB".to_string(),
-        direction: "Demand".to_string(),
-        reserve_type: "Secondary".to_string(),
-        is_bid: false,
-        is_limited: true,
-        min_bid: 20.0,
-        max_bid: 200.0,
-        fee: 2.0,
-    };
-
-    // Insert markets into the hashmap
-    markets.insert(market1.name.clone(), market1);
-    markets.insert(market2.name.clone(), market2);
-
-    markets
-}
-
-// Function to create a test instance of InputDataSetup
-pub fn create_test_inputdatasetup() -> input_data::InputDataSetup {
-    input_data::InputDataSetup {
-        contains_reserves: true,
-        contains_online: true,
-        contains_states: false,
-        contains_piecewise_eff: true,
-        contains_risk: false,
-        contains_diffusion: true,
-        contains_delay: false,
-        contains_markets: true,
-        reserve_realisation: true,
-        use_market_bids: true,
-        common_timesteps: 10,
-        common_scenario_name: "TestScenario".to_string(),
-        use_node_dummy_variables: true,
-        use_ramp_dummy_variables: false,
-    }
-}
-
-pub fn create_test_nodes_hashmap() -> HashMap<String, input_data::NodeNew> {
-    let mut nodes: HashMap<String, input_data::NodeNew> = HashMap::new();
-
-    let node1_state = create_statenew();
-    let node2_state = create_statenew();
-
-    // Example nodes
-    let node1 = input_data::NodeNew {
-        name: "Node1".to_string(),
-        is_commodity: true,
-        is_state: false,
-        is_res: false,
-        is_market: false,
-        is_inflow: true,
-        state: node1_state.clone(),
-    };
-
-    let node2 = input_data::NodeNew {
-        name: "Node2".to_string(),
-        is_commodity: false,
-        is_state: true,
-        is_res: false,
-        is_market: false,
-        is_inflow: false,
-        state: node2_state.clone(),
-    };
-
-    // Insert nodes into the hashmap
-    nodes.insert(node1.name.clone(), node1);
-    nodes.insert(node2.name.clone(), node2);
-
-    nodes
-}
-
-// Function to create a test HashMap for GroupNew
-pub fn create_test_groups_hashmap() -> HashMap<String, input_data::GroupNew> {
-    let mut groups: HashMap<String, input_data::GroupNew> = HashMap::new();
-
-    // Example groups
-    let group1 = input_data::GroupNew {
-        name: "Group1".to_string(),
-        g_type: "Type1".to_string(),
-        entity: "Entity1".to_string(),
-        group: "GroupA".to_string(),
-    };
-
-    let group2 = input_data::GroupNew {
-        name: "Group2".to_string(),
-        g_type: "Type2".to_string(),
-        entity: "Entity2".to_string(),
-        group: "GroupB".to_string(),
-    };
-
-    let group3 = input_data::GroupNew {
-        name: "Group3".to_string(),
-        g_type: "Type3".to_string(),
-        entity: "Entity3".to_string(),
-        group: "GroupC".to_string(),
-    };
-
-    // Insert groups into the hashmap
-    groups.insert(group1.name.clone(), group1);
-    groups.insert(group2.name.clone(), group2);
-    groups.insert(group3.name.clone(), group3);
-
-    groups
-}
-
-pub fn create_test_process_topologys_hashmap() -> HashMap<String, input_data::ProcessTopology> {
-    let mut process_topos: HashMap<String, input_data::ProcessTopology> = HashMap::new();
-
-    // Example process topologys
-    let process_topo1 = input_data::ProcessTopology {
-        name: "process_topo1".to_string(),
-        process: "Process1".to_string(),
-        source_sink: "source".to_string(),
-        node: "node1".to_string(),
-        conversion_coeff: 1.0,
-        capacity: 20.0,
-        vom_cost: 3.0,
-        ramp_up: 0.5,
-        ramp_down: 0.5,
-        initial_load: 0.6,
-        initial_flow: 0.6,
-    };
-
-    let process_topo2 = input_data::ProcessTopology {
-        name: "process_topo2".to_string(),
-        process: "Process1".to_string(),
-        source_sink: "sink".to_string(),
-        node: "node1".to_string(),
-        conversion_coeff: 1.0,
-        capacity: 20.0,
-        vom_cost: 3.0,
-        ramp_up: 0.5,
-        ramp_down: 0.5,
-        initial_load: 0.6,
-        initial_flow: 0.6,
-    };
-
-    let process_topo3 = input_data::ProcessTopology {
-        name: "process_topo3".to_string(),
-        process: "Process2".to_string(),
-        source_sink: "source".to_string(),
-        node: "node1".to_string(),
-        conversion_coeff: 1.0,
-        capacity: 20.0,
-        vom_cost: 3.0,
-        ramp_up: 0.5,
-        ramp_down: 0.5,
-        initial_load: 0.6,
-        initial_flow: 0.6,
-    };
-
-    let process_topo4 = input_data::ProcessTopology {
-        name: "process_topo4".to_string(),
-        process: "Process2".to_string(),
-        source_sink: "sink".to_string(),
-        node: "node1".to_string(),
-        conversion_coeff: 1.0,
-        capacity: 20.0,
-        vom_cost: 3.0,
-        ramp_up: 0.5,
-        ramp_down: 0.5,
-        initial_load: 0.6,
-        initial_flow: 0.6,
-    };
-
-    // Insert nodes into the hashmap
-    process_topos.insert(process_topo1.name.clone(), process_topo1);
-    process_topos.insert(process_topo2.name.clone(), process_topo2);
-    process_topos.insert(process_topo3.name.clone(), process_topo3);
-    process_topos.insert(process_topo4.name.clone(), process_topo4);
-
-    process_topos
-}
-
-pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew> {
-    let mut processes = HashMap::new();
-
-    let process1 = input_data::ProcessNew {
-        name: "Process1".to_string(),
-        is_cf: true,
-        is_cf_fix: false,
-        is_online: true,
-        is_res: false,
-        conversion: 100,
-        eff: 0.9,
-        load_min: 10.0,
-        load_max: 100.0,
-        start_cost: 500.0,
-        min_online: 1.0,
-        min_offline: 1.0,
-        max_online: 24.0,
-        max_offline: 24.0,
-        initial_state: 0.0,
-        scenario_independent_online: 0.0,
-        delay: 0.0,
-    };
-
-    let process2 = input_data::ProcessNew {
-        name: "Process2".to_string(),
-        is_cf: false,
-        is_cf_fix: true,
-        is_online: false,
-        is_res: true,
-        conversion: 200,
-        eff: 0.8,
-        load_min: 20.0,
-        load_max: 200.0,
-        start_cost: 1000.0,
-        min_online: 2.0,
-        min_offline: 2.0,
-        max_online: 48.0,
-        max_offline: 48.0,
-        initial_state: 0.0,
-        scenario_independent_online: 0.0,
-        delay: 1.0,
-    };
-
-    // Insert processes into the hashmap
-    processes.insert(process1.name.clone(), process1);
-    processes.insert(process2.name.clone(), process2);
-
-    processes
-}
-
-pub fn create_statenew() -> input_data::StateNew {
-    // Initialize default values for StateNew
-    input_data::StateNew {
-        state_max: 100.0,
-        state_min: 0.0,
-        in_max: 50.0,
-        out_max: 50.0,
-        initial_state: 25.0,
-        state_loss_proportional: 0.1,
-        scenario_independent_state: true,
-        is_temp: false,
-        t_e_conversion: 0.8,
-        residual_value: 10.0,
-    }
 }
 
 /* 

@@ -3,13 +3,11 @@ use tokio::time::{self, Duration};
 use tokio::sync::{mpsc};
 use crate::errors;
 use crate::input_data;
-use crate::predicer;
 use std::error::Error;
 use std::collections::HashMap;
 use crate::input_data::{OptimizationData};
 use serde_yaml;
 use jlrs::prelude::*;
-use predicer::RunPredicer;
 use jlrs::error::JlrsError;
 use tokio::sync::Mutex;
 use std::sync::Arc;
@@ -57,7 +55,7 @@ pub async fn event_loop(
     let julia_clone_for_optimization = Arc::clone(&julia);
     let predicer_dir_clone_for_optimization = predicer_dir.clone();
     tokio::spawn(async move {
-        optimization_task_logic(rx_optimization, julia_clone_for_optimization, predicer_dir_clone_for_optimization).await;
+        //optimization_task_logic(rx_optimization, julia_clone_for_optimization, predicer_dir_clone_for_optimization).await;
     });
 
     let mut interval = time::interval(Duration::from_secs(180));
@@ -75,6 +73,7 @@ pub async fn event_loop(
     }
 }
 
+/*
 // Define a function for the optimization logic
 async fn optimization_task_logic(
     mut rx_optimization: mpsc::Receiver<OptimizationData>,
@@ -98,7 +97,7 @@ async fn optimization_task_logic(
         }
     }
 }
-
+*/
 /// Executes Run Predicer task using a Julia runtime.
 ///
 /// This function handles the execution of optimization task by interfacing with a Julia runtime.
@@ -117,6 +116,8 @@ async fn optimization_task_logic(
 /// - Errors can occur during task execution, sending the task to runtime, or receiving the task results.
 /// - All errors are converted to `JuliaError` for a consistent error handling experience.
 ///
+/// 
+/* 
 async fn run_predicer(
     julia: Arc<Mutex<AsyncJulia<Tokio>>>,
     data: input_data::InputData,
@@ -156,6 +157,7 @@ async fn run_predicer(
     Ok(result)
 
 }
+*/
 
 /// Executes a specific task using the Julia runtime.
 ///
@@ -171,7 +173,7 @@ async fn run_predicer(
 ///
 /// # Errors
 /// - Returns `JuliaError` if there is an issue with the channel communication or if the Julia task execution fails.
-
+/* 
 async fn execute_task(julia: &AsyncJulia<Tokio>) -> Result<(), errors::JuliaError> {
     // Create a one-shot channel for task communication. `sender` is used to send the task result,
     // and `receiver` is used to await this result.
@@ -192,7 +194,7 @@ async fn execute_task(julia: &AsyncJulia<Tokio>) -> Result<(), errors::JuliaErro
     // This typically indicates a failure within the task's logic or processing.
     task_result.map_err(|e| errors::JuliaError(format!("Task execution error: {:?}", e)))
 }
-
+*/
 /// Asynchronously sends a task to the Julia runtime for execution.
 ///
 /// This function prepares a task with the provided input data and Predicer directory, then dispatches it
@@ -210,7 +212,7 @@ async fn execute_task(julia: &AsyncJulia<Tokio>) -> Result<(), errors::JuliaErro
 ///
 /// # Errors
 /// Returns `JuliaError` with a message indicating failure in dispatching the task to the runtime.
-
+/* 
 async fn send_task_to_runtime(
     julia: &AsyncJulia<Tokio>,
     data: input_data::InputData, 
@@ -240,7 +242,7 @@ async fn send_task_to_runtime(
         }
     }
 }
-
+*/
 /// Asynchronously receives the result of a Julia task execution.
 ///
 /// This function waits for the result of a task sent to the Julia runtime, which is received via a one-shot channel.
@@ -257,6 +259,8 @@ async fn send_task_to_runtime(
 /// - If the task execution itself fails, a `JuliaError` with the execution error message is returned.
 /// - If there is an error in receiving the task result from the channel, a `JuliaError` indicating this failure is returned.
 ///
+/// 
+/* 
 async fn receive_task_result(
     receiver: tokio::sync::oneshot::Receiver<Result<HashMap<String, predicer::ControlValues>, Box<JlrsError>>>,
 ) -> Result<HashMap<String, predicer::ControlValues>, errors::JuliaError> {
@@ -275,7 +279,7 @@ async fn receive_task_result(
         Err(errors::JuliaError(format!("Failed to receive task result from channel in julia task: {:?}", e))),
     }
 }
-
+*/
 async fn update_model_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
     while let Some(mut optimization_data) = rx.recv().await {
         

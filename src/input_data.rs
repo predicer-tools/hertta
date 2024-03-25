@@ -42,6 +42,14 @@ pub struct InputDataNew {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct InflowBlock {
+    pub name: String,
+    pub node: String,
+    pub start_time: String,
+    pub data: TimeSeriesData,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InputData {
     pub timeseries: Vec<String>,
     pub contains_reserves: bool,
@@ -163,8 +171,8 @@ pub struct NodeNew {
     pub is_res: bool,
     pub is_market: bool,
     pub is_inflow: bool,
-    //pub cost: TimeSeriesData,
-    //pub inflow: TimeSeriesData,
+    pub cost: TimeSeriesData,
+    pub inflow: TimeSeriesData,
     pub state: StateNew,
 }
 
