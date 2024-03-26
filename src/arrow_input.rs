@@ -34,6 +34,23 @@ pub fn create_and_encode_inputdatasetup() -> Result<String, Box<dyn Error>> {
     Ok(encoded_arrow_data)
 }
 
+pub fn create_and_encode_risk() -> Result<String, Box<dyn Error>> {
+    // Create a test instance of Risk
+    let risk = arrow_test_data::create_test_risk_data();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = risk_to_arrow(&risk)?;
+
+    // Serialize the RecordBatch to a Vec<u8>
+    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
+
+    // Encode the Vec<u8> into a base64 String
+    let encoded_arrow_data: String = encode(&arrow_data);
+
+    // Return the base64 encoded string
+    Ok(encoded_arrow_data)
+}
+
 // Define the new function
 pub fn create_and_encode_nodes() -> Result<String, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
@@ -189,6 +206,36 @@ pub fn create_and_encode_scenarios() -> Result<String, Box<dyn Error>> {
 
     // Return the base64 encoded string
     Ok(encoded_arrow_data)
+}
+
+pub fn risk_to_arrow(risk: &HashMap<String, f64>) -> Result<RecordBatch, ArrowError> {
+    // Define the schema for the Arrow RecordBatch
+    let schema = Schema::new(vec![
+        Field::new("parameter", DataType::Utf8, false),
+        Field::new("value", DataType::Float64, false),
+    ]);
+
+    // Initialize vectors to hold the data
+    let mut parameters: Vec<String> = Vec::new();
+    let mut values: Vec<f64> = Vec::new();
+
+    // Populate the vectors from the HashMap
+    for (key, &value) in risk.iter() {
+        parameters.push(key.clone());
+        values.push(value);
+    }
+
+    // Create Arrow arrays from the vectors
+    let parameter_array: ArrayRef = Arc::new(StringArray::from(parameters));
+    let value_array: ArrayRef = Arc::new(Float64Array::from(values));
+
+    // Create the RecordBatch using these arrays and the schema
+    let record_batch = RecordBatch::try_new(
+        Arc::new(schema),
+        vec![parameter_array, value_array],
+    );
+
+    record_batch
 }
 
 pub fn serialize_record_batch_to_vec(batch: &RecordBatch) -> Result<Vec<u8>, Box<dyn Error>> {

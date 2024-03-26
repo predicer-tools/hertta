@@ -21,11 +21,22 @@ pub struct PricePoint {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Temporals {
     pub hours: i64,
+
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TemporalsNew {
+    pub t: Vec<String>,
+    pub dtf: f64,
+    pub is_variable_dt: bool,
+    pub variable_dt: Vec<(String, f64)>,
+    pub ts_format: String, 
+    
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InputDataNew {
-    pub temps: Vec<String>,
+    pub temporals: TemporalsNew,
     pub setup: InputDataSetup,
     pub processes: HashMap<String, Process>,
     pub nodes: HashMap<String, Node>,
@@ -37,7 +48,7 @@ pub struct InputDataNew {
     pub scenarios: HashMap<String, f64>,
     pub reserve_type: HashMap<String, f64>,
     pub risk: HashMap<String, f64>,
-    pub inflow_blocks: HashMap<String, f64>,
+    pub inflow_blocks: HashMap<String, InflowBlock>,
     pub gen_constraints: HashMap<String, GenConstraint>,
 }
 

@@ -41,6 +41,19 @@ pub fn create_test_timeseries() -> Vec<String> {
     timeseries
 }
 
+pub fn create_test_risk_data() -> HashMap<String, f64> {
+    // Creating a new HashMap to store our test data
+    let mut risk_data = HashMap::new();
+
+    // Inserting test data into the HashMap
+    // Each entry maps a String key to a f64 value representing the risk
+    risk_data.insert("alfa".to_string(), 0.1);
+    risk_data.insert("beta".to_string(), 0.2);
+
+    // Returning the populated HashMap
+    risk_data
+}
+
 pub fn create_test_scenarios() -> HashMap<String, f64> {
     let mut scenarios = HashMap::new();
 
