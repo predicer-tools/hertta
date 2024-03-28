@@ -16,6 +16,28 @@ use bincode;
 use std::path::Path;
 use chrono::{NaiveDate, NaiveDateTime};
 
+pub fn serialize_batch_and_encode_to_base64(batch: &RecordBatch) -> Result<String, Box<dyn Error>> {
+    // Serialize the RecordBatch to a Vec<u8>
+    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(batch)?;
+
+    // Encode the Vec<u8> into a base64 String
+    let encoded_arrow_data: String = encode(&arrow_data);
+
+    // Return the base64 encoded string
+    Ok(encoded_arrow_data)
+}
+
+// Define the new function
+pub fn create_and_batch_node_diffusion() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let node_diffusion = arrow_test_data::create_test_node_diffusion();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = node_diffusion_to_arrow(&node_diffusion)?;
+
+    Ok(batch)
+}
+
 // Define the new function
 pub fn create_and_encode_inputdatasetup() -> Result<String, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
@@ -236,6 +258,44 @@ pub fn risk_to_arrow(risk: &HashMap<String, f64>) -> Result<RecordBatch, ArrowEr
     );
 
     record_batch
+}
+
+// Function to convert a HashMap<String, NodeDiffusion> to an Arrow RecordBatch
+pub fn node_diffusion_to_arrow(
+    node_diffusions: &HashMap<String, input_data::NodeDiffusion>,
+) -> Result<RecordBatch, ArrowError> {
+    // Define the schema fields based on the NodeDiffusion structure
+    let fields = vec![
+        Field::new("node1", DataType::Utf8, false),
+        Field::new("node2", DataType::Utf8, false),
+        Field::new("diff_coeff", DataType::Float64, false),
+    ];
+
+    // Prepare columns for the RecordBatch
+    let mut node1_values: Vec<String> = Vec::new();
+    let mut node2_values: Vec<String> = Vec::new();
+    let mut diff_coeff_values: Vec<f64> = Vec::new();
+
+    // Fill the columns with data from the HashMap
+    for node_diffusion in node_diffusions.values() {
+        node1_values.push(node_diffusion.node1.clone());
+        node2_values.push(node_diffusion.node2.clone());
+        diff_coeff_values.push(node_diffusion.diff_coeff);
+    }
+
+    // Create Arrow arrays for each column
+    let node1_array: ArrayRef = Arc::new(StringArray::from(node1_values));
+    let node2_array: ArrayRef = Arc::new(StringArray::from(node2_values));
+    let diff_coeff_array: ArrayRef = Arc::new(Float64Array::from(diff_coeff_values));
+
+    // Collect arrays into a vector
+    let columns: Vec<ArrayRef> = vec![node1_array, node2_array, diff_coeff_array];
+
+    // Create the schema for the RecordBatch
+    let schema = Arc::new(Schema::new(fields));
+
+    // Create the RecordBatch
+    RecordBatch::try_new(schema, columns)
 }
 
 pub fn serialize_record_batch_to_vec(batch: &RecordBatch) -> Result<Vec<u8>, Box<dyn Error>> {

@@ -65,6 +65,30 @@ pub fn create_test_scenarios() -> HashMap<String, f64> {
     scenarios
 }
 
+// Function to create test NodeDiffusion data
+pub fn create_test_node_diffusion() -> HashMap<String, input_data::NodeDiffusion> {
+    let mut data = HashMap::new();
+
+    // Insert test data into the HashMap
+    data.insert("diffusion1".to_string(), input_data::NodeDiffusion {
+        name: "Diffusion 1".to_string(),
+        node1: "Node A".to_string(),
+        node2: "Node B".to_string(),
+        diff_coeff: 0.1,
+    });
+    
+    data.insert("diffusion2".to_string(), input_data::NodeDiffusion {
+        name: "Diffusion 2".to_string(),
+        node1: "Node C".to_string(),
+        node2: "Node D".to_string(),
+        diff_coeff: 0.2,
+    });
+
+    // Add more NodeDiffusion instances as needed
+
+    data
+}
+
 // Example function that creates a TimeSeriesData with example timeseries data
 pub fn create_example_timeseries_data() -> input_data::TimeSeriesData {
     let scenarios = vec!["s1", "s2", "s3"];

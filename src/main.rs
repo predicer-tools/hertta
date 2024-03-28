@@ -194,14 +194,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //let encoded_arrow_data = arrow_input::create_and_encode_node_inflows()?;
     //let encoded_arrow_data = arrow_input::create_and_encode_process_eff_ops()?; EI TOIMI VIELÄ
     //let encoded_arrow_data = arrow_input::create_and_encode_scenarios()?;
-    let encoded_arrow_data = arrow_input::create_and_encode_risk()?;
+    //let encoded_arrow_data = arrow_input::create_and_encode_risk()?;
 
+    let batch = arrow_input::create_and_batch_node_diffusion()?;
+
+    match arrow_input::serialize_batch_and_encode_to_base64(&batch) {
+        Ok(encoded_arrow_data) => {
+            let data_to_send = format!("data:{}\n", encoded_arrow_data).into_bytes();
+            // Now that you have the encoded data in bytes, send it to the Julia process
+            julia_process.send_data(data_to_send)?;
+    
+            // Terminate the Julia process
+            julia_process.terminate()?;
+        },
+        Err(e) => {
+            // Handle the error e.g., by logging it, converting to a string, or propagating it
+            eprintln!("Error encoding arrow data: {}", e);
+            // Propagate the error
+            return Err(e);
+        },
+    }
 
     // Send the encoded data to the Julia process
-    julia_process.send_data(format!("data:{}\n", encoded_arrow_data).into_bytes())?;
+    //julia_process.send_data(format!("data:{}\n", encoded_arrow_data).into_bytes())?;
 
     // Properly terminate the Julia process
-    julia_process.terminate()?;
+    //julia_process.terminate()?;
 
     Ok(())
 
