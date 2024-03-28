@@ -114,6 +114,34 @@ pub fn create_example_timeseries_data() -> input_data::TimeSeriesData {
     input_data::TimeSeriesData { ts_data }
 }
 
+// Function to create test NodeDelay data
+pub fn create_test_node_delay_data() -> HashMap<String, input_data::NodeDelay> {
+    let mut node_delays = HashMap::new();
+
+    // Create a few NodeDelay instances
+    node_delays.insert("delay1".to_string(), input_data::NodeDelay {
+        name: "Delay between A and B".to_string(),
+        node1: "Node A".to_string(),
+        node2: "Node B".to_string(),
+        delay: 1.5,
+        min_flow: 0.0,
+        max_flow: 10.0,
+    });
+
+    node_delays.insert("delay2".to_string(), input_data::NodeDelay {
+        name: "Delay between C and D".to_string(),
+        node1: "Node C".to_string(),
+        node2: "Node D".to_string(),
+        delay: 2.0,
+        min_flow: 1.0,
+        max_flow: 15.0,
+    });
+
+    // You can add more test data here if needed
+
+    node_delays
+}
+
 // Function to create a test HashMap for MarketNew
 pub fn create_test_markets_hashmap() -> HashMap<String, input_data::MarketNew> {
     let mut markets: HashMap<String, input_data::MarketNew> = HashMap::new();

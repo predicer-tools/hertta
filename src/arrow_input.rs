@@ -37,6 +37,29 @@ pub fn create_and_batch_node_diffusion() -> Result<RecordBatch, Box<dyn Error>> 
 
     Ok(batch)
 }
+/* 
+// Define the new function
+pub fn create_and_batch_node_history() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let node_diffusion = arrow_test_data::create_test_node_history();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = node_history_to_arrow(&node_diffusion)?;
+
+    Ok(batch)
+}
+*/
+
+// Define the new function
+pub fn create_and_batch_node_delay() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let node_delay = arrow_test_data::create_test_node_delay_data();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = node_delays_to_arrow(&node_delay)?;
+
+    Ok(batch)
+}
 
 // Define the new function
 pub fn create_and_encode_inputdatasetup() -> Result<String, Box<dyn Error>> {
@@ -258,6 +281,46 @@ pub fn risk_to_arrow(risk: &HashMap<String, f64>) -> Result<RecordBatch, ArrowEr
     );
 
     record_batch
+}
+
+pub fn node_delays_to_arrow(node_delays: &HashMap<String, input_data::NodeDelay>) -> Result<RecordBatch, ArrowError> {
+    // Define the schema for the Arrow RecordBatch
+    let schema = Schema::new(vec![
+        Field::new("node1", DataType::Utf8, false),
+        Field::new("node2", DataType::Utf8, false),
+        Field::new("delay_t", DataType::Float64, false),
+        Field::new("min_flow", DataType::Float64, false),
+        Field::new("max_flow", DataType::Float64, false),
+    ]);
+
+    // Initialize vectors to hold the data
+    let mut node1s: Vec<String> = Vec::new();
+    let mut node2s: Vec<String> = Vec::new();
+    let mut delays: Vec<f64> = Vec::new();
+    let mut min_flows: Vec<f64> = Vec::new();
+    let mut max_flows: Vec<f64> = Vec::new();
+
+    // Populate the vectors from the HashMap
+    for node_delay in node_delays.values() {
+        node1s.push(node_delay.node1.clone());
+        node2s.push(node_delay.node2.clone());
+        delays.push(node_delay.delay);
+        min_flows.push(node_delay.min_flow);
+        max_flows.push(node_delay.max_flow);
+    }
+
+    // Create Arrow arrays from the vectors
+    let node1_array: ArrayRef = Arc::new(StringArray::from(node1s));
+    let node2_array: ArrayRef = Arc::new(StringArray::from(node2s));
+    let delay_array: ArrayRef = Arc::new(Float64Array::from(delays));
+    let min_flow_array: ArrayRef = Arc::new(Float64Array::from(min_flows));
+    let max_flow_array: ArrayRef = Arc::new(Float64Array::from(max_flows));
+
+    // Create the RecordBatch using these arrays and the schema
+    RecordBatch::try_new(
+        Arc::new(schema),
+        vec![node1_array, node2_array, delay_array, min_flow_array, max_flow_array],
+    )
 }
 
 // Function to convert a HashMap<String, NodeDiffusion> to an Arrow RecordBatch

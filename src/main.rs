@@ -196,7 +196,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //let encoded_arrow_data = arrow_input::create_and_encode_scenarios()?;
     //let encoded_arrow_data = arrow_input::create_and_encode_risk()?;
 
-    let batch = arrow_input::create_and_batch_node_diffusion()?;
+    //let batch = arrow_input::create_and_batch_node_diffusion()?;
+    let batch = arrow_input::create_and_batch_node_delay()?;
 
     match arrow_input::serialize_batch_and_encode_to_base64(&batch) {
         Ok(encoded_arrow_data) => {
