@@ -7,9 +7,34 @@ use std::collections::HashMap;
 use std::error::Error;
 use arrow::ipc::writer::StreamWriter;
 use base64::{encode};
-use std::io::{BufWriter, Write};
+use std::io::{Read, BufWriter, Write};
 use std::process::{Command, Stdio};
 use std::env;
+use std::net::TcpStream;
+use serde::{Serialize, Deserialize};
+
+pub fn send_data_to_julia_server(server_address: &str, data: HashMap<String, Vec<u8>>) -> Result<(), Box<dyn Error>> {
+    // Serialize the entire HashMap to a byte vector
+    // Use your preferred serialization method; bincode is used here for simplicity
+    let serialized_data: Vec<u8> = bincode::serialize(&data)?;
+
+    // Base64 encode the serialized data
+    let encoded_data = encode(serialized_data);
+
+    // Establish a connection to the Julia server
+    let mut stream = TcpStream::connect(server_address)?;
+
+    // Send the data with a "data:" prefix
+    let full_message = format!("data:{}", encoded_data);
+    stream.write_all(full_message.as_bytes())?;
+
+    // Optionally wait for a response
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    println!("Response from server: {}", response);
+
+    Ok(())
+}
 
 pub struct JuliaProcess {
     stdin: BufWriter<std::process::ChildStdin>,
@@ -45,3 +70,4 @@ impl JuliaProcess {
         Ok(())
     }
 }
+

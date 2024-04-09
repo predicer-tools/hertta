@@ -26,12 +26,17 @@ use tokio::sync::Mutex;
 use std::sync::Arc;
 use std::fs;
 use std::net::SocketAddr;
-use std::error::Error;
 use std::fs::File;
 use std::io::Write;
 use std::collections::HashMap;
-use std::process::Command;
 use base64::{encode, decode};
+use std::error::Error;
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
+use std::net::TcpStream;
+use bincode;
+use std::path::PathBuf;
 //use std::time::{SystemTime, UNIX_EPOCH};
 //use tokio::join;
 //use warp::reject::Reject;
@@ -175,29 +180,105 @@ pub fn start_weather_forecast_server() {
 
 }
 
+pub fn start_julia_server_and_send_data(julia_script_path: &str, server_address: &str, data: HashMap<String, Vec<u8>>) -> Result<(), Box<dyn Error>> {
+    let mut child = Command::new("julia")
+        .arg(julia_script_path)
+        .arg("--server")
+        .arg(format!("--address={}", server_address))
+        .spawn()?;
+
+    // Attempt to connect to the server with retries
+    let mut attempts = 0;
+    let max_attempts = 10;
+    let delay = Duration::from_secs(1);
+    let mut connected = false;
+
+    while attempts < max_attempts && !connected {
+        match TcpStream::connect(server_address) {
+            Ok(_) => {
+                println!("Successfully connected to the server.");
+                connected = true;
+            },
+            Err(e) => {
+                println!("Attempt {} failed: {}", attempts + 1, e);
+                thread::sleep(delay);
+            }
+        }
+        attempts += 1;
+    }
+
+    if !connected {
+        return Err("Failed to connect to the server within the maximum number of attempts.".into());
+    }
+
+    // If connected, proceed to serialize, encode, and send data
+    let serialized_data = bincode::serialize(&data)?;
+    let encoded_data = encode(&serialized_data);
+    let full_message = format!("data:{}", encoded_data);
+    let mut stream = TcpStream::connect(server_address)?;
+    stream.write_all(encoded_data.as_bytes())?;
+
+    // Ensure the child process is not abruptly terminated, affecting cleanup
+    // You might want to add logic to gracefully shut down the server if needed
+    // child.kill()?;
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
 
+    /* 
+    // Construct the path to the Julia script
+    let julia_script_path: PathBuf = env::current_dir()?.join("Predicer/src/arrow_test.jl");
 
+    // Convert the path to a string
+    let julia_script_path_str = julia_script_path.to_str().ok_or("Invalid script path")?;
 
+    // Assuming create_example_arrow_data() is correctly implemented
+    let example_data = arrow_input::create_example_arrow_data()?;
+    let server_address = "127.0.0.1:5080";
+
+    start_julia_server_and_send_data(julia_script_path_str, server_address, example_data)?;
+
+    Ok(())
+
+    */
+    
     // Initialize the JuliaProcess
-    let mut julia_process = julia_process::JuliaProcess::new("Predicer/src/arrow_test.jl")?;
+    let mut julia_process = julia_process::JuliaProcess::new("Predicer/src/arrow_conversion.jl")?;
+
+    //let encoded_arrow_data = arrow_input::create_and_encode_timeseries()?;
 
     // Use the function to create base64 encoded Arrow data
     //let encoded_arrow_data = arrow_input::create_and_encode_inputdatasetup()?;
     //let encoded_arrow_data = arrow_input::create_and_encode_nodes()?;
-    //let encoded_arrow_data = arrow_input::create_and_encode_process_topologys()?;
     //let encoded_arrow_data = arrow_input::create_and_encode_processes()?;
     //let encoded_arrow_data = arrow_input::create_and_encode_groups()?;
-    //let encoded_arrow_data = arrow_input::create_and_encode_markets()?;
-    //let encoded_arrow_data = arrow_input::create_and_encode_timeseries()?;
-    //let encoded_arrow_data = arrow_input::create_and_encode_node_inflows()?;
-    //let encoded_arrow_data = arrow_input::create_and_encode_process_eff_ops()?; EI TOIMI VIELÄ
-    //let encoded_arrow_data = arrow_input::create_and_encode_scenarios()?;
-    //let encoded_arrow_data = arrow_input::create_and_encode_risk()?;
-
+    //let encoded_arrow_data = arrow_input::create_and_encode_process_topologys()?;
     //let batch = arrow_input::create_and_batch_node_diffusion()?;
-    let batch = arrow_input::create_and_batch_node_delay()?;
+    //let batch = arrow_input::create_and_batch_node_history()?;
+    //let batch = arrow_input::create_and_batch_node_delay()?;
+    //let encoded_arrow_data = arrow_input::create_and_encode_node_inflows()?;
+    //let encoded_arrow_data = arrow_input::create_and_encode_markets()?;
+    //let encoded_arrow_data = create_and_batch_market_realisation()?;
+    //let encoded_arrow_data = arrow_input::create_and_encode_scenarios()?;
+    //let encoded_arrow_data = arrow_input::create_and_encode_process_eff_ops()?; EI TOIMI VIELÄ
+    let batch = arrow_input::create_and_batch_reserve_type()?;
+    //let encoded_arrow_data = arrow_input::create_and_encode_risk()?;
+    //cap_ts
+    //gen_constraints
+    //constraints
+
+    //cf
+    //inflow
+    //market_prices
+    //price
+    //eff_ts
+    //fixed_ts
+    //balance_prices
+
+    
 
     match arrow_input::serialize_batch_and_encode_to_base64(&batch) {
         Ok(encoded_arrow_data) => {
@@ -216,13 +297,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         },
     }
 
+    Ok(())
+
     // Send the encoded data to the Julia process
     //julia_process.send_data(format!("data:{}\n", encoded_arrow_data).into_bytes())?;
 
     // Properly terminate the Julia process
     //julia_process.terminate()?;
-
-    Ok(())
 
     /* 
     

@@ -142,39 +142,110 @@ pub fn create_test_node_delay_data() -> HashMap<String, input_data::NodeDelay> {
     node_delays
 }
 
+// Function to create example TimeSeries
+pub fn create_example_time_series(scenario: &str, data: Vec<(&str, f64)>) -> input_data::TimeSeries {
+    input_data::TimeSeries {
+        scenario: scenario.to_string(),
+        series: data.into_iter().map(|(t, value)| (t.to_string(), value)).collect(),
+    }
+}
+
+// Function to create TimeSeriesData
+pub fn create_example_time_series_data(scenarios: Vec<input_data::TimeSeries>) -> input_data::TimeSeriesData {
+    input_data::TimeSeriesData {
+        ts_data: scenarios,
+    }
+}
+
+// Function to create NodeHistory
+pub fn create_example_node_history(node: &str, steps: input_data::TimeSeriesData) -> input_data::NodeHistory {
+    input_data::NodeHistory {
+        node: node.to_string(),
+        steps,
+    }
+}
+
+// Function to create the HashMap with NodeHistory data
+pub fn create_example_node_histories() -> HashMap<String, input_data::NodeHistory> {
+    let mut node_histories = HashMap::new();
+
+    // Assuming we are only creating a single NodeHistory for this example
+    let time_series = create_example_time_series("t", vec![
+        ("20.4.2022 0:00", 3.0),
+        ("20.4.2022 1:00", 4.0),
+    ]);
+    
+    let time_series_data = create_example_time_series_data(vec![time_series]);
+
+    let node_history = create_example_node_history("dh2", time_series_data);
+
+    node_histories.insert("dh2".to_string(), node_history);
+
+    node_histories
+}
+
+pub fn create_example_realisation() -> HashMap<String, f64> {
+    let mut realisation = HashMap::new();
+
+    // Inserting values into the hashmap
+    // Please note: in Rust, decimal points are denoted by a dot, not a comma
+    realisation.insert("reserve_product_s1".to_string(), 0.2);
+    realisation.insert("reserve_product_s2".to_string(), 0.3);
+
+    realisation
+}
+
 // Function to create a test HashMap for MarketNew
 pub fn create_test_markets_hashmap() -> HashMap<String, input_data::MarketNew> {
     let mut markets: HashMap<String, input_data::MarketNew> = HashMap::new();
 
+    let timeseries = create_timeseries();
+    let realisation = create_example_realisation();
+
+    let data: Vec<(String, f64)> = vec![
+        ("Item1".to_string(), 10.5),
+        ("Item2".to_string(), 20.75),
+        ("Item3".to_string(), 30.0),
+        ("Item4".to_string(), 40.25),
+    ];
+
     // Example markets
     let market1 = input_data::MarketNew {
         name: "Market1".to_string(),
-        market: "Energy".to_string(),
         m_type: "Spot".to_string(),
         node: "Node1".to_string(),
-        processgroup: "GroupA".to_string(),
+        pgroup: "GroupA".to_string(),
         direction: "Supply".to_string(),
+        realisation: realisation.clone(),
         reserve_type: "Primary".to_string(),
         is_bid: true,
         is_limited: false,
         min_bid: 10.0,
         max_bid: 100.0,
         fee: 1.0,
+        price: timeseries.clone(),
+        up_price: timeseries.clone(),
+        down_price: timeseries.clone(),
+        fixed: data.clone(),
     };
 
     let market2 = input_data::MarketNew {
         name: "Market2".to_string(),
-        market: "Reserve".to_string(),
         m_type: "Tertiary".to_string(),
         node: "Node2".to_string(),
-        processgroup: "GroupB".to_string(),
+        pgroup: "GroupB".to_string(),
         direction: "Demand".to_string(),
+        realisation: realisation.clone(),
         reserve_type: "Secondary".to_string(),
         is_bid: false,
         is_limited: true,
         min_bid: 20.0,
         max_bid: 200.0,
         fee: 2.0,
+        price: timeseries.clone(),
+        up_price: timeseries.clone(),
+        down_price: timeseries.clone(),
+        fixed: data.clone(),
     };
 
     // Insert markets into the hashmap
@@ -182,6 +253,12 @@ pub fn create_test_markets_hashmap() -> HashMap<String, input_data::MarketNew> {
     markets.insert(market2.name.clone(), market2);
 
     markets
+}
+
+pub fn create_test_reserve_type() -> HashMap<String, f64> {
+    let mut reserve_type = HashMap::new();
+    reserve_type.insert("fast".to_string(), 2.0);
+    reserve_type
 }
 
 // Function to create a test instance of InputDataSetup
@@ -210,9 +287,9 @@ pub fn create_test_nodes_hashmap() -> HashMap<String, input_data::NodeNew> {
     let node1_state = create_statenew();
     let node2_state = create_statenew();
     let node3_state = create_statenew();
-    let node1_timeseries = create_timeseries_for_node();
-    let node2_timeseries = create_timeseries_for_node();
-    let node3_timeseries = create_timeseries_for_node();
+    let node1_timeseries = create_timeseries();
+    let node2_timeseries = create_timeseries();
+    let node3_timeseries = create_timeseries();
 
     // Example nodes
     let node1 = input_data::NodeNew {
@@ -259,7 +336,7 @@ pub fn create_test_nodes_hashmap() -> HashMap<String, input_data::NodeNew> {
     nodes
 }
 
-pub fn create_timeseries_for_node() -> input_data::TimeSeriesData {
+pub fn create_timeseries() -> input_data::TimeSeriesData {
     let scenarios = vec!["s1", "s2", "s3"];
     let base_date = NaiveDate::parse_from_str("20.4.2022", "%d.%m.%Y").unwrap();
     let mut ts_data = Vec::new();

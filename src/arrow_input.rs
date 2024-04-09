@@ -16,6 +16,39 @@ use bincode;
 use std::path::Path;
 use chrono::{NaiveDate, NaiveDateTime};
 
+// This function creates a HashMap of binary serialized RecordBatches.
+pub fn create_example_arrow_data() -> Result<HashMap<String, Vec<u8>>, Box<dyn Error>> {
+    let mut example_data = HashMap::new();
+
+    // List of batches to create and serialize
+    let batches = vec![
+        "setup", "nodes", "processes", "groups", "process_topology", "node_diffusion",
+        "node_history", "node_delay", "inflow_blocks", "markets", "reserve_realisation",
+        "scenarios", "efficiencies", "reserve_type", "risk", "cap_ts", "gen_constraint",
+        "constraints", "cf", "inflow", "market_prices", "price", "eff_ts", "fixed_ts", "balance_prices",
+    ];
+
+    for name in batches {
+        match create_and_batch_node_delay() {
+            Ok(batch) => {
+                let mut writer = Vec::new();
+                {
+                    // Introduce a new scope for stream_writer
+                    let mut stream_writer = StreamWriter::try_new(&mut writer, &batch.schema())?;
+                    stream_writer.write(&batch)?;
+                    stream_writer.finish()?;
+                    // stream_writer is dropped here at the end of the scope
+                }
+                // Now it's safe to move writer as stream_writer no longer exists
+                example_data.insert(name.to_string(), writer);
+            },
+            Err(e) => return Err(e),
+        }
+    }
+
+    Ok(example_data)
+}
+
 pub fn serialize_batch_and_encode_to_base64(batch: &RecordBatch) -> Result<String, Box<dyn Error>> {
     // Serialize the RecordBatch to a Vec<u8>
     let arrow_data: Vec<u8> = serialize_record_batch_to_vec(batch)?;
@@ -37,26 +70,43 @@ pub fn create_and_batch_node_diffusion() -> Result<RecordBatch, Box<dyn Error>> 
 
     Ok(batch)
 }
-/* 
-// Define the new function
-pub fn create_and_batch_node_history() -> Result<RecordBatch, Box<dyn Error>> {
+
+pub fn create_and_batch_reserve_type() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
-    let node_diffusion = arrow_test_data::create_test_node_history();
+    let reserve_type = arrow_test_data::create_test_reserve_type();
 
     // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = node_history_to_arrow(&node_diffusion)?;
+    let batch: RecordBatch = reserve_type_to_arrow(&reserve_type)?;
 
     Ok(batch)
 }
-*/
 
-// Define the new function
 pub fn create_and_batch_node_delay() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
     let node_delay = arrow_test_data::create_test_node_delay_data();
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = node_delays_to_arrow(&node_delay)?;
+
+    Ok(batch)
+}
+
+pub fn create_and_batch_market_realisation() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let markets_map = arrow_test_data::create_test_markets_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = market_realisation_to_arrow(&markets_map)?;
+
+    Ok(batch)
+}
+
+pub fn create_and_batch_node_history() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let node_history = arrow_test_data::create_example_node_histories();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = node_histories_to_arrow(&node_history)?;
 
     Ok(batch)
 }
@@ -283,6 +333,73 @@ pub fn risk_to_arrow(risk: &HashMap<String, f64>) -> Result<RecordBatch, ArrowEr
     record_batch
 }
 
+pub fn reserve_type_to_arrow(reserve_type: &HashMap<String, f64>) -> Result<RecordBatch, ArrowError> {
+    // Define the schema for the Arrow RecordBatch
+    let schema = Schema::new(vec![
+        Field::new("type", DataType::Utf8, false),
+        Field::new("ramp_factor", DataType::Float64, false),
+    ]);
+
+    // Initialize vectors to hold the data
+    let mut types: Vec<String> = Vec::new();
+    let mut ramp_factors: Vec<f64> = Vec::new();
+
+    // Populate the vectors from the HashMap
+    for (key, &value) in reserve_type.iter() {
+        types.push(key.clone());
+        ramp_factors.push(value);
+    }
+
+    // Create Arrow arrays from the vectors
+    let type_array: ArrayRef = Arc::new(StringArray::from(types));
+    let ramp_factor_array: ArrayRef = Arc::new(Float64Array::from(ramp_factors));
+
+    // Create the RecordBatch using these arrays and the schema
+    RecordBatch::try_new(
+        Arc::new(schema),
+        vec![type_array, ramp_factor_array],
+    )
+}
+
+pub fn market_realisation_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -> Result<RecordBatch, ArrowError> {
+    // First, collect all scenario names across all markets
+    let mut scenario_names = HashMap::new();
+    for market in markets.values() {
+        for scenario in market.realisation.keys() {
+            scenario_names.insert(scenario.clone(), ());
+        }
+    }
+    let scenario_names: Vec<String> = scenario_names.into_keys().collect();
+
+    // Define the schema dynamically based on the scenario names
+    let mut fields: Vec<Field> = vec![Field::new("reserve_product", DataType::Utf8, false)];
+    fields.extend(scenario_names.iter().map(|name| Field::new(name, DataType::Float64, false)));
+    
+    // Initialize vectors to hold the data
+    let mut market_names: Vec<String> = Vec::new();
+    let mut scenario_values: Vec<Vec<f64>> = vec![vec![]; scenario_names.len()];
+
+    // Populate the vectors from the HashMap
+    for market in markets.values() {
+        market_names.push(market.name.clone());
+        for (i, scenario_name) in scenario_names.iter().enumerate() {
+            scenario_values[i].push(*market.realisation.get(scenario_name).unwrap_or(&0.0));
+        }
+    }
+
+    // Create Arrow arrays from the vectors
+    let market_names_array: ArrayRef = Arc::new(StringArray::from(market_names));
+    let mut columns: Vec<ArrayRef> = vec![market_names_array];
+    for values in scenario_values {
+        columns.push(Arc::new(Float64Array::from(values)) as ArrayRef);
+    }
+
+    let schema = Arc::new(Schema::new(fields));
+
+    // Create the RecordBatch using these arrays and the schema
+    RecordBatch::try_new(schema, columns)
+}
+
 pub fn node_delays_to_arrow(node_delays: &HashMap<String, input_data::NodeDelay>) -> Result<RecordBatch, ArrowError> {
     // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
@@ -321,6 +438,60 @@ pub fn node_delays_to_arrow(node_delays: &HashMap<String, input_data::NodeDelay>
         Arc::new(schema),
         vec![node1_array, node2_array, delay_array, min_flow_array, max_flow_array],
     )
+}
+
+pub fn node_histories_to_arrow(node_histories: &HashMap<String, input_data::NodeHistory>) -> ArrowResult<RecordBatch> {
+    // Define the schema for the Arrow RecordBatch dynamically
+    let mut fields = vec![Field::new("t", DataType::Int32, false)];
+    let mut columns: Vec<ArrayRef> = Vec::new();
+
+    // We'll need a column for 't' values
+    let mut ts_values: Vec<i32> = Vec::new();
+
+    // Placeholder to hold time series data
+    let mut string_columns_data = HashMap::new();
+    let mut float_columns_data = HashMap::new();
+
+    // Populate the columns from the NodeHistory HashMap
+    for (node_name, node_history) in node_histories {
+        for ts in &node_history.steps.ts_data {
+            let column_name_string = format!("{},t,{}", node_name, ts.scenario);
+            let column_name_float = format!("{},{}", node_name, ts.scenario);
+
+            fields.push(Field::new(&column_name_string, DataType::Utf8, false));
+            fields.push(Field::new(&column_name_float, DataType::Float64, false));
+
+            for (t, value) in &ts.series {
+                string_columns_data
+                    .entry(column_name_string.clone())
+                    .or_insert_with(Vec::new)
+                    .push(t.clone());
+                float_columns_data
+                    .entry(column_name_float.clone())
+                    .or_insert_with(Vec::new)
+                    .push(*value);
+            }
+        }
+    }
+
+    // Add 't' column which is just a sequence of integers
+    for i in 0..string_columns_data.values().next().unwrap().len() as i32 {
+        ts_values.push(i + 1);
+    }
+    columns.push(Arc::new(Int32Array::from(ts_values)) as ArrayRef);
+
+    // Add the string and float columns to the RecordBatch
+    for (key, val) in string_columns_data {
+        columns.push(Arc::new(StringArray::from(val)) as ArrayRef);
+    }
+    for (key, val) in float_columns_data {
+        columns.push(Arc::new(Float64Array::from(val)) as ArrayRef);
+    }
+
+    let schema = Arc::new(Schema::new(fields));
+
+    // Create the RecordBatch using these arrays and the schema
+    RecordBatch::try_new(schema, columns)
 }
 
 // Function to convert a HashMap<String, NodeDiffusion> to an Arrow RecordBatch
@@ -492,10 +663,10 @@ pub fn markets_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -> Res
     let mut fees: Vec<f64> = Vec::new();
 
     for (market_name, market) in markets {
-        markets_vec.push(market.market.clone());
+        markets_vec.push(market.name.clone());
         m_types.push(market.m_type.clone());
         nodes.push(market.node.clone());
-        processgroups.push(market.processgroup.clone());
+        processgroups.push(market.pgroup.clone());
         directions.push(market.direction.clone());
         reserve_types.push(market.reserve_type.clone());
         is_bids.push(market.is_bid);

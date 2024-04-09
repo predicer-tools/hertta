@@ -211,17 +211,21 @@ pub struct Market {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MarketNew {
     pub name: String,
-    pub market: String,
     pub m_type: String,
-    pub node: String, //mikä tyyppi
-    pub processgroup: String,
+    pub node: String, 
+    pub pgroup: String,
     pub direction: String,
+    pub realisation: HashMap<String, f64>,
     pub reserve_type: String,
     pub is_bid: bool,
     pub is_limited: bool,
     pub min_bid: f64,
     pub max_bid: f64,
     pub fee: f64,
+    pub price: TimeSeriesData,
+    pub up_price: TimeSeriesData,
+    pub down_price: TimeSeriesData,
+    pub fixed: Vec<(String, f64)>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -266,6 +270,19 @@ pub struct Topology {
     pub vom_cost: f64,
     pub ramp_up: f64,
     pub ramp_down: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TopologyNew {
+    pub source: String,
+    pub sink: String,
+    pub capacity: f64,
+    pub vom_cost: f64,
+    pub ramp_up: f64,
+    pub ramp_down: f64,
+    pub initial_load: f64,
+    pub initial_flow: f64,
+    pub cap_ts: TimeSeriesData,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
