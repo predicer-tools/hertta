@@ -212,7 +212,7 @@ pub fn create_test_markets_hashmap() -> HashMap<String, input_data::MarketNew> {
     // Example markets
     let market1 = input_data::MarketNew {
         name: "Market1".to_string(),
-        m_type: "Spot".to_string(),
+        m_type: "energy".to_string(),
         node: "Node1".to_string(),
         pgroup: "GroupA".to_string(),
         direction: "Supply".to_string(),

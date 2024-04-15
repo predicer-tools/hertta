@@ -272,7 +272,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     //cf MIKÄ TÄMÄ ON
     //let batch = arrow_input::create_and_batch_node_inflows()?;
-    let batch = arrow_input::create_and_batch_market_price()?;
+    //let batch = arrow_input::create_and_batch_market_price()?;
+    let batch = arrow_input::create_and_batch_market_balance_price()?;
     //price mikä tämä on
     //eff_ts
     //fixed_ts

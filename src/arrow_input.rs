@@ -122,6 +122,16 @@ pub fn create_and_batch_market_price() -> Result<RecordBatch, Box<dyn Error>> {
     Ok(batch)
 }
 
+pub fn create_and_batch_market_balance_price() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let markets_map = arrow_test_data::create_test_markets_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = market_balance_price_to_arrow(&markets_map)?;
+
+    Ok(batch)
+}
+
 // Define the new function
 pub fn create_and_batch_inputdatasetup() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
@@ -381,42 +391,6 @@ pub fn market_realisation_to_arrow(markets: &HashMap<String, input_data::MarketN
     RecordBatch::try_new(schema, columns)
 }
 
-/* 
-pub fn market_price_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -> Result<RecordBatch, ArrowError> {
-    // Prepare to collect all columns
-    let mut columns: HashMap<String, Vec<f64>> = HashMap::new();
-    let mut timestamps: Vec<String> = Vec::new();
-
-    // Iterate over markets
-    for market in markets.values() {
-        for data in &market.price.ts_data {
-            let scenario = &data.scenario;
-            for (timestamp, value) in &data.series {
-                let column_name = format!("{}_{}", market.name, scenario);
-                columns.entry(column_name).or_insert_with(Vec::new).push(*value);
-                timestamps.push(timestamp.clone());
-            }
-        }
-    }
-
-    // Create schema fields
-    let mut fields = vec![Field::new("timestamp", DataType::Utf8, false)];
-    fields.extend(columns.keys().map(|name| Field::new(name, DataType::Float64, false)));
-
-    // Create Arrow arrays
-    let timestamp_array: ArrayRef = Arc::new(StringArray::from(timestamps));
-    let mut arrays = vec![timestamp_array];
-    for (_, values) in columns {
-        let array: ArrayRef = Arc::new(Float64Array::from(values));
-        arrays.push(array);
-    }
-
-    // Create the RecordBatch
-    let schema = Arc::new(Schema::new(fields));
-    RecordBatch::try_new(schema, arrays)
-}
-*/
-
 pub fn market_price_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -> Result<RecordBatch, ArrowError> {
     let mut columns: HashMap<String, Vec<f64>> = HashMap::new();
     let mut unique_timestamps: HashSet<String> = HashSet::new();
@@ -474,6 +448,65 @@ pub fn market_price_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -
     let schema = Arc::new(Schema::new(fields));
     let record_batch = RecordBatch::try_new(schema, arrays)?;
     Ok(record_batch)
+}
+
+pub fn market_balance_price_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -> Result<RecordBatch, ArrowError> {
+    let mut columns: HashMap<String, Vec<f64>> = HashMap::new();
+    let mut unique_timestamps: HashSet<String> = HashSet::new();
+
+    // Collect all timestamps and initialize columns
+    for market in markets.values().filter(|m| m.m_type == "energy") {
+        for data in [&market.up_price, &market.down_price].iter() {
+            for ts_data in &data.ts_data {
+                for (timestamp, _) in &ts_data.series {
+                    unique_timestamps.insert(timestamp.clone());
+                }
+            }
+        }
+    }
+
+    let sorted_timestamps: Vec<String> = unique_timestamps.iter().cloned().collect();
+
+    // Initialize column data for up and down prices
+    for market in markets.values().filter(|m| m.m_type == "energy") {
+        for (label, price_data) in [("up", &market.up_price), ("dw", &market.down_price)].iter() {
+            for data in &price_data.ts_data {
+                let column_name = format!("{},{},{}", market.name, label, data.scenario);
+                let mut column_data = vec![f64::NAN; sorted_timestamps.len()];
+
+                for (timestamp, value) in &data.series {
+                    if let Some(pos) = sorted_timestamps.iter().position(|t| t == timestamp) {
+                        column_data[pos] = *value;
+                    }
+                }
+
+                columns.insert(column_name, column_data);
+            }
+        }
+    }
+
+    // Sort columns by scenario to ensure order: first all s1, then s2, then s3, etc.
+    let mut column_names: Vec<String> = columns.keys().cloned().collect();
+    column_names.sort_by(|a, b| {
+        let a_parts: Vec<&str> = a.split(',').collect();
+        let b_parts: Vec<&str> = b.split(',').collect();
+        a_parts[2].cmp(&b_parts[2]).then_with(|| a_parts[0].cmp(&b_parts[0]))
+    });
+
+    // Prepare the schema and arrays
+    let mut fields = vec![Field::new("timestamp", DataType::Utf8, false)];
+    let timestamp_array: ArrayRef = Arc::new(StringArray::from(sorted_timestamps));
+    let mut arrays = vec![timestamp_array];
+
+    for name in column_names {
+        fields.push(Field::new(&name, DataType::Float64, false));
+        let array: ArrayRef = Arc::new(Float64Array::from(columns.get(&name).unwrap().clone()));
+        arrays.push(array);
+    }
+
+    // Create the RecordBatch
+    let schema = Arc::new(Schema::new(fields));
+    return RecordBatch::try_new(schema, arrays);
 }
 
 pub fn node_delays_to_arrow(node_delays: &HashMap<String, input_data::NodeDelay>) -> Result<RecordBatch, ArrowError> {
