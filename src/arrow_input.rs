@@ -164,6 +164,17 @@ pub fn create_and_batch_nodes() -> Result<RecordBatch, Box<dyn Error>> {
     Ok(batch)
 }
 
+// Define the new function
+pub fn create_and_batch_node_commodity_price() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let nodes = arrow_test_data::create_test_nodes_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = nodes_commodity_price_to_arrow(&nodes)?;
+
+    Ok(batch)
+}
+
 pub fn create_and_batch_node_inflows() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
     let nodes = arrow_test_data::create_test_nodes_hashmap();
@@ -703,6 +714,34 @@ pub fn nodes_inflow_to_arrow(nodes: &HashMap<String, input_data::NodeNew>) -> Re
 
     let schema = Arc::new(Schema::new(fields));
     RecordBatch::try_new(schema, columns)
+}
+
+pub fn nodes_commodity_price_to_arrow(nodes: &HashMap<String, input_data::NodeNew>) -> Result<RecordBatch, ArrowError> {
+    let mut fields = vec![Field::new("t", DataType::Utf8, false)];
+    let mut columns: Vec<ArrayRef> = Vec::new();
+
+    // Assume all nodes have the same timestamps for simplicity
+    if let Some((_, first_node)) = nodes.iter().find(|(_, n)| n.is_commodity) {
+        let timestamps = first_node.cost.ts_data[0].series.iter().map(|(t, _)| t.clone()).collect::<Vec<String>>();
+        let timestamp_array = Arc::new(StringArray::from(timestamps)) as ArrayRef;
+        columns.push(timestamp_array);
+    }
+
+    // Process only the nodes where `is_commodity` is true
+    for (node_name, node) in nodes.iter().filter(|(_, n)| n.is_commodity) {
+        for ts in &node.cost.ts_data {
+            let column_name = format!("{},{}", node_name, ts.scenario);
+            fields.push(Field::new(&column_name, DataType::Float64, false));
+
+            let values: Vec<f64> = ts.series.iter().map(|(_, value)| *value).collect();
+            let value_array = Arc::new(Float64Array::from(values)) as ArrayRef;
+            columns.push(value_array);
+        }
+    }
+
+    let schema = Arc::new(Schema::new(fields));
+    let record_batch = RecordBatch::try_new(schema, columns)?;
+    Ok(record_batch)
 }
 
 // Function to convert eff_ops of Process to an Arrow RecordBatch
