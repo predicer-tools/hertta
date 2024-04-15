@@ -509,16 +509,25 @@ pub fn create_test_eff_ops(num_ops: usize, min_val: f64, max_val: f64) -> Vec<St
 pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew> {
     let mut processes = HashMap::new();
 
+    // Assuming create_test_eff_ops and create_timeseries are available and return the appropriate types
     let p1_eff_ops = create_test_eff_ops(10, 0.5, 1.0);
     let p2_eff_ops = create_test_eff_ops(10, 0.5, 1.0);
+    
+    let p1_cf_ts = create_timeseries(); // Assuming this creates TimeSeriesData
+    let p1_eff_ts = create_timeseries(); // Assuming this creates TimeSeriesData
 
+    let p2_cf_ts = create_timeseries(); // Assuming this creates TimeSeriesData
+    let p2_eff_ts = create_timeseries(); // Assuming this creates TimeSeriesData
+
+    // Create the ProcessNew instances
     let process1 = input_data::ProcessNew {
         name: "Process1".to_string(),
+        groups: Vec::new(), // Assuming an empty Vec for groups
+        conversion: 100,
         is_cf: true,
         is_cf_fix: false,
         is_online: true,
         is_res: false,
-        conversion: 100,
         eff: 0.9,
         load_min: 10.0,
         load_max: 100.0,
@@ -528,18 +537,22 @@ pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew
         max_online: 24.0,
         max_offline: 24.0,
         initial_state: 0.0,
-        scenario_independent_online: 0.0,
-        delay: 0.0,
+        is_scenario_independent: false, // Assuming a boolean value for this field
+        topos: Vec::new(), // Assuming an empty Vec for topos
+        cf: p1_cf_ts,
+        eff_ts: p1_eff_ts,
         eff_ops: p1_eff_ops.clone(),
+        eff_fun: Vec::new(), // Assuming an empty Vec for eff_fun
     };
 
     let process2 = input_data::ProcessNew {
         name: "Process2".to_string(),
+        groups: Vec::new(), // Assuming an empty Vec for groups
+        conversion: 200,
         is_cf: false,
         is_cf_fix: true,
         is_online: false,
         is_res: true,
-        conversion: 200,
         eff: 0.8,
         load_min: 20.0,
         load_max: 200.0,
@@ -549,9 +562,12 @@ pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew
         max_online: 48.0,
         max_offline: 48.0,
         initial_state: 0.0,
-        scenario_independent_online: 0.0,
-        delay: 1.0,
+        is_scenario_independent: false, // Assuming a boolean value for this field
+        topos: Vec::new(), // Assuming an empty Vec for topos
+        cf: p2_cf_ts,
+        eff_ts: p2_eff_ts,
         eff_ops: p2_eff_ops.clone(),
+        eff_fun: Vec::new(), // Assuming an empty Vec for eff_fun
     };
 
     // Insert processes into the hashmap

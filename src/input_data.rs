@@ -129,11 +129,12 @@ pub struct Process {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProcessNew {
     pub name: String,
+    pub groups: Vec<String>,
+    pub conversion: i64,
     pub is_cf: bool,
     pub is_cf_fix: bool,
     pub is_online: bool,
     pub is_res: bool,
-    pub conversion: i64,
     pub eff: f64,
     pub load_min: f64,
     pub load_max: f64,
@@ -143,9 +144,12 @@ pub struct ProcessNew {
     pub max_online: f64,
     pub max_offline: f64,
     pub initial_state: f64,
-    pub scenario_independent_online: f64,
-    pub delay: f64,
+    pub is_scenario_independent: bool,
+    pub topos: Vec<Topology>,
+    pub cf: TimeSeriesData,
+    pub eff_ts: TimeSeriesData,
     pub eff_ops: Vec<String>,
+    pub eff_fun: Vec<(f64,f64)>
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

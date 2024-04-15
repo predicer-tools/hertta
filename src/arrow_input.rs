@@ -4,7 +4,7 @@ use std::sync::Arc;
 use arrow::error::Result as ArrowResult;
 use crate::input_data;
 use crate::arrow_test_data;
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 use std::error::Error;
 use arrow::ipc::writer::StreamWriter;
 use base64::{encode};
@@ -213,6 +213,16 @@ pub fn create_and_batch_process_eff_ops() -> Result<RecordBatch, Box<dyn Error>>
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = processes_eff_ops_to_arrow(&processes)?;
+
+    Ok(batch)
+}
+
+pub fn create_and_batch_process_eff() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let processes = arrow_test_data::create_test_processes_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = processes_eff_to_arrow(&processes)?;
 
     Ok(batch)
 }
@@ -780,6 +790,51 @@ pub fn processes_eff_ops_to_arrow(processes: &HashMap<String, input_data::Proces
     RecordBatch::try_new(schema, columns)
 }
 
+pub fn processes_eff_to_arrow(processes: &HashMap<String, input_data::ProcessNew>) -> Result<RecordBatch, ArrowError> {
+    // Initialize fields and columns for the RecordBatch
+    let mut fields: Vec<Field> = Vec::new();
+    let mut columns: Vec<ArrayRef> = Vec::new();
+
+    // Find the first process with a non-empty eff_ts to establish the timestamps
+    let timestamps = if let Some((_, first_process)) = processes.iter().find(|(_, p)| !p.eff_ts.ts_data.is_empty()) {
+        first_process.eff_ts.ts_data[0].series.iter().map(|(t, _)| t.clone()).collect::<Vec<String>>()
+    } else {
+        return Err(ArrowError::ComputeError("No processes with time series data.".to_string()));
+    };
+
+    // Create the timestamp column
+    let timestamp_array = Arc::new(StringArray::from(timestamps)) as ArrayRef;
+    fields.push(Field::new("t", DataType::Utf8, false));
+    columns.push(timestamp_array);
+
+    // Group and sort the scenarios across all processes
+    let mut scenario_groups: BTreeMap<String, Vec<(String, Vec<f64>)>> = BTreeMap::new();
+    for (process_name, process) in processes {
+        for time_series in &process.eff_ts.ts_data {
+            scenario_groups.entry(time_series.scenario.clone())
+                .or_insert_with(Vec::new)
+                .push((process_name.clone(), time_series.series.iter().map(|(_, v)| *v).collect()));
+        }
+    }
+
+    // Now iterate over the sorted scenario groups and add columns accordingly
+    for (scenario, proc_values) in scenario_groups {
+        for (process_name, values) in proc_values {
+            let column_name = format!("{},{}", process_name, scenario);
+            fields.push(Field::new(&column_name, DataType::Float64, false));
+            let value_array = Arc::new(Float64Array::from(values)) as ArrayRef;
+            columns.push(value_array);
+        }
+    }
+
+    // Construct the schema from the fields
+    let schema = Arc::new(Schema::new(fields));
+
+    // Construct the record batch
+    let record_batch = RecordBatch::try_new(schema, columns)?;
+    Ok(record_batch)
+}
+
 // Convert HashMap<String, MarketNew> to RecordBatch
 pub fn markets_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -> Result<RecordBatch, ArrowError> {
     // Define the schema for the Arrow RecordBatch
@@ -980,7 +1035,7 @@ pub fn processes_to_arrow(processes: &HashMap<String, input_data::ProcessNew>) -
         Field::new("max_online", DataType::Float64, false),
         Field::new("max_offline", DataType::Float64, false),
         Field::new("initial_state", DataType::Float64, false),
-        Field::new("scenario_independent_online", DataType::Float64, false),
+        Field::new("scenario_independent_online", DataType::Boolean, false),
         Field::new("delay", DataType::Float64, false),
     ]);
 
@@ -1000,8 +1055,7 @@ pub fn processes_to_arrow(processes: &HashMap<String, input_data::ProcessNew>) -
     let mut max_onlines: Vec<f64> = Vec::new();
     let mut max_offlines: Vec<f64> = Vec::new();
     let mut initial_states: Vec<f64> = Vec::new();
-    let mut scenario_independent_onlines: Vec<f64> = Vec::new();
-    let mut delays: Vec<f64> = Vec::new();
+    let mut scenario_independent_onlines: Vec<bool> = Vec::new();
 
     for (name, process) in processes {
         names.push(process.name.clone());
@@ -1019,8 +1073,7 @@ pub fn processes_to_arrow(processes: &HashMap<String, input_data::ProcessNew>) -
         max_onlines.push(process.max_online);
         max_offlines.push(process.max_offline);
         initial_states.push(process.initial_state);
-        scenario_independent_onlines.push(process.scenario_independent_online);
-        delays.push(process.delay);
+        scenario_independent_onlines.push(process.is_scenario_independent);
     }
 
     // Create arrays from the vectors
@@ -1039,8 +1092,7 @@ pub fn processes_to_arrow(processes: &HashMap<String, input_data::ProcessNew>) -
     let max_onlines_array = Arc::new(Float64Array::from(max_onlines)) as ArrayRef;
     let max_offlines_array = Arc::new(Float64Array::from(max_offlines)) as ArrayRef;
     let initial_states_array = Arc::new(Float64Array::from(initial_states)) as ArrayRef;
-    let scenario_independent_onlines_array = Arc::new(Float64Array::from(scenario_independent_onlines)) as ArrayRef;
-    let delays_array = Arc::new(Float64Array::from(delays)) as ArrayRef;
+    let scenario_independent_onlines_array = Arc::new(BooleanArray::from(scenario_independent_onlines)) as ArrayRef;
 
     // Now you can create the RecordBatch using these arrays
     let record_batch = RecordBatch::try_new(
@@ -1062,7 +1114,6 @@ pub fn processes_to_arrow(processes: &HashMap<String, input_data::ProcessNew>) -
             max_offlines_array,
             initial_states_array,
             scenario_independent_onlines_array,
-            delays_array,
         ],
     );
 
