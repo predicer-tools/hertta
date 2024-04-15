@@ -248,32 +248,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Initialize the JuliaProcess
     let mut julia_process = julia_process::JuliaProcess::new("Predicer/src/arrow_conversion.jl")?;
 
-    //let encoded_arrow_data = arrow_input::create_and_encode_timeseries()?;
+    //let batch = arrow_input::create_and_encode_timeseries()?;
 
     // Use the function to create base64 encoded Arrow data
-    //let encoded_arrow_data = arrow_input::create_and_encode_inputdatasetup()?;
-    //let encoded_arrow_data = arrow_input::create_and_encode_nodes()?;
-    //let encoded_arrow_data = arrow_input::create_and_encode_processes()?;
-    //let encoded_arrow_data = arrow_input::create_and_encode_groups()?;
-    //let encoded_arrow_data = arrow_input::create_and_encode_process_topologys()?;
+    //let batch = arrow_input::create_and_batch_inputdatasetup()?;
+    //let batch = arrow_input::create_and_batch_nodes()?;
+    //let batch = arrow_input::create_and_batch_processes()?;
+    //let batch = arrow_input::create_and_batch_groups()?;
+    //let batch = arrow_input::create_and_batch_process_topologys()?;
     //let batch = arrow_input::create_and_batch_node_diffusion()?;
     //let batch = arrow_input::create_and_batch_node_history()?;
     //let batch = arrow_input::create_and_batch_node_delay()?;
-    //let encoded_arrow_data = arrow_input::create_and_encode_node_inflows()?;
-    //let encoded_arrow_data = arrow_input::create_and_encode_markets()?;
-    //let encoded_arrow_data = create_and_batch_market_realisation()?;
-    //let encoded_arrow_data = arrow_input::create_and_encode_scenarios()?;
-    //let encoded_arrow_data = arrow_input::create_and_encode_process_eff_ops()?; EI TOIMI VIELÄ
-    let batch = arrow_input::create_and_batch_reserve_type()?;
-    //let encoded_arrow_data = arrow_input::create_and_encode_risk()?;
+    //let batch = arrow_input::create_and_batch_node_inflows()?;
+    //let batch = arrow_input::create_and_batch_markets()?;
+    //let batch = arrow_input::create_and_batch_market_realisation()?;
+    //let batch = arrow_input::create_and_batch_scenarios()?;
+    //let batch = arrow_input::create_and_batch_process_eff_ops()?; EI TOIMI VIELÄ
+    //let batch = arrow_input::create_and_batch_reserve_type()?;
+    //let batch = arrow_input::create_and_batch_risk()?;
     //cap_ts
-    //gen_constraints
-    //constraints
+    //let batch = arrow_input::create_and_batch_genconstraints()?;
+    //constraints KYSY DENNIKSELTÄ TÄSTÄ
 
-    //cf
-    //inflow
-    //market_prices
-    //price
+    //cf MIKÄ TÄMÄ ON
+    //let batch = arrow_input::create_and_batch_node_inflows()?;
+    let batch = arrow_input::create_and_batch_market_price()?;
+    //price mikä tämä on
     //eff_ts
     //fixed_ts
     //balance_prices

@@ -281,6 +281,32 @@ pub fn create_test_inputdatasetup() -> input_data::InputDataSetup {
     }
 }
 
+pub fn create_test_confactor() -> input_data::ConFactor {
+    input_data::ConFactor {
+        var_type: "ExampleType".to_string(),
+        flow: ("Node1".to_string(), "Node2".to_string()),
+        data: create_timeseries(),
+    }
+}
+
+pub fn create_test_genconstraints() -> HashMap<String, input_data::GenConstraint> {
+    let mut gen_constraints_map = HashMap::new();
+    
+    let test_genconstraint = input_data::GenConstraint {
+        name: "ExampleConstraintName".to_string(),
+        gc_type: "ExampleConstraintType".to_string(),
+        is_setpoint: false,
+        penalty: 50.0,
+        factors: vec![create_test_confactor()],
+        constant: create_timeseries(),
+    };
+    
+    // Insert the GenConstraint into the HashMap. The name of the GenConstraint is used as the key.
+    gen_constraints_map.insert(test_genconstraint.name.clone(), test_genconstraint);
+    
+    gen_constraints_map
+}
+
 pub fn create_test_nodes_hashmap() -> HashMap<String, input_data::NodeNew> {
     let mut nodes: HashMap<String, input_data::NodeNew> = HashMap::new();
 

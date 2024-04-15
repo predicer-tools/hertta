@@ -15,6 +15,7 @@ use std::io::Read;
 use bincode;
 use std::path::Path;
 use chrono::{NaiveDate, NaiveDateTime};
+use std::collections::HashSet;
 
 // This function creates a HashMap of binary serialized RecordBatches.
 pub fn create_example_arrow_data() -> Result<HashMap<String, Vec<u8>>, Box<dyn Error>> {
@@ -71,6 +72,16 @@ pub fn create_and_batch_node_diffusion() -> Result<RecordBatch, Box<dyn Error>> 
     Ok(batch)
 }
 
+pub fn create_and_batch_genconstraints() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let gen_constraints = arrow_test_data::create_test_genconstraints();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = gen_constraints_to_arrow(&gen_constraints)?;
+
+    Ok(batch)
+}
+
 pub fn create_and_batch_reserve_type() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
     let reserve_type = arrow_test_data::create_test_reserve_type();
@@ -101,6 +112,58 @@ pub fn create_and_batch_market_realisation() -> Result<RecordBatch, Box<dyn Erro
     Ok(batch)
 }
 
+pub fn create_and_batch_market_price() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let markets_map = arrow_test_data::create_test_markets_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = market_price_to_arrow(&markets_map)?;
+
+    Ok(batch)
+}
+
+// Define the new function
+pub fn create_and_batch_inputdatasetup() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let setup = arrow_test_data::create_test_inputdatasetup();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = inputdatasetup_to_arrow(&setup)?;
+
+    Ok(batch)
+}
+
+pub fn create_and_batch_risk() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of Risk
+    let risk = arrow_test_data::create_test_risk_data();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = risk_to_arrow(&risk)?;
+
+    Ok(batch)
+}
+
+// Define the new function
+pub fn create_and_batch_nodes() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let nodes = arrow_test_data::create_test_nodes_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = nodes_to_arrow(&nodes)?;
+
+    Ok(batch)
+}
+
+pub fn create_and_batch_node_inflows() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let nodes = arrow_test_data::create_test_nodes_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = nodes_inflow_to_arrow(&nodes)?;
+
+    Ok(batch)
+}
+
 pub fn create_and_batch_node_history() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
     let node_history = arrow_test_data::create_example_node_histories();
@@ -112,195 +175,76 @@ pub fn create_and_batch_node_history() -> Result<RecordBatch, Box<dyn Error>> {
 }
 
 // Define the new function
-pub fn create_and_encode_inputdatasetup() -> Result<String, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let setup = arrow_test_data::create_test_inputdatasetup();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = inputdatasetup_to_arrow(&setup)?;
-
-    // Serialize the RecordBatch to a Vec<u8>
-    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
-
-    // Encode the Vec<u8> into a base64 String
-    let encoded_arrow_data: String = encode(&arrow_data);
-
-    // Return the base64 encoded string
-    Ok(encoded_arrow_data)
-}
-
-pub fn create_and_encode_risk() -> Result<String, Box<dyn Error>> {
-    // Create a test instance of Risk
-    let risk = arrow_test_data::create_test_risk_data();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = risk_to_arrow(&risk)?;
-
-    // Serialize the RecordBatch to a Vec<u8>
-    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
-
-    // Encode the Vec<u8> into a base64 String
-    let encoded_arrow_data: String = encode(&arrow_data);
-
-    // Return the base64 encoded string
-    Ok(encoded_arrow_data)
-}
-
-// Define the new function
-pub fn create_and_encode_nodes() -> Result<String, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let nodes = arrow_test_data::create_test_nodes_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = nodes_to_arrow(&nodes)?;
-
-    // Serialize the RecordBatch to a Vec<u8>
-    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
-
-    // Encode the Vec<u8> into a base64 String
-    let encoded_arrow_data: String = encode(&arrow_data);
-
-    // Return the base64 encoded string
-    Ok(encoded_arrow_data)
-}
-
-pub fn create_and_encode_node_inflows() -> Result<String, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let nodes = arrow_test_data::create_test_nodes_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = nodes_inflow_to_arrow(&nodes)?;
-
-    // Serialize the RecordBatch to a Vec<u8>
-    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
-
-    // Encode the Vec<u8> into a base64 String
-    let encoded_arrow_data: String = encode(&arrow_data);
-
-    // Return the base64 encoded string
-    Ok(encoded_arrow_data)
-}
-
-// Define the new function
-pub fn create_and_encode_processes() -> Result<String, Box<dyn Error>> {
+pub fn create_and_batch_processes() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
     let processes = arrow_test_data::create_test_processes_hashmap();
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = processes_to_arrow(&processes)?;
 
-    // Serialize the RecordBatch to a Vec<u8>
-    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
-
-    // Encode the Vec<u8> into a base64 String
-    let encoded_arrow_data: String = encode(&arrow_data);
-
-    // Return the base64 encoded string
-    Ok(encoded_arrow_data)
+    Ok(batch)
 }
 
 // Define the new function
-pub fn create_and_encode_process_eff_ops() -> Result<String, Box<dyn Error>> {
+pub fn create_and_batch_process_eff_ops() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
     let processes = arrow_test_data::create_test_processes_hashmap();
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = processes_eff_ops_to_arrow(&processes)?;
 
-    // Serialize the RecordBatch to a Vec<u8>
-    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
-
-    // Encode the Vec<u8> into a base64 String
-    let encoded_arrow_data: String = encode(&arrow_data);
-
-    // Return the base64 encoded string
-    Ok(encoded_arrow_data)
+    Ok(batch)
 }
 
 // Define the new function
-pub fn create_and_encode_process_topologys() -> Result<String, Box<dyn Error>> {
+pub fn create_and_batch_process_topologys() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
     let processes = arrow_test_data::create_test_process_topologys_hashmap();
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = process_topos_to_arrow(&processes)?;
 
-    // Serialize the RecordBatch to a Vec<u8>
-    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
-
-    // Encode the Vec<u8> into a base64 String
-    let encoded_arrow_data: String = encode(&arrow_data);
-
-    // Return the base64 encoded string
-    Ok(encoded_arrow_data)
+    Ok(batch)
 }
 
-pub fn create_and_encode_groups() -> Result<String, Box<dyn Error>> {
+pub fn create_and_batch_groups() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
     let groups = arrow_test_data::create_test_groups_hashmap();
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = groups_to_arrow(&groups)?;
 
-    // Serialize the RecordBatch to a Vec<u8>
-    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
-
-    // Encode the Vec<u8> into a base64 String
-    let encoded_arrow_data: String = encode(&arrow_data);
-
-    // Return the base64 encoded string
-    Ok(encoded_arrow_data)
+    Ok(batch)
 }
 
-pub fn create_and_encode_markets() -> Result<String, Box<dyn Error>> {
+pub fn create_and_batch_markets() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
     let markets = arrow_test_data::create_test_markets_hashmap();
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = markets_to_arrow(&markets)?;
 
-    // Serialize the RecordBatch to a Vec<u8>
-    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
-
-    // Encode the Vec<u8> into a base64 String
-    let encoded_arrow_data: String = encode(&arrow_data);
-
-    // Return the base64 encoded string
-    Ok(encoded_arrow_data)
+    Ok(batch)
 }
 
-pub fn create_and_encode_timeseries() -> Result<String, Box<dyn Error>> {
+pub fn create_and_batch_timeseries() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
     let timeseries = arrow_test_data::create_test_timeseries();
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = timeseries_to_arrow(timeseries)?;
 
-    // Serialize the RecordBatch to a Vec<u8>
-    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
-
-    // Encode the Vec<u8> into a base64 String
-    let encoded_arrow_data: String = encode(&arrow_data);
-
-    // Return the base64 encoded string
-    Ok(encoded_arrow_data)
+    Ok(batch)
 }
 
-pub fn create_and_encode_scenarios() -> Result<String, Box<dyn Error>> {
+pub fn create_and_batch_scenarios() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
     let scenarios = arrow_test_data::create_test_scenarios();
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = scenarios_to_arrow(&scenarios)?;
 
-    // Serialize the RecordBatch to a Vec<u8>
-    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(&batch)?;
-
-    // Encode the Vec<u8> into a base64 String
-    let encoded_arrow_data: String = encode(&arrow_data);
-
-    // Return the base64 encoded string
-    Ok(encoded_arrow_data)
+    Ok(batch)
 }
 
 pub fn risk_to_arrow(risk: &HashMap<String, f64>) -> Result<RecordBatch, ArrowError> {
@@ -331,6 +275,43 @@ pub fn risk_to_arrow(risk: &HashMap<String, f64>) -> Result<RecordBatch, ArrowEr
     );
 
     record_batch
+}
+
+// Function to convert gen_constraints to an Arrow RecordBatch
+pub fn gen_constraints_to_arrow(gen_constraints: &HashMap<String, input_data::GenConstraint>) -> Result<RecordBatch, ArrowError> {
+    // Define the schema for the Arrow RecordBatch
+    let schema = Schema::new(vec![
+        Field::new("name", DataType::Utf8, false),
+        Field::new("gc_type", DataType::Utf8, false),
+        Field::new("is_setpoint", DataType::Boolean, false),
+        Field::new("penalty", DataType::Float64, false),
+    ]);
+
+    // Initialize vectors to hold the data
+    let mut names: Vec<String> = Vec::new();
+    let mut types: Vec<String> = Vec::new();
+    let mut is_setpoints: Vec<bool> = Vec::new();
+    let mut penalties: Vec<f64> = Vec::new();
+
+    // Populate the vectors from the HashMap
+    for (_key, gen_constraint) in gen_constraints.iter() {
+        names.push(gen_constraint.name.clone());
+        types.push(gen_constraint.gc_type.clone());
+        is_setpoints.push(gen_constraint.is_setpoint);
+        penalties.push(gen_constraint.penalty);
+    }
+
+    // Create Arrow arrays from the vectors
+    let name_array: ArrayRef = Arc::new(StringArray::from(names));
+    let type_array: ArrayRef = Arc::new(StringArray::from(types));
+    let is_setpoint_array: ArrayRef = Arc::new(BooleanArray::from(is_setpoints));
+    let penalty_array: ArrayRef = Arc::new(Float64Array::from(penalties));
+
+    // Create the RecordBatch using these arrays and the schema
+    RecordBatch::try_new(
+        Arc::new(schema),
+        vec![name_array, type_array, is_setpoint_array, penalty_array],
+    )
 }
 
 pub fn reserve_type_to_arrow(reserve_type: &HashMap<String, f64>) -> Result<RecordBatch, ArrowError> {
@@ -398,6 +379,101 @@ pub fn market_realisation_to_arrow(markets: &HashMap<String, input_data::MarketN
 
     // Create the RecordBatch using these arrays and the schema
     RecordBatch::try_new(schema, columns)
+}
+
+/* 
+pub fn market_price_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -> Result<RecordBatch, ArrowError> {
+    // Prepare to collect all columns
+    let mut columns: HashMap<String, Vec<f64>> = HashMap::new();
+    let mut timestamps: Vec<String> = Vec::new();
+
+    // Iterate over markets
+    for market in markets.values() {
+        for data in &market.price.ts_data {
+            let scenario = &data.scenario;
+            for (timestamp, value) in &data.series {
+                let column_name = format!("{}_{}", market.name, scenario);
+                columns.entry(column_name).or_insert_with(Vec::new).push(*value);
+                timestamps.push(timestamp.clone());
+            }
+        }
+    }
+
+    // Create schema fields
+    let mut fields = vec![Field::new("timestamp", DataType::Utf8, false)];
+    fields.extend(columns.keys().map(|name| Field::new(name, DataType::Float64, false)));
+
+    // Create Arrow arrays
+    let timestamp_array: ArrayRef = Arc::new(StringArray::from(timestamps));
+    let mut arrays = vec![timestamp_array];
+    for (_, values) in columns {
+        let array: ArrayRef = Arc::new(Float64Array::from(values));
+        arrays.push(array);
+    }
+
+    // Create the RecordBatch
+    let schema = Arc::new(Schema::new(fields));
+    RecordBatch::try_new(schema, arrays)
+}
+*/
+
+pub fn market_price_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -> Result<RecordBatch, ArrowError> {
+    let mut columns: HashMap<String, Vec<f64>> = HashMap::new();
+    let mut unique_timestamps: HashSet<String> = HashSet::new();
+
+    // Collect all timestamps and initialize columns
+    for market in markets.values() {
+        for data in &market.price.ts_data {
+            for (timestamp, _) in &data.series {
+                unique_timestamps.insert(timestamp.clone());
+            }
+        }
+    }
+
+    let sorted_timestamps: Vec<String> = unique_timestamps.iter().cloned().collect();
+    println!("Unique Timestamps: {}", sorted_timestamps.len());
+
+    // Initialize column data
+    for market in markets.values() {
+        for data in &market.price.ts_data {
+            let scenario = &data.scenario;
+            let column_name = format!("{},{}", market.name, scenario);  // Updated column name format
+            let mut column_data = vec![f64::NAN; sorted_timestamps.len()]; // Fill with NaN for missing data
+
+            for (timestamp, value) in &data.series {
+                if let Some(pos) = sorted_timestamps.iter().position(|t| t == timestamp) {
+                    column_data[pos] = *value;
+                }
+            }
+
+            println!("Column: {}, Length: {}", column_name, column_data.len());  // Print before moving `column_data`
+            columns.insert(column_name, column_data);
+        }
+    }
+
+    // Sort columns by scenario to ensure order: first all s1, then s2, then s3, etc.
+    let mut column_names: Vec<String> = columns.keys().cloned().collect();
+    column_names.sort_by(|a, b| {
+        let a_parts: Vec<&str> = a.split(',').collect();
+        let b_parts: Vec<&str> = b.split(',').collect();
+        a_parts[1].cmp(&b_parts[1]).then_with(|| a_parts[0].cmp(&b_parts[0]))
+    });
+
+    // Prepare the schema and arrays
+    let mut fields = vec![Field::new("timestamp", DataType::Utf8, false)];
+    let timestamp_array: ArrayRef = Arc::new(StringArray::from(sorted_timestamps));
+    let mut arrays = vec![timestamp_array];
+
+    for name in column_names {
+        fields.push(Field::new(&name, DataType::Float64, false));
+        let array: ArrayRef = Arc::new(Float64Array::from(columns.get(&name).unwrap().clone()));
+        arrays.push(array);
+    }
+
+    // Create the RecordBatch
+    let schema = Arc::new(Schema::new(fields));
+    let record_batch = RecordBatch::try_new(schema, arrays)?;
+    Ok(record_batch)
 }
 
 pub fn node_delays_to_arrow(node_delays: &HashMap<String, input_data::NodeDelay>) -> Result<RecordBatch, ArrowError> {
