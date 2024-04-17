@@ -72,6 +72,17 @@ pub fn create_and_batch_node_diffusion() -> Result<RecordBatch, Box<dyn Error>> 
     Ok(batch)
 }
 
+// Define the new function
+pub fn create_and_batch_market_fixed() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let markets = arrow_test_data::create_test_markets_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = market_fixed_to_arrow(&markets)?;
+
+    Ok(batch)
+}
+
 pub fn create_and_batch_genconstraints() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
     let gen_constraints = arrow_test_data::create_test_genconstraints();
@@ -404,6 +415,45 @@ pub fn market_realisation_to_arrow(markets: &HashMap<String, input_data::MarketN
     let mut columns: Vec<ArrayRef> = vec![market_names_array];
     for values in scenario_values {
         columns.push(Arc::new(Float64Array::from(values)) as ArrayRef);
+    }
+
+    let schema = Arc::new(Schema::new(fields));
+
+    // Create the RecordBatch using these arrays and the schema
+    RecordBatch::try_new(schema, columns)
+}
+
+pub fn market_fixed_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -> Result<RecordBatch, ArrowError> {
+    // Gather all timestamps and sort them
+    let mut all_timestamps: Vec<String> = markets.values()
+        .flat_map(|market| market.fixed.iter().map(|(t, _)| t.clone()))
+        .collect();
+    all_timestamps.sort();
+    all_timestamps.dedup();
+
+    // Initialize a vector for each market
+    let mut columns_data: HashMap<String, Vec<Option<f64>>> = HashMap::new();
+    for market in markets.values() {
+        let mut market_data: Vec<Option<f64>> = vec![None; all_timestamps.len()];
+        for (t, value) in &market.fixed {
+            if let Some(pos) = all_timestamps.iter().position(|timestamp| timestamp == t) {
+                market_data[pos] = Some(*value);
+            }
+        }
+        columns_data.insert(market.name.clone(), market_data);
+    }
+
+    // Create the schema
+    let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
+    fields.extend(markets.keys().map(|name| Field::new(name, DataType::Float64, true)));
+
+    // Create the columns
+    let timestamp_array: ArrayRef = Arc::new(StringArray::from(all_timestamps));
+    let mut columns: Vec<ArrayRef> = vec![timestamp_array];
+    for market_name in markets.keys() {
+        let column_data = columns_data.remove(market_name).expect("Market data should be present");
+        let column_array: ArrayRef = Arc::new(Float64Array::from(column_data));
+        columns.push(column_array);
     }
 
     let schema = Arc::new(Schema::new(fields));

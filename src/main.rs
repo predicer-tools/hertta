@@ -274,8 +274,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //let batch = arrow_input::create_and_batch_node_inflows()?;
     //let batch = arrow_input::create_and_batch_market_price()?;
     //let batch = arrow_input::create_and_batch_node_commodity_price()?;
-    let batch = arrow_input::create_and_batch_process_eff()?;
-    //fixed_ts
+    //let batch = arrow_input::create_and_batch_process_eff()?;
+    let batch = arrow_input::create_and_batch_market_fixed()?;
     //let batch = arrow_input::create_and_batch_market_balance_price()?;
 
     
