@@ -284,7 +284,7 @@ pub fn create_test_inputdatasetup() -> input_data::InputDataSetup {
 pub fn create_test_confactor() -> input_data::ConFactor {
     input_data::ConFactor {
         var_type: "ExampleType".to_string(),
-        flow: ("Node1".to_string(), "Node2".to_string()),
+        flow: ("Node1".to_string(), "".to_string()),
         data: create_timeseries(),
     }
 }
@@ -427,73 +427,38 @@ pub fn create_test_groups_hashmap() -> HashMap<String, input_data::GroupNew> {
     groups
 }
 
-pub fn create_test_process_topologys_hashmap() -> HashMap<String, input_data::ProcessTopology> {
-    let mut process_topos: HashMap<String, input_data::ProcessTopology> = HashMap::new();
+pub fn create_test_topologies_for_process(process_name: &str) -> Vec<input_data::TopologyNew> {
+    let mut topologies: Vec<input_data::TopologyNew> = Vec::new();
+    
+    let time_series_data = create_timeseries(); // Placeholder function
 
-    // Example process topologys
-    let process_topo1 = input_data::ProcessTopology {
-        name: "process_topo1".to_string(),
-        process: "Process1".to_string(),
-        source_sink: "source".to_string(),
-        node: "node1".to_string(),
-        conversion_coeff: 1.0,
+    // Create a topology where the given process is the sink
+    topologies.push(input_data::TopologyNew {
+        source: "SomeOtherSource".to_string(),
+        sink: process_name.to_string(),
         capacity: 20.0,
         vom_cost: 3.0,
         ramp_up: 0.5,
         ramp_down: 0.5,
         initial_load: 0.6,
         initial_flow: 0.6,
-    };
+        cap_ts: time_series_data.clone(),
+    });
 
-    let process_topo2 = input_data::ProcessTopology {
-        name: "process_topo2".to_string(),
-        process: "Process1".to_string(),
-        source_sink: "sink".to_string(),
-        node: "node1".to_string(),
-        conversion_coeff: 1.0,
+    // Create a topology where the given process is the source
+    topologies.push(input_data::TopologyNew {
+        source: process_name.to_string(),
+        sink: "SomeOtherSink".to_string(),
         capacity: 20.0,
         vom_cost: 3.0,
         ramp_up: 0.5,
         ramp_down: 0.5,
         initial_load: 0.6,
         initial_flow: 0.6,
-    };
+        cap_ts: time_series_data,
+    });
 
-    let process_topo3 = input_data::ProcessTopology {
-        name: "process_topo3".to_string(),
-        process: "Process2".to_string(),
-        source_sink: "source".to_string(),
-        node: "node1".to_string(),
-        conversion_coeff: 1.0,
-        capacity: 20.0,
-        vom_cost: 3.0,
-        ramp_up: 0.5,
-        ramp_down: 0.5,
-        initial_load: 0.6,
-        initial_flow: 0.6,
-    };
-
-    let process_topo4 = input_data::ProcessTopology {
-        name: "process_topo4".to_string(),
-        process: "Process2".to_string(),
-        source_sink: "sink".to_string(),
-        node: "node1".to_string(),
-        conversion_coeff: 1.0,
-        capacity: 20.0,
-        vom_cost: 3.0,
-        ramp_up: 0.5,
-        ramp_down: 0.5,
-        initial_load: 0.6,
-        initial_flow: 0.6,
-    };
-
-    // Insert nodes into the hashmap
-    process_topos.insert(process_topo1.name.clone(), process_topo1);
-    process_topos.insert(process_topo2.name.clone(), process_topo2);
-    process_topos.insert(process_topo3.name.clone(), process_topo3);
-    process_topos.insert(process_topo4.name.clone(), process_topo4);
-
-    process_topos
+    topologies
 }
 
 pub fn create_test_eff_ops(num_ops: usize, min_val: f64, max_val: f64) -> Vec<String> {
@@ -519,6 +484,9 @@ pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew
     let p2_cf_ts = create_timeseries(); // Assuming this creates TimeSeriesData
     let p2_eff_ts = create_timeseries(); // Assuming this creates TimeSeriesData
 
+    let p1_topo = create_test_topologies_for_process("Process1");
+    let p2_topo = create_test_topologies_for_process("Process2");
+
     // Create the ProcessNew instances
     let process1 = input_data::ProcessNew {
         name: "Process1".to_string(),
@@ -538,7 +506,7 @@ pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew
         max_offline: 24.0,
         initial_state: 0.0,
         is_scenario_independent: false, // Assuming a boolean value for this field
-        topos: Vec::new(), // Assuming an empty Vec for topos
+        topos: p1_topo.clone(), // Assuming an empty Vec for topos
         cf: p1_cf_ts,
         eff_ts: p1_eff_ts,
         eff_ops: p1_eff_ops.clone(),
@@ -563,7 +531,7 @@ pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew
         max_offline: 48.0,
         initial_state: 0.0,
         is_scenario_independent: false, // Assuming a boolean value for this field
-        topos: Vec::new(), // Assuming an empty Vec for topos
+        topos: p2_topo.clone(), // Assuming an empty Vec for topos
         cf: p2_cf_ts,
         eff_ts: p2_eff_ts,
         eff_ops: p2_eff_ops.clone(),

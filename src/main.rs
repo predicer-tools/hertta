@@ -266,16 +266,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //let batch = arrow_input::create_and_batch_process_eff_ops()?; EI TOIMI VIELÄ
     //let batch = arrow_input::create_and_batch_reserve_type()?;
     //let batch = arrow_input::create_and_batch_risk()?;
-    //cap_ts
-    //let batch = arrow_input::create_and_batch_genconstraints()?;
-    //constraints KYSY DENNIKSELTÄ TÄSTÄ
+    //let batch = arrow_input::create_and_batch_processes_cap()?; KESKEN
+    //let batch = arrow_input::create_and_batch_constraints()?;
+    let batch = arrow_input::create_and_batch_gen_constraints()?;
 
-    //cf MIKÄ TÄMÄ ON
+    //cf 
     //let batch = arrow_input::create_and_batch_node_inflows()?;
     //let batch = arrow_input::create_and_batch_market_price()?;
     //let batch = arrow_input::create_and_batch_node_commodity_price()?;
     //let batch = arrow_input::create_and_batch_process_eff()?;
-    let batch = arrow_input::create_and_batch_market_fixed()?;
+    //let batch = arrow_input::create_and_batch_market_fixed()?;
     //let batch = arrow_input::create_and_batch_market_balance_price()?;
 
     

@@ -145,7 +145,7 @@ pub struct ProcessNew {
     pub max_offline: f64,
     pub initial_state: f64,
     pub is_scenario_independent: bool,
-    pub topos: Vec<Topology>,
+    pub topos: Vec<TopologyNew>,
     pub cf: TimeSeriesData,
     pub eff_ts: TimeSeriesData,
     pub eff_ops: Vec<String>,

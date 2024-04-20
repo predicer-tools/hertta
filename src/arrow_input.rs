@@ -83,7 +83,17 @@ pub fn create_and_batch_market_fixed() -> Result<RecordBatch, Box<dyn Error>> {
     Ok(batch)
 }
 
-pub fn create_and_batch_genconstraints() -> Result<RecordBatch, Box<dyn Error>> {
+pub fn create_and_batch_constraints() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let gen_constraints = arrow_test_data::create_test_genconstraints();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = constraints_to_arrow(&gen_constraints)?;
+
+    Ok(batch)
+}
+
+pub fn create_and_batch_gen_constraints() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
     let gen_constraints = arrow_test_data::create_test_genconstraints();
 
@@ -217,6 +227,16 @@ pub fn create_and_batch_processes() -> Result<RecordBatch, Box<dyn Error>> {
     Ok(batch)
 }
 
+pub fn create_and_batch_processes_cap() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let processes = arrow_test_data::create_test_processes_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = processes_cap_to_arrow(&processes)?;
+
+    Ok(batch)
+}
+
 // Define the new function
 pub fn create_and_batch_process_eff_ops() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
@@ -237,17 +257,18 @@ pub fn create_and_batch_process_eff() -> Result<RecordBatch, Box<dyn Error>> {
 
     Ok(batch)
 }
-
+/* 
 // Define the new function
 pub fn create_and_batch_process_topologys() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
-    let processes = arrow_test_data::create_test_process_topologys_hashmap();
+    let processes = arrow_test_data::create_test_processes_hashmap();
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = process_topos_to_arrow(&processes)?;
 
     Ok(batch)
 }
+*/
 
 pub fn create_and_batch_groups() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
@@ -320,7 +341,7 @@ pub fn risk_to_arrow(risk: &HashMap<String, f64>) -> Result<RecordBatch, ArrowEr
 }
 
 // Function to convert gen_constraints to an Arrow RecordBatch
-pub fn gen_constraints_to_arrow(gen_constraints: &HashMap<String, input_data::GenConstraint>) -> Result<RecordBatch, ArrowError> {
+pub fn constraints_to_arrow(gen_constraints: &HashMap<String, input_data::GenConstraint>) -> Result<RecordBatch, ArrowError> {
     // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
         Field::new("name", DataType::Utf8, false),
@@ -354,6 +375,69 @@ pub fn gen_constraints_to_arrow(gen_constraints: &HashMap<String, input_data::Ge
         Arc::new(schema),
         vec![name_array, type_array, is_setpoint_array, penalty_array],
     )
+}
+
+pub fn gen_constraints_to_arrow(
+    gen_constraints: &HashMap<String, input_data::GenConstraint>
+) -> Result<RecordBatch, ArrowError> {
+    let mut fields: Vec<Field> = Vec::new();
+    let mut column_data: HashMap<String, Vec<Option<f64>>> = HashMap::new();
+    let mut timestamps: Vec<Option<String>> = Vec::new();
+
+    // First, handle the constant TimeSeriesData for each GenConstraint
+    for (constraint_name, gen_constraint) in gen_constraints.iter() {
+        for ts in &gen_constraint.constant.ts_data {
+            let col_name = format!("{},{}", constraint_name, ts.scenario);
+            fields.push(Field::new(&col_name, DataType::Float64, true));
+            let series_data: Vec<Option<f64>> = ts.series.iter().map(|(_, value)| Some(*value)).collect();
+            timestamps = ts.series.iter().map(|(time, _)| Some(time.clone())).collect();
+            column_data.insert(col_name, series_data);
+        }
+    }
+
+    // Then, handle the ConFactor data
+    for (constraint_name, gen_constraint) in gen_constraints.iter() {
+        for factor in &gen_constraint.factors {
+            for ts in &factor.data.ts_data {
+                let flow_component = if factor.flow.1.is_empty() {
+                    factor.flow.0.clone()
+                } else {
+                    format!("{},{}", factor.flow.0, factor.flow.1)
+                };
+                let col_name = format!("{},{},{}", constraint_name, flow_component, ts.scenario);
+                fields.push(Field::new(&col_name, DataType::Float64, true));
+                let series_data: Vec<Option<f64>> = ts.series.iter().map(|(_, value)| Some(*value)).collect();
+                // If the series_data length is different from timestamps, it's an error
+                if series_data.len() != timestamps.len() {
+                    return Err(ArrowError::InvalidArgumentError(
+                        format!("Column length for {} does not match timestamps", col_name)
+                    ));
+                }
+                column_data.insert(col_name, series_data);
+            }
+        }
+    }
+
+    // Ensure all timestamp vectors are the same length
+    let max_length = timestamps.len();
+    timestamps.resize(max_length, None);
+
+    // Create the timestamp column
+    fields.insert(0, Field::new("t", DataType::Utf8, false));
+    let timestamp_column: ArrayRef = Arc::new(StringArray::from(timestamps.iter().flatten().cloned().collect::<Vec<String>>()));
+    let mut columns: Vec<ArrayRef> = vec![timestamp_column];
+
+    // Create other columns from the collected column_data
+    for field in &fields[1..] { // Skip the timestamp field
+        let col_data = column_data.remove(field.name()).unwrap_or_else(|| vec![None; max_length]);
+        let col_array = Float64Array::from(col_data);
+        columns.push(Arc::new(col_array) as ArrayRef);
+    }
+
+    let schema = Arc::new(Schema::new(fields));
+
+    // Create the RecordBatch using these arrays and the schema
+    RecordBatch::try_new(schema, columns)
 }
 
 pub fn reserve_type_to_arrow(reserve_type: &HashMap<String, f64>) -> Result<RecordBatch, ArrowError> {
@@ -840,6 +924,69 @@ pub fn processes_eff_ops_to_arrow(processes: &HashMap<String, input_data::Proces
     RecordBatch::try_new(schema, columns)
 }
 
+pub fn processes_cap_to_arrow(
+    processes: &HashMap<String, input_data::ProcessNew>,
+) -> Result<RecordBatch, ArrowError> {
+    let mut fields: Vec<Field> = Vec::new();
+    let mut columns: Vec<ArrayRef> = Vec::new();
+    
+    // The first column is always 't', which represents the timestamp
+    fields.push(Field::new("t", DataType::Utf8, true)); // true for nullable
+    
+    // This vector will hold all the timestamps, which are common for all series
+    let mut timestamps: Vec<Option<String>> = Vec::new();
+
+    // Initialize the columns with the timestamp column
+    let mut column_data: HashMap<String, Vec<Option<f64>>> = HashMap::new();
+
+    for (process_name, process) in processes {
+        // Here you would extract your TimeSeriesData and loop over them
+        for topology in &process.topos {
+            // You determine the flow here
+            let flow = if topology.sink == process.name {
+                &topology.source
+            } else if topology.source == process.name {
+                &topology.sink
+            } else {
+                continue; // If neither, skip this topology
+            };
+
+            for time_series in &process.eff_ts.ts_data {
+                let column_name = format!("{},{},{}", process.name, flow, time_series.scenario);
+
+                // Create a new column for each unique combination if it does not exist
+                if !column_data.contains_key(&column_name) {
+                    fields.push(Field::new(&column_name, DataType::Float64, true)); // true for nullable
+                    column_data.insert(column_name.clone(), Vec::new());
+                }
+
+                // Assuming 'series' is a Vec<(String, f64)>, where the String is the timestamp
+                for (timestamp, value) in &time_series.series {
+                    // Collect timestamps in the first iteration
+                    if timestamps.is_empty() {
+                        timestamps.push(Some(timestamp.clone()));
+                    }
+                    column_data.get_mut(&column_name).unwrap().push(Some(*value));
+                }
+            }
+        }
+    }
+
+    // Ensure all columns have the same length as timestamps by padding with None
+    for (column_name, values) in column_data.iter_mut() {
+        while values.len() < timestamps.len() {
+            values.push(None);
+        }
+        columns.push(Arc::new(Float64Array::from(values.clone())) as ArrayRef);
+    }
+
+    // Prepend the timestamps as the first column
+    columns.insert(0, Arc::new(StringArray::from(timestamps)) as ArrayRef);
+
+    let schema = Arc::new(Schema::new(fields));
+    RecordBatch::try_new(schema, columns)
+}
+
 pub fn processes_eff_to_arrow(processes: &HashMap<String, input_data::ProcessNew>) -> Result<RecordBatch, ArrowError> {
     // Initialize fields and columns for the RecordBatch
     let mut fields: Vec<Field> = Vec::new();
@@ -994,9 +1141,9 @@ pub fn scenarios_to_arrow(scenarios: &HashMap<String, f64>) -> Result<RecordBatc
 
     Ok(record_batch)
 }
-
+/* 
 // Convert HashMap<String, ProcessTopology> to RecordBatch
-pub fn process_topos_to_arrow(process_topologys: &HashMap<String, input_data::ProcessTopology>) -> Result<RecordBatch, ArrowError> {
+pub fn process_topos_to_arrow(process_topologys: &HashMap<String, input_data::ProcessNew>) -> Result<RecordBatch, ArrowError> {
     // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
         Field::new("process", DataType::Utf8, false),
@@ -1065,6 +1212,7 @@ pub fn process_topos_to_arrow(process_topologys: &HashMap<String, input_data::Pr
 
     record_batch
 }
+*/
 
 // Convert HashMap<String, ProcessNew> to RecordBatch
 pub fn processes_to_arrow(processes: &HashMap<String, input_data::ProcessNew>) -> Result<RecordBatch, ArrowError> {
