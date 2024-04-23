@@ -237,6 +237,16 @@ pub fn create_and_batch_processes_cap() -> Result<RecordBatch, Box<dyn Error>> {
     Ok(batch)
 }
 
+pub fn create_and_batch_processes_cf() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let processes = arrow_test_data::create_test_processes_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = processes_cf_to_arrow(&processes)?;
+
+    Ok(batch)
+}
+
 // Define the new function
 pub fn create_and_batch_process_eff_ops() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
@@ -921,6 +931,85 @@ pub fn processes_eff_ops_to_arrow(processes: &HashMap<String, input_data::Proces
     }
 
     let schema = Arc::new(Schema::new(fields));
+    RecordBatch::try_new(schema, columns)
+}
+
+pub fn processes_cf_to_arrow(
+    processes: &HashMap<String, input_data::ProcessNew>
+) -> Result<RecordBatch, ArrowError> {
+    let mut fields: Vec<Field> = Vec::new(); // Fields for the schema
+    let mut columns: Vec<ArrayRef> = Vec::new(); // Data columns
+    let mut timestamp_set: Option<HashSet<String>> = None; // Set to check for consistent timestamps
+
+    // Validate and collect timestamps, and create fields for each time series
+    for (process_name, process) in processes {
+        for ts in &process.cf.ts_data {
+            let column_name = format!("{},{}", process_name, ts.scenario);
+            fields.push(Field::new(&column_name, DataType::Float64, true)); // Add a field for each column
+
+            let timestamps: HashSet<String> = ts.series.iter().map(|(t, _)| t.clone()).collect();
+            if let Some(ref ts_set) = timestamp_set {
+                // Check that all time series have the same timestamps
+                if ts_set != &timestamps {
+                    return Err(ArrowError::InvalidArgumentError(
+                        "Timestamps do not match across all time series.".to_string(),
+                    ));
+                }
+            } else {
+                timestamp_set = Some(timestamps);
+            }
+        }
+    }
+
+    // Convert timestamp_set into a sorted Vec of timestamps
+    let mut timestamps = timestamp_set
+        .unwrap_or_default()
+        .into_iter()
+        .collect::<Vec<String>>();
+    timestamps.sort_by(|a, b| {
+        NaiveDateTime::parse_from_str(a, "%d.%m.%Y %H:%M")
+            .unwrap()
+            .cmp(&NaiveDateTime::parse_from_str(b, "%d.%m.%Y %H:%M").unwrap())
+    });
+    fields.insert(0, Field::new("t", DataType::Utf8, false)); // Timestamp field
+
+    // Create the timestamp column
+    let timestamp_column = StringArray::from(timestamps.clone());
+    columns.push(Arc::new(timestamp_column) as ArrayRef);
+
+    // Collect data for each time series and add it to the columns
+    for (process_name, process) in processes {
+        for ts in &process.cf.ts_data {
+            let column_name = format!("{},{}", process_name, ts.scenario);
+            // Match timestamps to values
+            let column_values: Vec<Option<f64>> = timestamps
+                .iter()
+                .map(|t| {
+                    ts.series
+                        .iter()
+                        .find(|(ts, _)| ts == t)
+                        .map(|(_, value)| Some(*value))
+                        .unwrap_or(None) // If timestamp not found, use None
+                })
+                .collect();
+            
+            // Check for length consistency again, just to be safe
+            if column_values.len() != timestamps.len() {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "Length mismatch for column '{}'",
+                    column_name
+                )));
+            }
+            
+            // Add the data column
+            columns.push(Arc::new(Float64Array::from(column_values)) as ArrayRef);
+        }
+    }
+
+    // Create the schema from the fields
+    let schema = Arc::new(Schema::new(fields));
+
+    // Construct and return the RecordBatch
     RecordBatch::try_new(schema, columns)
 }
 

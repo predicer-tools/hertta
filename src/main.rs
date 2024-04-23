@@ -266,11 +266,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //let batch = arrow_input::create_and_batch_process_eff_ops()?; EI TOIMI VIELÄ
     //let batch = arrow_input::create_and_batch_reserve_type()?;
     //let batch = arrow_input::create_and_batch_risk()?;
-    let batch = arrow_input::create_and_batch_processes_cap()?;
+    //let batch = arrow_input::create_and_batch_processes_cap()?;
     //let batch = arrow_input::create_and_batch_constraints()?;
     //let batch = arrow_input::create_and_batch_gen_constraints()?;
-
-    //cf 
+    
+    let batch = arrow_input::create_and_batch_processes_cf()?; 
     //let batch = arrow_input::create_and_batch_node_inflows()?;
     //let batch = arrow_input::create_and_batch_market_price()?;
     //let batch = arrow_input::create_and_batch_node_commodity_price()?;

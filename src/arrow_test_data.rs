@@ -379,7 +379,7 @@ pub fn create_timeseries() -> input_data::TimeSeriesData {
                 7 => -20.0,
                 8 => -13.0,
                 9 => -12.0,
-                _ => -5.0, // Default value, you can insert your logic here
+                _ => -5.0, // Default value for all other hours
             };
             series.push((timestamp, value));
         }
