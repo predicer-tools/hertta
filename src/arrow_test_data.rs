@@ -471,6 +471,16 @@ pub fn create_test_eff_ops(num_ops: usize, min_val: f64, max_val: f64) -> Vec<St
     }).collect()
 }
 
+pub fn create_example_eff_fun_data() -> Vec<(f64, f64)> {
+    vec![
+        (0.4, 0.8),  // Corresponds to columns 1 of op and eff
+        (0.6, 0.78), // Corresponds to columns 2 of op and eff
+        (0.8, 0.75), // Corresponds to columns 3 of op and eff
+        (0.9, 0.7),  // Corresponds to columns 4 of op and eff
+        (1.0, 0.65), // Corresponds to columns 5 of op and eff
+    ]
+}
+
 pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew> {
     let mut processes = HashMap::new();
 
@@ -486,6 +496,9 @@ pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew
 
     let p1_topo = create_test_topologies_for_process("Process1");
     let p2_topo = create_test_topologies_for_process("Process2");
+
+    let p1_eff_fun = create_example_eff_fun_data();
+    let p2_eff_fun = create_example_eff_fun_data();
 
     // Create the ProcessNew instances
     let process1 = input_data::ProcessNew {
@@ -510,7 +523,7 @@ pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew
         cf: p1_cf_ts,
         eff_ts: p1_eff_ts,
         eff_ops: p1_eff_ops.clone(),
-        eff_fun: Vec::new(), // Assuming an empty Vec for eff_fun
+        eff_fun: p1_eff_fun.clone(), // Assuming an empty Vec for eff_fun
     };
 
     let process2 = input_data::ProcessNew {
@@ -535,7 +548,7 @@ pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew
         cf: p2_cf_ts,
         eff_ts: p2_eff_ts,
         eff_ops: p2_eff_ops.clone(),
-        eff_fun: Vec::new(), // Assuming an empty Vec for eff_fun
+        eff_fun: p1_eff_fun.clone(), // Assuming an empty Vec for eff_fun
     };
 
     // Insert processes into the hashmap

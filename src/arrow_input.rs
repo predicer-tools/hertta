@@ -227,6 +227,16 @@ pub fn create_and_batch_processes() -> Result<RecordBatch, Box<dyn Error>> {
     Ok(batch)
 }
 
+pub fn create_and_batch_processes_eff_fun() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let processes = arrow_test_data::create_test_processes_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = processes_eff_fun_to_arrow(&processes)?;
+
+    Ok(batch)
+}
+
 pub fn create_and_batch_processes_cap() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
     let processes = arrow_test_data::create_test_processes_hashmap();
@@ -899,38 +909,107 @@ pub fn nodes_commodity_price_to_arrow(nodes: &HashMap<String, input_data::NodeNe
 }
 
 // Function to convert eff_ops of Process to an Arrow RecordBatch
-pub fn processes_eff_ops_to_arrow(processes: &HashMap<String, input_data::ProcessNew>) -> Result<RecordBatch, ArrowError> {
+pub fn processes_eff_ops_to_arrow(
+    processes: &HashMap<String, input_data::ProcessNew>,
+) -> Result<RecordBatch, ArrowError> {
     let mut fields: Vec<Field> = Vec::new();
     let mut columns: Vec<ArrayRef> = Vec::new();
 
-    // Create a column for each possible index in eff_ops, assuming all Process have the same number of operations
-    let max_ops = processes.values().map(|p| p.eff_ops.len()).max().unwrap_or(0);
-    for i in 1..=max_ops {
-        let column_name = i.to_string();
-        fields.push(Field::new(&column_name, DataType::Float64, true)); // true for nullable
+    // Calculate the maximum number of operations across all processes
+    let max_ops = processes.values()
+                           .map(|p| p.eff_ops.len())
+                           .max()
+                           .unwrap_or(0);
+    
+    for i in 0..max_ops {
+        let column_name = format!("op{}", i+1);
+        fields.push(Field::new(&column_name, DataType::Float64, true));
     }
 
-    for (process_name, process) in processes {
-        // Process name is used as part of the row identifier
-        let row_name = format!("{},op", process_name);
-        let mut ops_values: Vec<Option<f64>> = Vec::new();
+    // Create a data column for each operation index
+    for i in 0..max_ops {
+        let mut column_values: Vec<Option<f64>> = Vec::new();
 
-        for op in &process.eff_ops {
-            // Attempt to parse the string as f64. If it fails, use None which will be converted to null in the RecordBatch
-            let value = op.parse::<f64>().ok();
-            ops_values.push(value);
+        for process in processes.values() {
+            if i < process.eff_ops.len() {
+                match process.eff_ops[i].parse::<f64>() {
+                    Ok(num) => column_values.push(Some(num)),
+                    Err(_) => column_values.push(None),
+                }
+            } else {
+                column_values.push(None); // Pad with None if the process has fewer ops than max_ops
+            }
         }
 
-        // Make all rows the same length by filling in with None
-        while ops_values.len() < max_ops {
-            ops_values.push(None);
-        }
+        let float_array = Arc::new(Float64Array::from(column_values)) as ArrayRef;
+        columns.push(float_array);
+    }
 
-        let ops_array = Arc::new(Float64Array::from(ops_values)) as ArrayRef;
-        columns.push(ops_array);
+    if columns.len() != fields.len() {
+        println!("Mismatch error: {} columns for {} fields", columns.len(), fields.len());
+        return Err(ArrowError::InvalidArgumentError(format!(
+            "number of columns({}) must match number of fields({}) in schema",
+            columns.len(),
+            fields.len()
+        )));
     }
 
     let schema = Arc::new(Schema::new(fields));
+    RecordBatch::try_new(schema, columns)
+}
+
+pub fn processes_eff_fun_to_arrow(
+    processes: &HashMap<String, input_data::ProcessNew>,
+) -> Result<RecordBatch, ArrowError> {
+    let mut fields: Vec<Field> = vec![Field::new("process", DataType::Utf8, false)];
+    let mut column_data: Vec<Vec<Option<f64>>> = Vec::new();
+    let mut process_column: Vec<String> = Vec::new();
+
+    // Calculate the maximum length of eff_fun across all processes
+    let max_length = processes.values()
+        .map(|p| p.eff_fun.len())
+        .max()
+        .unwrap_or(0);
+
+    // Create fields for each index in eff_fun
+    for i in 1..=max_length {
+        fields.push(Field::new(&format!("{}", i), DataType::Float64, true));
+        column_data.push(Vec::new());
+    }
+
+    // Construct columns for operation points and efficiency values
+    for (process_name, process) in processes {
+        process_column.push(format!("{},op", process_name));
+        process_column.push(format!("{},eff", process_name));
+
+        for (i, (op_point, eff_value)) in process.eff_fun.iter().enumerate() {
+            if i < column_data.len() {
+                column_data[i].push(Some(*op_point));
+                column_data[i].push(Some(*eff_value));
+            }
+        }
+
+        // Pad remaining columns with None
+        for i in process.eff_fun.len()..max_length {
+            column_data[i].push(None); // For op
+            column_data[i].push(None); // For eff
+        }
+    }
+
+    // Create an Arrow column for the 'process' field
+    let process_column = Arc::new(StringArray::from(process_column)) as ArrayRef;
+    let mut columns: Vec<ArrayRef> = vec![process_column];
+
+    // Create Arrow columns for each tuple index in eff_fun
+    for col in column_data {
+        let arrow_col = Arc::new(Float64Array::from(col)) as ArrayRef;
+        columns.push(arrow_col);
+    }
+
+    // Create the schema from the fields
+    let schema = Arc::new(Schema::new(fields));
+
+    // Construct and return the RecordBatch
     RecordBatch::try_new(schema, columns)
 }
 
