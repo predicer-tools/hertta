@@ -929,61 +929,67 @@ pub fn processes_cap_to_arrow(
 ) -> Result<RecordBatch, ArrowError> {
     let mut fields: Vec<Field> = Vec::new();
     let mut columns: Vec<ArrayRef> = Vec::new();
-    
-    // The first column is always 't', which represents the timestamp
-    fields.push(Field::new("t", DataType::Utf8, true)); // true for nullable
-    
-    // This vector will hold all the timestamps, which are common for all series
     let mut timestamps: Vec<Option<String>> = Vec::new();
-
-    // Initialize the columns with the timestamp column
     let mut column_data: HashMap<String, Vec<Option<f64>>> = HashMap::new();
 
+    fields.push(Field::new("t", DataType::Utf8, true)); // Timestamp column is nullable
+
     for (process_name, process) in processes {
-        // Here you would extract your TimeSeriesData and loop over them
         for topology in &process.topos {
-            // You determine the flow here
-            let flow = if topology.sink == process.name {
+            let flow = if topology.sink == *process_name {
                 &topology.source
-            } else if topology.source == process.name {
+            } else if topology.source == *process_name {
                 &topology.sink
             } else {
-                continue; // If neither, skip this topology
+                continue;
             };
 
             for time_series in &process.eff_ts.ts_data {
-                let column_name = format!("{},{},{}", process.name, flow, time_series.scenario);
+                let column_name = format!("{},{},{}", process_name, flow, time_series.scenario);
+                fields.push(Field::new(&column_name, DataType::Float64, true));
 
-                // Create a new column for each unique combination if it does not exist
-                if !column_data.contains_key(&column_name) {
-                    fields.push(Field::new(&column_name, DataType::Float64, true)); // true for nullable
-                    column_data.insert(column_name.clone(), Vec::new());
+                let series_data: Vec<Option<f64>> = time_series.series.iter().map(|(_, value)| Some(*value)).collect();
+                if timestamps.is_empty() {
+                    timestamps = time_series.series.iter().map(|(time, _)| Some(time.clone())).collect();
                 }
 
-                // Assuming 'series' is a Vec<(String, f64)>, where the String is the timestamp
-                for (timestamp, value) in &time_series.series {
-                    // Collect timestamps in the first iteration
-                    if timestamps.is_empty() {
-                        timestamps.push(Some(timestamp.clone()));
+                if column_data.contains_key(&column_name) {
+                    // If the column already exists, ensure its length matches the new series data
+                    if let Some(existing_data) = column_data.get(&column_name) {
+                        if existing_data.len() != series_data.len() {
+                            return Err(ArrowError::InvalidArgumentError(format!(
+                                "Mismatch in column lengths for '{}'",
+                                column_name
+                            )));
+                        }
                     }
-                    column_data.get_mut(&column_name).unwrap().push(Some(*value));
+                } else {
+                    column_data.insert(column_name, series_data);
                 }
             }
         }
     }
 
-    // Ensure all columns have the same length as timestamps by padding with None
-    for (column_name, values) in column_data.iter_mut() {
-        while values.len() < timestamps.len() {
-            values.push(None);
-        }
-        columns.push(Arc::new(Float64Array::from(values.clone())) as ArrayRef);
+    // Check if all series are of the same length
+    let series_length = timestamps.len();
+    if column_data.values().any(|v| v.len() != series_length) {
+        return Err(ArrowError::InvalidArgumentError(
+            "All columns in a record batch must have the same length".to_string(),
+        ));
     }
 
-    // Prepend the timestamps as the first column
-    columns.insert(0, Arc::new(StringArray::from(timestamps)) as ArrayRef);
+    // Create Arrow columns from the collected data
+    for (column_name, data) in &column_data {
+        columns.push(Arc::new(Float64Array::from(data.clone())) as ArrayRef);
+    }
+    // Create the timestamp column and prepend it
+    let timestamp_column = Arc::new(StringArray::from(timestamps.iter().flatten().cloned().collect::<Vec<String>>())) as ArrayRef;
+    columns.insert(0, timestamp_column);
 
+    // Create the schema from the field definitions
     let schema = Arc::new(Schema::new(fields));
+
+    // Construct and return the RecordBatch
     RecordBatch::try_new(schema, columns)
 }
 
