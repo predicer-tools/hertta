@@ -17,49 +17,37 @@ use std::path::Path;
 use chrono::{NaiveDate, NaiveDateTime};
 use std::collections::HashSet;
 
-// This function creates a HashMap of binary serialized RecordBatches.
-pub fn create_example_arrow_data() -> Result<HashMap<String, Vec<u8>>, Box<dyn Error>> {
-    let mut example_data = HashMap::new();
+pub fn create_and_batch_inputdatasetup() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let setup = arrow_test_data::create_test_inputdatasetup();
 
-    // List of batches to create and serialize
-    let batches = vec![
-        "setup", "nodes", "processes", "groups", "process_topology", "node_diffusion",
-        "node_history", "node_delay", "inflow_blocks", "markets", "reserve_realisation",
-        "scenarios", "efficiencies", "reserve_type", "risk", "cap_ts", "gen_constraint",
-        "constraints", "cf", "inflow", "market_prices", "price", "eff_ts", "fixed_ts", "balance_prices",
-    ];
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = inputdatasetup_to_arrow(&setup)?;
 
-    for name in batches {
-        match create_and_batch_node_delay() {
-            Ok(batch) => {
-                let mut writer = Vec::new();
-                {
-                    // Introduce a new scope for stream_writer
-                    let mut stream_writer = StreamWriter::try_new(&mut writer, &batch.schema())?;
-                    stream_writer.write(&batch)?;
-                    stream_writer.finish()?;
-                    // stream_writer is dropped here at the end of the scope
-                }
-                // Now it's safe to move writer as stream_writer no longer exists
-                example_data.insert(name.to_string(), writer);
-            },
-            Err(e) => return Err(e),
-        }
-    }
-
-    Ok(example_data)
+    Ok(batch)
 }
 
-pub fn serialize_batch_and_encode_to_base64(batch: &RecordBatch) -> Result<String, Box<dyn Error>> {
-    // Serialize the RecordBatch to a Vec<u8>
-    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(batch)?;
+pub fn create_and_batch_nodes() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of Nodes
+    let nodes = arrow_test_data::create_test_nodes_hashmap();
 
-    // Encode the Vec<u8> into a base64 String
-    let encoded_arrow_data: String = encode(&arrow_data);
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = nodes_to_arrow(&nodes)?;
 
-    // Return the base64 encoded string
-    Ok(encoded_arrow_data)
+    Ok(batch)
 }
+/* 
+pub fn create_and_batch_groups() -> Result<RecordBatch, Box<dyn Error>> {
+    // Create a test instance of InputDataSetup
+    let groups = arrow_test_data::create_test_groups_hashmap();
+
+    // Convert the InputDataSetup to a RecordBatch
+    let batch: RecordBatch = groups_to_arrow(&groups)?;
+
+    Ok(batch)
+}
+
+*/
 
 // Define the new function
 pub fn create_and_batch_node_diffusion() -> Result<RecordBatch, Box<dyn Error>> {
@@ -153,16 +141,6 @@ pub fn create_and_batch_market_balance_price() -> Result<RecordBatch, Box<dyn Er
     Ok(batch)
 }
 
-// Define the new function
-pub fn create_and_batch_inputdatasetup() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let setup = arrow_test_data::create_test_inputdatasetup();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = inputdatasetup_to_arrow(&setup)?;
-
-    Ok(batch)
-}
 
 pub fn create_and_batch_risk() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of Risk
@@ -170,17 +148,6 @@ pub fn create_and_batch_risk() -> Result<RecordBatch, Box<dyn Error>> {
 
     // Convert the InputDataSetup to a RecordBatch
     let batch: RecordBatch = risk_to_arrow(&risk)?;
-
-    Ok(batch)
-}
-
-// Define the new function
-pub fn create_and_batch_nodes() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let nodes = arrow_test_data::create_test_nodes_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = nodes_to_arrow(&nodes)?;
 
     Ok(batch)
 }
@@ -289,16 +256,6 @@ pub fn create_and_batch_process_topologys() -> Result<RecordBatch, Box<dyn Error
     Ok(batch)
 }
 */
-
-pub fn create_and_batch_groups() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let groups = arrow_test_data::create_test_groups_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = groups_to_arrow(&groups)?;
-
-    Ok(batch)
-}
 
 pub fn create_and_batch_markets() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
@@ -854,7 +811,7 @@ pub fn create_arrow_data_buffer() -> Result<Vec<u8>, Box<dyn Error>> {
 }
 
 // This function converts a HashMap<String, Node> of inflow TimeSeriesData to an Arrow RecordBatch
-pub fn nodes_inflow_to_arrow(nodes: &HashMap<String, input_data::NodeNew>) -> Result<RecordBatch, ArrowError> {
+pub fn nodes_inflow_to_arrow(nodes: &HashMap<String, input_data::Node>) -> Result<RecordBatch, ArrowError> {
     let mut fields = vec![Field::new("t", DataType::Utf8, false)];
     let mut columns: Vec<ArrayRef> = Vec::new();
     
@@ -880,7 +837,7 @@ pub fn nodes_inflow_to_arrow(nodes: &HashMap<String, input_data::NodeNew>) -> Re
     RecordBatch::try_new(schema, columns)
 }
 
-pub fn nodes_commodity_price_to_arrow(nodes: &HashMap<String, input_data::NodeNew>) -> Result<RecordBatch, ArrowError> {
+pub fn nodes_commodity_price_to_arrow(nodes: &HashMap<String, input_data::Node>) -> Result<RecordBatch, ArrowError> {
     let mut fields = vec![Field::new("t", DataType::Utf8, false)];
     let mut columns: Vec<ArrayRef> = Vec::new();
 
@@ -910,7 +867,7 @@ pub fn nodes_commodity_price_to_arrow(nodes: &HashMap<String, input_data::NodeNe
 
 // Function to convert eff_ops of Process to an Arrow RecordBatch
 pub fn processes_eff_ops_to_arrow(
-    processes: &HashMap<String, input_data::ProcessNew>,
+    processes: &HashMap<String, input_data::Process>,
 ) -> Result<RecordBatch, ArrowError> {
     let mut fields: Vec<Field> = Vec::new();
     let mut columns: Vec<ArrayRef> = Vec::new();
@@ -959,7 +916,7 @@ pub fn processes_eff_ops_to_arrow(
 }
 
 pub fn processes_eff_fun_to_arrow(
-    processes: &HashMap<String, input_data::ProcessNew>,
+    processes: &HashMap<String, input_data::Process>,
 ) -> Result<RecordBatch, ArrowError> {
     let mut fields: Vec<Field> = vec![Field::new("process", DataType::Utf8, false)];
     let mut column_data: Vec<Vec<Option<f64>>> = Vec::new();
@@ -1014,7 +971,7 @@ pub fn processes_eff_fun_to_arrow(
 }
 
 pub fn processes_cf_to_arrow(
-    processes: &HashMap<String, input_data::ProcessNew>
+    processes: &HashMap<String, input_data::Process>
 ) -> Result<RecordBatch, ArrowError> {
     let mut fields: Vec<Field> = Vec::new(); // Fields for the schema
     let mut columns: Vec<ArrayRef> = Vec::new(); // Data columns
@@ -1093,7 +1050,7 @@ pub fn processes_cf_to_arrow(
 }
 
 pub fn processes_cap_to_arrow(
-    processes: &HashMap<String, input_data::ProcessNew>,
+    processes: &HashMap<String, input_data::Process>,
 ) -> Result<RecordBatch, ArrowError> {
     let mut fields: Vec<Field> = Vec::new();
     let mut columns: Vec<ArrayRef> = Vec::new();
@@ -1161,7 +1118,7 @@ pub fn processes_cap_to_arrow(
     RecordBatch::try_new(schema, columns)
 }
 
-pub fn processes_eff_to_arrow(processes: &HashMap<String, input_data::ProcessNew>) -> Result<RecordBatch, ArrowError> {
+pub fn processes_eff_to_arrow(processes: &HashMap<String, input_data::Process>) -> Result<RecordBatch, ArrowError> {
     // Initialize fields and columns for the RecordBatch
     let mut fields: Vec<Field> = Vec::new();
     let mut columns: Vec<ArrayRef> = Vec::new();
@@ -1317,7 +1274,7 @@ pub fn scenarios_to_arrow(scenarios: &HashMap<String, f64>) -> Result<RecordBatc
 }
 /* 
 // Convert HashMap<String, ProcessTopology> to RecordBatch
-pub fn process_topos_to_arrow(process_topologys: &HashMap<String, input_data::ProcessNew>) -> Result<RecordBatch, ArrowError> {
+pub fn process_topos_to_arrow(process_topologys: &HashMap<String, input_data::Process>) -> Result<RecordBatch, ArrowError> {
     // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
         Field::new("process", DataType::Utf8, false),
@@ -1388,8 +1345,8 @@ pub fn process_topos_to_arrow(process_topologys: &HashMap<String, input_data::Pr
 }
 */
 
-// Convert HashMap<String, ProcessNew> to RecordBatch
-pub fn processes_to_arrow(processes: &HashMap<String, input_data::ProcessNew>) -> Result<RecordBatch, ArrowError> {
+// Convert HashMap<String, Process> to RecordBatch
+pub fn processes_to_arrow(processes: &HashMap<String, input_data::Process>) -> Result<RecordBatch, ArrowError> {
     // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
         Field::new("name", DataType::Utf8, false),
@@ -1494,7 +1451,7 @@ pub fn processes_to_arrow(processes: &HashMap<String, input_data::ProcessNew>) -
 }
 
 // Convert HashMap<String, Node> to RecordBatch
-pub fn nodes_to_arrow(nodes: &HashMap<String, input_data::NodeNew>) -> Result<RecordBatch, ArrowError> {
+pub fn nodes_to_arrow(nodes: &HashMap<String, input_data::Node>) -> Result<RecordBatch, ArrowError> {
     // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
         Field::new("node", DataType::Utf8, false),
@@ -1545,7 +1502,7 @@ pub fn nodes_to_arrow(nodes: &HashMap<String, input_data::NodeNew>) -> Result<Re
         out_maxs.push(node.state.out_max);
         initial_states.push(node.state.initial_state);
         state_loss_proportionals.push(node.state.state_loss_proportional);
-        scenario_independent_states.push(node.state.scenario_independent_state); // Adjust if you have a specific field for this
+        scenario_independent_states.push(node.state.is_scenario_independent); // Adjust if you have a specific field for this
         is_temps.push(node.state.is_temp);
         t_e_conversions.push(node.state.t_e_conversion);
         residual_values.push(node.state.residual_value);
@@ -1651,9 +1608,9 @@ pub fn inputdatasetup_to_arrow(setup: &input_data::InputDataSetup) -> Result<Rec
         }
     }
 }
-
-// Function to convert HashMap<String, GroupNew> to RecordBatch
-pub fn groups_to_arrow(groups: &HashMap<String, input_data::GroupNew>) -> Result<RecordBatch, ArrowError> {
+/* 
+// Function to convert HashMap<String, Group> to RecordBatch
+pub fn groups_to_arrow(groups: &HashMap<String, input_data::Group>) -> Result<RecordBatch, ArrowError> {
     // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
         Field::new("name", DataType::Utf8, false),
@@ -1694,6 +1651,8 @@ pub fn groups_to_arrow(groups: &HashMap<String, input_data::GroupNew>) -> Result
 
     record_batch
 }
+
+*/
 
 // Function to convert Vec<String> of timeseries data to RecordBatch
 pub fn timeseries_to_arrow(timeseries: Vec<String>) -> Result<RecordBatch, ArrowError> {

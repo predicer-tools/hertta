@@ -307,18 +307,18 @@ pub fn create_test_genconstraints() -> HashMap<String, input_data::GenConstraint
     gen_constraints_map
 }
 
-pub fn create_test_nodes_hashmap() -> HashMap<String, input_data::NodeNew> {
-    let mut nodes: HashMap<String, input_data::NodeNew> = HashMap::new();
+pub fn create_test_nodes_hashmap() -> HashMap<String, input_data::Node> {
+    let mut nodes: HashMap<String, input_data::Node> = HashMap::new();
 
-    let node1_state = create_statenew();
-    let node2_state = create_statenew();
-    let node3_state = create_statenew();
+    let node1_state = create_state();
+    let node2_state = create_state();
+    let node3_state = create_state();
     let node1_timeseries = create_timeseries();
     let node2_timeseries = create_timeseries();
     let node3_timeseries = create_timeseries();
 
     // Example nodes
-    let node1 = input_data::NodeNew {
+    let node1 = input_data::Node {
         name: "node1".to_string(),
         is_commodity: true,
         is_state: false,
@@ -330,7 +330,7 @@ pub fn create_test_nodes_hashmap() -> HashMap<String, input_data::NodeNew> {
         state: node1_state.clone(),
     };
 
-    let node2 = input_data::NodeNew {
+    let node2 = input_data::Node {
         name: "node2".to_string(),
         is_commodity: false,
         is_state: true,
@@ -342,7 +342,7 @@ pub fn create_test_nodes_hashmap() -> HashMap<String, input_data::NodeNew> {
         state: node2_state.clone(),
     };
 
-    let node3 = input_data::NodeNew {
+    let node3 = input_data::Node {
         name: "node3".to_string(),
         is_commodity: false,
         is_state: true,
@@ -393,30 +393,28 @@ pub fn create_timeseries() -> input_data::TimeSeriesData {
     input_data::TimeSeriesData { ts_data }
 }
 
-// Function to create a test HashMap for GroupNew
-pub fn create_test_groups_hashmap() -> HashMap<String, input_data::GroupNew> {
-    let mut groups: HashMap<String, input_data::GroupNew> = HashMap::new();
+// Function to create a test HashMap for Group
+// Function to create a test HashMap for Group
+pub fn create_test_groups_hashmap() -> HashMap<String, input_data::Group> {
+    let mut groups: HashMap<String, input_data::Group> = HashMap::new();
 
-    // Example groups
-    let group1 = input_data::GroupNew {
+    // Example groups with new members field
+    let group1 = input_data::Group {
         name: "Group1".to_string(),
         g_type: "Type1".to_string(),
-        entity: "Entity1".to_string(),
-        group: "GroupA".to_string(),
+        members: vec!["p1".to_string()], // Example vector with one member
     };
 
-    let group2 = input_data::GroupNew {
+    let group2 = input_data::Group {
         name: "Group2".to_string(),
         g_type: "Type2".to_string(),
-        entity: "Entity2".to_string(),
-        group: "GroupB".to_string(),
+        members: vec!["p2".to_string()], // Example vector with one member
     };
 
-    let group3 = input_data::GroupNew {
+    let group3 = input_data::Group {
         name: "Group3".to_string(),
         g_type: "Type3".to_string(),
-        entity: "Entity3".to_string(),
-        group: "GroupC".to_string(),
+        members: vec!["p3".to_string()], // Example vector with one member
     };
 
     // Insert groups into the hashmap
@@ -427,13 +425,13 @@ pub fn create_test_groups_hashmap() -> HashMap<String, input_data::GroupNew> {
     groups
 }
 
-pub fn create_test_topologies_for_process(process_name: &str) -> Vec<input_data::TopologyNew> {
-    let mut topologies: Vec<input_data::TopologyNew> = Vec::new();
+pub fn create_test_topologies_for_process(process_name: &str) -> Vec<input_data::Topology> {
+    let mut topologies: Vec<input_data::Topology> = Vec::new();
     
     let time_series_data = create_timeseries(); // Placeholder function
 
     // Create a topology where the given process is the sink
-    topologies.push(input_data::TopologyNew {
+    topologies.push(input_data::Topology {
         source: "SomeOtherSource".to_string(),
         sink: process_name.to_string(),
         capacity: 20.0,
@@ -446,7 +444,7 @@ pub fn create_test_topologies_for_process(process_name: &str) -> Vec<input_data:
     });
 
     // Create a topology where the given process is the source
-    topologies.push(input_data::TopologyNew {
+    topologies.push(input_data::Topology {
         source: process_name.to_string(),
         sink: "SomeOtherSink".to_string(),
         capacity: 20.0,
@@ -481,7 +479,7 @@ pub fn create_example_eff_fun_data() -> Vec<(f64, f64)> {
     ]
 }
 
-pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew> {
+pub fn create_test_processes_hashmap() -> HashMap<String, input_data::Process> {
     let mut processes = HashMap::new();
 
     // Assuming create_test_eff_ops and create_timeseries are available and return the appropriate types
@@ -500,8 +498,8 @@ pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew
     let p1_eff_fun = create_example_eff_fun_data();
     let p2_eff_fun = create_example_eff_fun_data();
 
-    // Create the ProcessNew instances
-    let process1 = input_data::ProcessNew {
+    // Create the Process instances
+    let process1 = input_data::Process {
         name: "Process1".to_string(),
         groups: Vec::new(), // Assuming an empty Vec for groups
         conversion: 100,
@@ -526,7 +524,7 @@ pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew
         eff_fun: p1_eff_fun.clone(), // Assuming an empty Vec for eff_fun
     };
 
-    let process2 = input_data::ProcessNew {
+    let process2 = input_data::Process {
         name: "Process2".to_string(),
         groups: Vec::new(), // Assuming an empty Vec for groups
         conversion: 200,
@@ -558,16 +556,16 @@ pub fn create_test_processes_hashmap() -> HashMap<String, input_data::ProcessNew
     processes
 }
 
-pub fn create_statenew() -> input_data::StateNew {
-    // Initialize default values for StateNew
-    input_data::StateNew {
-        state_max: 100.0,
-        state_min: 0.0,
+pub fn create_state() -> input_data::State {
+    // Initialize default values for State
+    input_data::State {
         in_max: 50.0,
         out_max: 50.0,
+        state_loss_proportional: 0.0,
+        state_max: 100.0,
+        state_min: 0.0,
         initial_state: 25.0,
-        state_loss_proportional: 0.1,
-        scenario_independent_state: true,
+        is_scenario_independent: true,
         is_temp: false,
         t_e_conversion: 0.8,
         residual_value: 10.0,

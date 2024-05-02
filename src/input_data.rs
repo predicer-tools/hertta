@@ -19,13 +19,13 @@ pub struct PricePoint {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Temporals {
+pub struct TemporalsHours {
     pub hours: i64,
 
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct TemporalsNew {
+pub struct Temporals {
     pub t: Vec<String>,
     pub dtf: f64,
     pub is_variable_dt: bool,
@@ -35,8 +35,9 @@ pub struct TemporalsNew {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct InputDataNew {
-    pub temporals: TemporalsNew,
+pub struct InputData {
+    pub timeseries: Vec<String>,
+    pub temporals: Temporals,
     pub setup: InputDataSetup,
     pub processes: HashMap<String, Process>,
     pub nodes: HashMap<String, Node>,
@@ -61,26 +62,6 @@ pub struct InflowBlock {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct InputData {
-    pub timeseries: Vec<String>,
-    pub contains_reserves: bool,
-    pub contains_online: bool,
-    pub contains_state: bool,
-    pub contains_piecewise_eff: bool,
-    pub contains_risk: bool,
-    pub contains_delay: bool,
-    pub contains_diffusion: bool,
-    pub nodes: HashMap<String, Node>,
-    pub processes: HashMap<String, Process>,
-    pub markets: HashMap<String, Market>,
-    pub groups: HashMap<String, Group>,
-    pub scenarios: HashMap<String, f64>,
-    pub gen_constraints: HashMap<String, GenConstraint>,
-    pub node_diffusion: HashMap<String, NodeDiffusion>,
-    pub node_delay: HashMap<String, NodeDelay>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InputDataSetup {
     pub contains_reserves: bool,
     pub contains_online: bool,
@@ -99,35 +80,7 @@ pub struct InputDataSetup {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct HassData {
-    pub init_temp: f64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Process {
-    pub name: String,
-    pub group: String,
-    pub delay: f64,
-    pub is_cf: bool,
-    pub is_cf_fix: bool,
-    pub is_online: bool,
-    pub is_res: bool,
-    pub conversion: i64,
-    pub eff: f64,
-    pub load_min: f64,
-    pub load_max: f64,
-    pub start_cost: f64,
-    pub min_online: f64,
-    pub min_offline: f64,
-    pub max_online: f64,
-    pub max_offline: f64,
-    pub initial_state: f64,
-    pub topos: Vec<Topology>,
-    pub eff_ops: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ProcessNew {
     pub name: String,
     pub groups: Vec<String>,
     pub conversion: i64,
@@ -145,7 +98,7 @@ pub struct ProcessNew {
     pub max_offline: f64,
     pub initial_state: f64,
     pub is_scenario_independent: bool,
-    pub topos: Vec<TopologyNew>,
+    pub topos: Vec<Topology>,
     pub cf: TimeSeriesData,
     pub eff_ts: TimeSeriesData,
     pub eff_ops: Vec<String>,
@@ -175,22 +128,9 @@ pub struct Node {
     pub is_res: bool,
     pub is_market: bool,
     pub is_inflow: bool,
-    pub cost: TimeSeriesData,
-    pub inflow: TimeSeriesData,
     pub state: State,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NodeNew {
-    pub name: String,
-    pub is_commodity: bool,
-    pub is_state: bool,
-    pub is_res: bool,
-    pub is_market: bool,
-    pub is_inflow: bool,
     pub cost: TimeSeriesData,
     pub inflow: TimeSeriesData,
-    pub state: StateNew,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -236,15 +176,7 @@ pub struct MarketNew {
 pub struct Group {
     pub name: String,
     pub g_type: String,
-    pub entity: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GroupNew {
-    pub name: String,
-    pub g_type: String,
-    pub entity: String,
-    pub group: String,
+    pub members: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -274,16 +206,6 @@ pub struct Topology {
     pub vom_cost: f64,
     pub ramp_up: f64,
     pub ramp_down: f64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct TopologyNew {
-    pub source: String,
-    pub sink: String,
-    pub capacity: f64,
-    pub vom_cost: f64,
-    pub ramp_up: f64,
-    pub ramp_down: f64,
     pub initial_load: f64,
     pub initial_flow: f64,
     pub cap_ts: TimeSeriesData,
@@ -298,21 +220,7 @@ pub struct State {
     pub state_max: f64,
     pub state_min: f64,
     pub initial_state: f64,
-    pub is_temp: bool,
-    pub t_e_conversion: f64,
-    pub residual_value: f64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[derive(Default)]
-pub struct StateNew {
-    pub state_max: f64,
-    pub state_min: f64,
-    pub in_max: f64,
-    pub out_max: f64,
-    pub initial_state: f64,
-    pub state_loss_proportional: f64,
-    pub scenario_independent_state: bool,
+    pub is_scenario_independent: bool,
     pub is_temp: bool,
     pub t_e_conversion: f64,
     pub residual_value: f64,
@@ -449,7 +357,7 @@ pub struct OptimizationData {
     pub location: Option<String>,
     pub timezone: Option<String>,
     pub elec_price_source: Option<ElecPriceSource>,
-    pub temporals: Option<Temporals>,
+    pub temporals: Option<TemporalsHours>,
     pub time_data: Option<TimeData>,
     pub weather_data: Option<WeatherData>,
     pub model_data: Option<ModelData>,
@@ -476,7 +384,7 @@ pub struct PriceData {
     pub price: f64,
 }
 
-pub fn calculate_time_range(timezone_str: &str, temporals: &Option<Temporals>) -> Result<(DateTime<FixedOffset>, DateTime<FixedOffset>), errors::TimeDataParseError> {
+pub fn calculate_time_range(timezone_str: &str, temporals: &Option<TemporalsHours>) -> Result<(DateTime<FixedOffset>, DateTime<FixedOffset>), errors::TimeDataParseError> {
     let timezone: Tz = timezone_str.parse().map_err(|_| errors::TimeDataParseError::new("Invalid timezone string"))?;
 
     let now_utc = Utc::now();

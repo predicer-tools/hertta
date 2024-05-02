@@ -37,6 +37,7 @@ use std::time::Duration;
 use std::net::TcpStream;
 use bincode;
 use std::path::PathBuf;
+use std::io::Read;
 //use std::time::{SystemTime, UNIX_EPOCH};
 //use tokio::join;
 //use warp::reject::Reject;
@@ -225,28 +226,29 @@ pub fn start_julia_server_and_send_data(julia_script_path: &str, server_address:
     Ok(())
 }
 
+pub fn read_yaml_file(file_path: &str) -> Result<input_data::InputData, Box<dyn std::error::Error>> {
+    let mut file = File::open(file_path)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+    let input_data: input_data::InputData = serde_yaml::from_str(&contents)?;
+    Ok(input_data)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
 
-    /* 
-    // Construct the path to the Julia script
-    let julia_script_path: PathBuf = env::current_dir()?.join("Predicer/src/arrow_test.jl");
 
-    // Convert the path to a string
-    let julia_script_path_str = julia_script_path.to_str().ok_or("Invalid script path")?;
 
-    // Assuming create_example_arrow_data() is correctly implemented
-    let example_data = arrow_input::create_example_arrow_data()?;
-    let server_address = "127.0.0.1:5080";
-
-    start_julia_server_and_send_data(julia_script_path_str, server_address, example_data)?;
+    let file_path = "src/hertta_data.yaml";
+    match read_yaml_file(file_path) {
+        Ok(data) => println!("{:#?}", data),
+        Err(e) => println!("Error reading file: {}", e),
+    }
 
     Ok(())
-
-    */
     
     // Initialize the JuliaProcess
-    let mut julia_process = julia_process::JuliaProcess::new("Predicer/src/arrow_conversion.jl")?;
+    //let mut julia_process = julia_process::JuliaProcess::new("Predicer/src/arrow_conversion.jl")?;
 
     //let batch = arrow_input::create_and_encode_timeseries()?;
 
@@ -254,7 +256,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //let batch = arrow_input::create_and_batch_inputdatasetup()?;
     //let batch = arrow_input::create_and_batch_nodes()?;
     //let batch = arrow_input::create_and_batch_processes()?;
-    //let batch = arrow_input::create_and_batch_groups()?;
+    //let batch = arrow_input::create_and_batch_groups()?; KORJAA TÄMÄ
     //let batch = arrow_input::create_and_batch_process_topologys()?;
     //let batch = arrow_input::create_and_batch_node_diffusion()?;
     //let batch = arrow_input::create_and_batch_node_history()?;
@@ -263,7 +265,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //let batch = arrow_input::create_and_batch_markets()?;
     //let batch = arrow_input::create_and_batch_market_realisation()?;
     //let batch = arrow_input::create_and_batch_scenarios()?;
-    let batch = arrow_input::create_and_batch_processes_eff_fun()?;
+    //let batch = arrow_input::create_and_batch_processes_eff_fun()?;
     //let batch = arrow_input::create_and_batch_reserve_type()?;
     //let batch = arrow_input::create_and_batch_risk()?;
     //let batch = arrow_input::create_and_batch_processes_cap()?;
@@ -278,7 +280,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //let batch = arrow_input::create_and_batch_market_fixed()?;
     //let batch = arrow_input::create_and_batch_market_balance_price()?;
 
-    
+    /* 
 
     match arrow_input::serialize_batch_and_encode_to_base64(&batch) {
         Ok(encoded_arrow_data) => {
@@ -297,7 +299,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         },
     }
 
+    
+
     Ok(())
+
+    */
 
     // Send the encoded data to the Julia process
     //julia_process.send_data(format!("data:{}\n", encoded_arrow_data).into_bytes())?;
