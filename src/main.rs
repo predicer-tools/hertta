@@ -237,7 +237,7 @@ pub fn read_yaml_file(file_path: &str) -> Result<input_data::InputData, Box<dyn 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
 
-
+    /* 
 
     let file_path = "src/hertta_data.yaml";
     match read_yaml_file(file_path) {
@@ -246,9 +246,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+
+    */
     
     // Initialize the JuliaProcess
-    //let mut julia_process = julia_process::JuliaProcess::new("Predicer/src/arrow_conversion.jl")?;
+    let mut julia_process = julia_process::JuliaProcess::new("Predicer/src/arrow_conversion.jl")?;
 
     //let batch = arrow_input::create_and_encode_timeseries()?;
 
@@ -256,7 +258,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //let batch = arrow_input::create_and_batch_inputdatasetup()?;
     //let batch = arrow_input::create_and_batch_nodes()?;
     //let batch = arrow_input::create_and_batch_processes()?;
-    //let batch = arrow_input::create_and_batch_groups()?; KORJAA TÄMÄ
+    let batch = arrow_input::create_and_batch_groups()?;
     //let batch = arrow_input::create_and_batch_process_topologys()?;
     //let batch = arrow_input::create_and_batch_node_diffusion()?;
     //let batch = arrow_input::create_and_batch_node_history()?;
@@ -280,7 +282,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //let batch = arrow_input::create_and_batch_market_fixed()?;
     //let batch = arrow_input::create_and_batch_market_balance_price()?;
 
-    /* 
+    
 
     match arrow_input::serialize_batch_and_encode_to_base64(&batch) {
         Ok(encoded_arrow_data) => {
@@ -303,13 +305,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 
-    */
+    /* 
 
     // Send the encoded data to the Julia process
-    //julia_process.send_data(format!("data:{}\n", encoded_arrow_data).into_bytes())?;
+    julia_process.send_data(format!("data:{}\n", encoded_arrow_data).into_bytes())?;
 
     // Properly terminate the Julia process
-    //julia_process.terminate()?;
+    julia_process.terminate()?;
+
+    */
 
     /* 
     

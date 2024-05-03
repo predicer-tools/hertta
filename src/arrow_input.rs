@@ -17,6 +17,12 @@ use std::path::Path;
 use chrono::{NaiveDate, NaiveDateTime};
 use std::collections::HashSet;
 
+/* 
+pub fn batch_inputdata() -> Result<RecordBatch, Box<dyn Error>> {
+
+}
+*/
+
 pub fn create_and_batch_inputdatasetup() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
     let setup = arrow_test_data::create_test_inputdatasetup();
@@ -36,7 +42,7 @@ pub fn create_and_batch_nodes() -> Result<RecordBatch, Box<dyn Error>> {
 
     Ok(batch)
 }
-/* 
+
 pub fn create_and_batch_groups() -> Result<RecordBatch, Box<dyn Error>> {
     // Create a test instance of InputDataSetup
     let groups = arrow_test_data::create_test_groups_hashmap();
@@ -47,7 +53,7 @@ pub fn create_and_batch_groups() -> Result<RecordBatch, Box<dyn Error>> {
     Ok(batch)
 }
 
-*/
+
 
 // Define the new function
 pub fn create_and_batch_node_diffusion() -> Result<RecordBatch, Box<dyn Error>> {
@@ -771,6 +777,17 @@ pub fn node_diffusion_to_arrow(
 
     // Create the RecordBatch
     RecordBatch::try_new(schema, columns)
+}
+
+pub fn serialize_batch_and_encode_to_base64(batch: &RecordBatch) -> Result<String, Box<dyn Error>> {
+    // Serialize the RecordBatch to a Vec<u8>
+    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(batch)?;
+
+    // Encode the Vec<u8> into a base64 String
+    let encoded_arrow_data: String = encode(&arrow_data);
+
+    // Return the base64 encoded string
+    Ok(encoded_arrow_data)
 }
 
 pub fn serialize_record_batch_to_vec(batch: &RecordBatch) -> Result<Vec<u8>, Box<dyn Error>> {
@@ -1608,51 +1625,47 @@ pub fn inputdatasetup_to_arrow(setup: &input_data::InputDataSetup) -> Result<Rec
         }
     }
 }
-/* 
+ 
 // Function to convert HashMap<String, Group> to RecordBatch
 pub fn groups_to_arrow(groups: &HashMap<String, input_data::Group>) -> Result<RecordBatch, ArrowError> {
     // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
-        Field::new("name", DataType::Utf8, false),
-        Field::new("g_type", DataType::Utf8, false),
+        Field::new("type", DataType::Utf8, false),
         Field::new("entity", DataType::Utf8, false),
         Field::new("group", DataType::Utf8, false),
     ]);
 
     // Initialize vectors to hold group data
-    let mut names: Vec<String> = Vec::new();
-    let mut g_types: Vec<String> = Vec::new();
+    let mut types: Vec<String> = Vec::new();
     let mut entities: Vec<String> = Vec::new();
-    let mut groups_vec: Vec<String> = Vec::new();
+    let mut group_names: Vec<String> = Vec::new();
 
-    for (_, group) in groups {
-        names.push(group.name.clone());
-        g_types.push(group.g_type.clone());
-        entities.push(group.entity.clone());
-        groups_vec.push(group.group.clone());
+    // Process each group
+    for (_, group) in groups.iter() {
+        for member in &group.members {
+            types.push(group.g_type.clone());
+            entities.push(member.clone());
+            group_names.push(group.name.clone());
+        }
     }
 
     // Create arrays from the vectors
-    let names_array = Arc::new(StringArray::from(names)) as ArrayRef;
-    let g_types_array = Arc::new(StringArray::from(g_types)) as ArrayRef;
+    let types_array = Arc::new(StringArray::from(types)) as ArrayRef;
     let entities_array = Arc::new(StringArray::from(entities)) as ArrayRef;
-    let groups_array = Arc::new(StringArray::from(groups_vec)) as ArrayRef;
+    let group_names_array = Arc::new(StringArray::from(group_names)) as ArrayRef;
 
-    // Now you can create the RecordBatch using these arrays
+    // Create the RecordBatch using these arrays
     let record_batch = RecordBatch::try_new(
         Arc::new(schema),
         vec![
-            names_array,
-            g_types_array,
+            types_array,
             entities_array,
-            groups_array,
+            group_names_array,
         ],
     );
 
     record_batch
 }
-
-*/
 
 // Function to convert Vec<String> of timeseries data to RecordBatch
 pub fn timeseries_to_arrow(timeseries: Vec<String>) -> Result<RecordBatch, ArrowError> {
