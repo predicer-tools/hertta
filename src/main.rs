@@ -8,6 +8,7 @@ mod arrow_input;
 mod julia_process;
 mod arrow_test_data;
 
+use julia_process::JuliaProcess;
 use std::env;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, AUTHORIZATION};
 use serde_json::json;
@@ -38,6 +39,14 @@ use std::net::TcpStream;
 use bincode;
 use std::path::PathBuf;
 use std::io::Read;
+use errors::FileReadError;
+
+use arrow::ipc::writer::StreamWriter;
+use arrow::record_batch::RecordBatch;
+use std::io::BufWriter;
+use arrow::datatypes::{Field, Schema, DataType};
+use arrow::array::{StringArray, ArrayRef};
+
 //use std::time::{SystemTime, UNIX_EPOCH};
 //use tokio::join;
 //use warp::reject::Reject;
@@ -226,12 +235,37 @@ pub fn start_julia_server_and_send_data(julia_script_path: &str, server_address:
     Ok(())
 }
 
-pub fn read_yaml_file(file_path: &str) -> Result<input_data::InputData, Box<dyn std::error::Error>> {
-    let mut file = File::open(file_path)?;
+pub fn read_yaml_file(file_path: &str) -> Result<input_data::InputData, FileReadError> {
+    // Attempt to open the file and handle errors specifically related to file opening
+    let mut file = File::open(file_path).map_err(FileReadError::open_error)?;
+
+    // Read the contents of the file into a string, handling errors related to reading
     let mut contents = String::new();
-    file.read_to_string(&mut contents)?;
-    let input_data: input_data::InputData = serde_yaml::from_str(&contents)?;
+    file.read_to_string(&mut contents).map_err(FileReadError::read_error)?;
+
+    // Attempt to parse the YAML content into the expected data structure
+    let input_data: input_data::InputData = serde_yaml::from_str(&contents)
+        .map_err(FileReadError::Parse)?;
+
+    // If all steps are successful, return the data
     Ok(input_data)
+}
+
+pub fn send_data_to_julia(server_address: &str, batches: &HashMap<String, RecordBatch>) -> Result<(), Box<dyn Error>> {
+    let stream = TcpStream::connect(server_address)?;
+    let writer = BufWriter::new(stream);
+
+    // Assume that "setup" batch is what we want to send. Validate its existence.
+    if let Some(batch) = batches.get("setup") {
+        let mut arrow_writer = StreamWriter::try_new(writer, &batch.schema())?;
+        arrow_writer.write(batch)?;
+        arrow_writer.finish()?;
+        println!("Data sent to Julia server.");
+    } else {
+        return Err("Batch 'setup' not found in the batches.".into());
+    }
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -239,181 +273,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     /* 
 
-    let file_path = "src/hertta_data.yaml";
-    match read_yaml_file(file_path) {
-        Ok(data) => println!("{:#?}", data),
-        Err(e) => println!("Error reading file: {}", e),
-    }
+    // Path to the YAML file
+    let yaml_file_path = "src/hertta_data.yaml";
 
+    // Read the YAML data into `InputData`
+    let input_data = read_yaml_file(yaml_file_path)?;
+
+    // Path to the Julia script and port
+    let julia_script = "arrow_conversion.jl";
+    let port = 5555;
+
+    // Send the Arrow data to the Julia server
+    send_data_to_julia(julia_script, port, &input_data)?;
     Ok(())
 
     */
-    
-    // Initialize the JuliaProcess
-    let mut julia_process = julia_process::JuliaProcess::new("Predicer/src/arrow_conversion.jl")?;
-
-    //let batch = arrow_input::create_and_encode_timeseries()?;
-
-    // Use the function to create base64 encoded Arrow data
-    //let batch = arrow_input::create_and_batch_inputdatasetup()?;
-    //let batch = arrow_input::create_and_batch_nodes()?;
-    //let batch = arrow_input::create_and_batch_processes()?;
-    let batch = arrow_input::create_and_batch_groups()?;
-    //let batch = arrow_input::create_and_batch_process_topologys()?;
-    //let batch = arrow_input::create_and_batch_node_diffusion()?;
-    //let batch = arrow_input::create_and_batch_node_history()?;
-    //let batch = arrow_input::create_and_batch_node_delay()?;
-    //let batch = arrow_input::create_and_batch_node_inflows()?;
-    //let batch = arrow_input::create_and_batch_markets()?;
-    //let batch = arrow_input::create_and_batch_market_realisation()?;
-    //let batch = arrow_input::create_and_batch_scenarios()?;
-    //let batch = arrow_input::create_and_batch_processes_eff_fun()?;
-    //let batch = arrow_input::create_and_batch_reserve_type()?;
-    //let batch = arrow_input::create_and_batch_risk()?;
-    //let batch = arrow_input::create_and_batch_processes_cap()?;
-    //let batch = arrow_input::create_and_batch_constraints()?;
-    //let batch = arrow_input::create_and_batch_gen_constraints()?;
-    
-    //let batch = arrow_input::create_and_batch_processes_cf()?; 
-    //let batch = arrow_input::create_and_batch_node_inflows()?;
-    //let batch = arrow_input::create_and_batch_market_price()?;
-    //let batch = arrow_input::create_and_batch_node_commodity_price()?;
-    //let batch = arrow_input::create_and_batch_process_eff()?;
-    //let batch = arrow_input::create_and_batch_market_fixed()?;
-    //let batch = arrow_input::create_and_batch_market_balance_price()?;
-
-    
-
-    match arrow_input::serialize_batch_and_encode_to_base64(&batch) {
-        Ok(encoded_arrow_data) => {
-            let data_to_send = format!("data:{}\n", encoded_arrow_data).into_bytes();
-            // Now that you have the encoded data in bytes, send it to the Julia process
-            julia_process.send_data(data_to_send)?;
-    
-            // Terminate the Julia process
-            julia_process.terminate()?;
-        },
-        Err(e) => {
-            // Handle the error e.g., by logging it, converting to a string, or propagating it
-            eprintln!("Error encoding arrow data: {}", e);
-            // Propagate the error
-            return Err(e);
-        },
-    }
-
-    
 
     Ok(())
-
-    /* 
-
-    // Send the encoded data to the Julia process
-    julia_process.send_data(format!("data:{}\n", encoded_arrow_data).into_bytes())?;
-
-    // Properly terminate the Julia process
-    julia_process.terminate()?;
-
-    */
-
-    /* 
-    
-    // Parse command line arguments
-    let args: Vec<String> = env::args().collect();
-    let predicer_dir = args
-        .get(1)
-        .expect("First argument should be path to Predicer")
-        .to_string();
-
-    start_hass_backend_server();
-    start_weather_forecasst_server();
-
-    let options_path = "./src/options.json";
-    //let options_path = "/data/options.json";
-
-    let options_str = match fs::read_to_string(options_path) {
-        Ok(content) => content,
-        Err(err) => {
-            eprintln!("Error reading options.json: {}", err);
-            return;
-        }
-    };
-
-    // Parse the options JSON string into an Options struct
-    let options: Options = match serde_json::from_str(&options_str) {
-        Ok(parsed_options) => parsed_options,
-        Err(err) => {
-            eprintln!("Error parsing options.json: {}", err);
-            return;
-        }
-    };
-
-    // Extract option data from the options.json file.
-    let listen_ip = options.listen_ip.clone();
-    let port = options.port.clone();
-
-    let ip_port = format!("{}:{}", listen_ip, port);
-
-    // Parse the combined string into a SocketAddr
-    let ip_address: SocketAddr = ip_port.parse().unwrap();
-
-    // Initialize the Julia runtime
-    let (julia, handle) = match init_julia_runtime() {
-        Ok((julia, handle)) => (julia, handle),
-        Err(e) => {
-            eprintln!("Failed to initialize Julia runtime: {:?}", e);
-            return; // Exit the program if runtime couldn't start
-        }
-    };
-    let julia = Arc::new(Mutex::new(julia));
-
-    // Set up an mpsc channel for graceful shutdown
-    let (shutdown_sender, mut shutdown_receiver) = mpsc::channel::<()>(1);
-
-    // Define the asynchronous task to handle optimization
-    let julia_clone = julia.clone();
-    let predicer_dir_clone = predicer_dir.clone();
-    
-
-    let shutdown_route = {
-        let shutdown_sender_clone = shutdown_sender.clone();
-        warp::path!("shutdown")
-            .and(warp::post())
-            .map(move || {
-                // Send a shutdown signal
-                let _ = shutdown_sender_clone.try_send(());
-                warp::reply::json(&"Server is shutting down")
-            })
-    };
-
-    let routes = shutdown_route;
-
-    // Start the Warp server and extract only the future part of the tuple
-    let (_, _server_future) = warp::serve(routes)
-    .bind_with_graceful_shutdown(ip_address, async move {
-        shutdown_receiver.recv().await;
-    });
-
-    let event_loop_task = event_loop::event_loop(julia_clone, predicer_dir_clone);
-
-    tokio::select! {
-        _ = event_loop_task => {
-            println!("Event loop has been shut down");
-        },
-        _ = tokio::signal::ctrl_c() => {
-            println!("Ctrl+C pressed. Shutting down...");
-            // Perform any necessary shutdown procedures here
-        },
-    }
-
-    std::mem::drop(julia);
-    handle.await
-    .expect("Julia exited with an error")
-    .expect("The runtime thread panicked");
-
-    println!("Server has been shut down");
-
-    */
-
     
 }
 

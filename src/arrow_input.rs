@@ -4,6 +4,7 @@ use std::sync::Arc;
 use arrow::error::Result as ArrowResult;
 use crate::input_data;
 use crate::arrow_test_data;
+use crate::errors;
 use std::collections::{HashMap, BTreeMap};
 use std::error::Error;
 use arrow::ipc::writer::StreamWriter;
@@ -16,639 +17,615 @@ use bincode;
 use std::path::Path;
 use chrono::{NaiveDate, NaiveDateTime};
 use std::collections::HashSet;
+use errors::{DataConversionError, FileReadError};
 
 /* 
-pub fn batch_inputdata() -> Result<RecordBatch, Box<dyn Error>> {
+pub fn batch_inputdata(input_data: input_data::InputData) -> Result<RecordBatch, Box<dyn Error>> {
 
+    let setup_batch = inputdatasetup_to_arrow(&input_data.setup)?;
+    let nodes_batch = nodes_to_arrow(&input_data.nodes)?;
+    let processes_batch = processes_to_arrow(&input_data.processes)?;
+    let groups_batch = groups_to_arrow(&input_data.groups)?;
+    let topologies_batch = process_topos_to_arrow(&input_data.processes)?;
+    let node_diffusion_batch = node_diffusion_to_arrow(&input_data.node_diffusion)?;
+    let node_delay_batch = node_delays_to_arrow(&input_data.node_delay)?;
+    let inflow_blocks_batch = nodes_inflow_to_arrow(&input_data.nodes)?;
+    let markets_batch = markets_to_arrow(&input_data.markets)?;
+    let reserve_realisation_batch = market_realisation_to_arrow(&input_data.markets)?;
+    let scenarios_batch = scenarios_to_arrow(&input_data.scenarios)?;
+    let efficiencies_batch = processes_eff_fun_to_arrow(&input_data.processes)?;
+    let reserve_type_batch = reserve_type_to_arrow(&input_data.reserve_type)?;
+    let risk_batch = risk_to_arrow(&input_data.risk)?;
+    let cap_ts_batch = processes_cap_to_arrow(&input_data.processes)?;
+    let gen_constraints_batch = gen_constraints_to_arrow(&input_data.gen_constraints)?;
+    let constraints = constraints_to_arrow(&input_data.gen_constraints)?;
+
+    let cf_batch = processes_cf_to_arrow(&input_data.processes)?;
+    let inflow_batch = nodes_inflow_to_arrow(&input_data.nodes)?;
+    let market_prices_batch = market_price_to_arrow(&input_data.markets)?;
+    let price_batch = nodes_commodity_price_to_arrow(&input_data.nodes)?;
+    let eff_ts_batch = processes_eff_to_arrow(&input_data.processes)?;
+    let fixed_ts_batch = market_fixed_to_arrow(&input_data.markets)?;
+    let balance_prices_batch= market_balance_price_to_arrow(&input_data.markets?);
 }
 */
 
-pub fn create_and_batch_inputdatasetup() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let setup = arrow_test_data::create_test_inputdatasetup();
+pub fn create_record_batches(
+    input_data: &input_data::InputData,
+) -> Result<HashMap<String, RecordBatch>, Box<dyn Error>> {
+    let mut batches = HashMap::new();
 
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = inputdatasetup_to_arrow(&setup)?;
+    batches.insert("setup".to_string(), inputdatasetup_to_arrow(&input_data.setup)?);
+    batches.insert("nodes".to_string(), nodes_to_arrow(&input_data.nodes)?);
+    batches.insert("processes".to_string(), processes_to_arrow(&input_data.processes)?);
+    batches.insert("groups".to_string(), groups_to_arrow(&input_data.groups)?);
+    batches.insert("process_topology".to_string(), process_topos_to_arrow(&input_data.processes)?);
+    batches.insert("node_diffusion".to_string(), node_diffusion_to_arrow(&input_data.node_diffusion)?);
+    batches.insert("node_history".to_string(), node_histories_to_arrow(&input_data.node_histories)?);
+    batches.insert("node_delay".to_string(), node_delays_to_arrow(&input_data.node_delay)?);
+    batches.insert("inflow_blocks".to_string(), inflow_blocks_to_arrow(&input_data.inflow_blocks)?);
+    batches.insert("markets".to_string(), markets_to_arrow(&input_data.markets)?);
+    batches.insert("reserve_realisation".to_string(), market_realisation_to_arrow(&input_data.markets)?);
+    batches.insert("scenarios".to_string(), scenarios_to_arrow(&input_data.scenarios)?);
+    batches.insert("efficiencies".to_string(), processes_eff_fun_to_arrow(&input_data.processes)?);
+    batches.insert("reserve_type".to_string(), reserve_type_to_arrow(&input_data.reserve_type)?);
+    batches.insert("risk".to_string(), risk_to_arrow(&input_data.risk)?);
+    batches.insert("cap_ts".to_string(), processes_cap_to_arrow(&input_data.processes)?);
+    batches.insert("gen_constraint".to_string(), gen_constraints_to_arrow(&input_data.gen_constraints)?);
+    batches.insert("constraints".to_string(), constraints_to_arrow(&input_data.gen_constraints)?);
+    batches.insert("cf".to_string(), processes_cf_to_arrow(&input_data.processes)?);
+    batches.insert("inflow".to_string(), nodes_inflow_to_arrow(&input_data.nodes)?);
+    batches.insert("market_prices".to_string(), market_price_to_arrow(&input_data.markets)?);
+    batches.insert("price".to_string(), nodes_commodity_price_to_arrow(&input_data)?);
+    batches.insert("eff_ts".to_string(), processes_eff_to_arrow(&input_data)?);
+    batches.insert("fixed_ts".to_string(), market_fixed_to_arrow(&input_data.markets)?);
+    batches.insert("balance_prices".to_string(), market_balance_price_to_arrow(&input_data.markets)?);
 
-    Ok(batch)
+    Ok(batches)
 }
 
-pub fn create_and_batch_nodes() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of Nodes
-    let nodes = arrow_test_data::create_test_nodes_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = nodes_to_arrow(&nodes)?;
-
-    Ok(batch)
+pub fn test_record_batches(input_data: &input_data::InputData) -> Result<HashMap<String, RecordBatch>, Box<dyn Error>> {
+    let mut batches = HashMap::new();
+    batches.insert("setup".to_string(), inputdatasetup_to_arrow(&input_data.setup)?);
+    Ok(batches)
 }
 
-pub fn create_and_batch_groups() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let groups = arrow_test_data::create_test_groups_hashmap();
+pub fn serialize_batches(batches: HashMap<String, RecordBatch>) -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut buffer: Vec<u8> = Vec::new();
+    {
+        let mut writer = StreamWriter::try_new(&mut buffer, &batches["setup"].schema())?;
 
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = groups_to_arrow(&groups)?;
+        for batch in batches.values() {
+            writer.write(batch)?;
+        }
 
-    Ok(batch)
+        writer.finish()?;
+    } // Writer goes out of scope here, releasing the borrow on `buffer`
+
+    Ok(buffer)
 }
 
+pub fn inputdatasetup_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, DataConversionError> {
+    let setup = &input_data.setup;
 
+    println!("Starting inputdatasetup_to_arrow function.");
 
-// Define the new function
-pub fn create_and_batch_node_diffusion() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let node_diffusion = arrow_test_data::create_test_node_diffusion();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = node_diffusion_to_arrow(&node_diffusion)?;
-
-    Ok(batch)
-}
-
-// Define the new function
-pub fn create_and_batch_market_fixed() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let markets = arrow_test_data::create_test_markets_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = market_fixed_to_arrow(&markets)?;
-
-    Ok(batch)
-}
-
-pub fn create_and_batch_constraints() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let gen_constraints = arrow_test_data::create_test_genconstraints();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = constraints_to_arrow(&gen_constraints)?;
-
-    Ok(batch)
-}
-
-pub fn create_and_batch_gen_constraints() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let gen_constraints = arrow_test_data::create_test_genconstraints();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = gen_constraints_to_arrow(&gen_constraints)?;
-
-    Ok(batch)
-}
-
-pub fn create_and_batch_reserve_type() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let reserve_type = arrow_test_data::create_test_reserve_type();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = reserve_type_to_arrow(&reserve_type)?;
-
-    Ok(batch)
-}
-
-pub fn create_and_batch_node_delay() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let node_delay = arrow_test_data::create_test_node_delay_data();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = node_delays_to_arrow(&node_delay)?;
-
-    Ok(batch)
-}
-
-pub fn create_and_batch_market_realisation() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let markets_map = arrow_test_data::create_test_markets_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = market_realisation_to_arrow(&markets_map)?;
-
-    Ok(batch)
-}
-
-pub fn create_and_batch_market_price() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let markets_map = arrow_test_data::create_test_markets_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = market_price_to_arrow(&markets_map)?;
-
-    Ok(batch)
-}
-
-pub fn create_and_batch_market_balance_price() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let markets_map = arrow_test_data::create_test_markets_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = market_balance_price_to_arrow(&markets_map)?;
-
-    Ok(batch)
-}
-
-
-pub fn create_and_batch_risk() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of Risk
-    let risk = arrow_test_data::create_test_risk_data();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = risk_to_arrow(&risk)?;
-
-    Ok(batch)
-}
-
-// Define the new function
-pub fn create_and_batch_node_commodity_price() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let nodes = arrow_test_data::create_test_nodes_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = nodes_commodity_price_to_arrow(&nodes)?;
-
-    Ok(batch)
-}
-
-pub fn create_and_batch_node_inflows() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let nodes = arrow_test_data::create_test_nodes_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = nodes_inflow_to_arrow(&nodes)?;
-
-    Ok(batch)
-}
-
-pub fn create_and_batch_node_history() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let node_history = arrow_test_data::create_example_node_histories();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = node_histories_to_arrow(&node_history)?;
-
-    Ok(batch)
-}
-
-// Define the new function
-pub fn create_and_batch_processes() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let processes = arrow_test_data::create_test_processes_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = processes_to_arrow(&processes)?;
-
-    Ok(batch)
-}
-
-pub fn create_and_batch_processes_eff_fun() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let processes = arrow_test_data::create_test_processes_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = processes_eff_fun_to_arrow(&processes)?;
-
-    Ok(batch)
-}
-
-pub fn create_and_batch_processes_cap() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let processes = arrow_test_data::create_test_processes_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = processes_cap_to_arrow(&processes)?;
-
-    Ok(batch)
-}
-
-pub fn create_and_batch_processes_cf() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let processes = arrow_test_data::create_test_processes_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = processes_cf_to_arrow(&processes)?;
-
-    Ok(batch)
-}
-
-// Define the new function
-pub fn create_and_batch_process_eff_ops() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let processes = arrow_test_data::create_test_processes_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = processes_eff_ops_to_arrow(&processes)?;
-
-    Ok(batch)
-}
-
-pub fn create_and_batch_process_eff() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let processes = arrow_test_data::create_test_processes_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = processes_eff_to_arrow(&processes)?;
-
-    Ok(batch)
-}
-/* 
-// Define the new function
-pub fn create_and_batch_process_topologys() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let processes = arrow_test_data::create_test_processes_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = process_topos_to_arrow(&processes)?;
-
-    Ok(batch)
-}
-*/
-
-pub fn create_and_batch_markets() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let markets = arrow_test_data::create_test_markets_hashmap();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = markets_to_arrow(&markets)?;
-
-    Ok(batch)
-}
-
-pub fn create_and_batch_timeseries() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let timeseries = arrow_test_data::create_test_timeseries();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = timeseries_to_arrow(timeseries)?;
-
-    Ok(batch)
-}
-
-pub fn create_and_batch_scenarios() -> Result<RecordBatch, Box<dyn Error>> {
-    // Create a test instance of InputDataSetup
-    let scenarios = arrow_test_data::create_test_scenarios();
-
-    // Convert the InputDataSetup to a RecordBatch
-    let batch: RecordBatch = scenarios_to_arrow(&scenarios)?;
-
-    Ok(batch)
-}
-
-pub fn risk_to_arrow(risk: &HashMap<String, f64>) -> Result<RecordBatch, ArrowError> {
     // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
         Field::new("parameter", DataType::Utf8, false),
-        Field::new("value", DataType::Float64, false),
+        Field::new("value", DataType::Utf8, true),
     ]);
+    println!("Schema defined.");
 
-    // Initialize vectors to hold the data
-    let mut parameters: Vec<String> = Vec::new();
-    let mut values: Vec<f64> = Vec::new();
+    // Prepare data
+    let mut parameters = vec![
+        "contains_reserves", "contains_online", "contains_states", "contains_piecewise_eff",
+        "contains_risk", "contains_diffusion", "contains_delay", "contains_markets",
+        "reserve_realisation", "use_market_bids", "common_timesteps",
+        "use_node_dummy_variables", "use_ramp_dummy_variables",
+    ];
 
-    // Populate the vectors from the HashMap
-    for (key, &value) in risk.iter() {
-        parameters.push(key.clone());
-        values.push(value);
+    let mut values = vec![
+        setup.contains_reserves.to_string(), setup.contains_online.to_string(), setup.contains_states.to_string(),
+        setup.contains_piecewise_eff.to_string(), setup.contains_risk.to_string(), setup.contains_diffusion.to_string(),
+        setup.contains_delay.to_string(), setup.contains_markets.to_string(), setup.reserve_realisation.to_string(),
+        setup.use_market_bids.to_string(), setup.common_timesteps.to_string(),
+        setup.use_node_dummy_variables.to_string(), setup.use_ramp_dummy_variables.to_string(),
+    ];
+
+    // Conditionally add 'common_scenario_name' if it's not empty
+    if !setup.common_scenario_name.is_empty() {
+        parameters.push("common_scenario_name");
+        values.push(setup.common_scenario_name.clone());
     }
 
-    // Create Arrow arrays from the vectors
-    let parameter_array: ArrayRef = Arc::new(StringArray::from(parameters));
-    let value_array: ArrayRef = Arc::new(Float64Array::from(values));
+    // Check for logical errors in input before creating arrays
+    if parameters.len() != values.len() {
+        return Err(DataConversionError::InvalidInput("Mismatched parameters and values lengths".to_string()));
+    }
 
-    // Create the RecordBatch using these arrays and the schema
+    let parameter_array = Arc::new(StringArray::from(parameters)) as ArrayRef;
+    let value_array = Arc::new(StringArray::from(values)) as ArrayRef;
+
+    RecordBatch::try_new(Arc::new(schema), vec![parameter_array, value_array])
+        .map_err(DataConversionError::from)
+}
+
+pub fn nodes_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let nodes = &input_data.nodes;
+
+    // Define the schema for the Arrow RecordBatch
+    println!("Nodes.");
+    let schema = Schema::new(vec![
+        Field::new("node", DataType::Utf8, false),
+        Field::new("is_commodity", DataType::Boolean, false),
+        Field::new("is_state", DataType::Boolean, false),
+        Field::new("is_res", DataType::Boolean, false),
+        Field::new("is_market", DataType::Boolean, false),
+        Field::new("is_inflow", DataType::Boolean, false),
+        Field::new("state_max", DataType::Float64, false),
+        Field::new("state_min", DataType::Float64, false),
+        Field::new("in_max", DataType::Float64, false),
+        Field::new("out_max", DataType::Float64, false),
+        Field::new("initial_state", DataType::Float64, false),
+        Field::new("state_loss_proportional", DataType::Float64, false),
+        Field::new("scenario_independent_state", DataType::Boolean, false),
+        Field::new("is_temp", DataType::Boolean, false),
+        Field::new("t_e_conversion", DataType::Float64, false),
+        Field::new("residual_value", DataType::Float64, false),
+    ]);
+
+    let mut names: Vec<String> = Vec::new();
+    let mut is_commodity: Vec<bool> = Vec::new();
+    let mut is_state: Vec<bool> = Vec::new();
+    let mut is_res: Vec<bool> = Vec::new();
+    let mut is_market: Vec<bool> = Vec::new();
+    let mut is_inflow: Vec<bool> = Vec::new();
+    let mut state_maxs: Vec<f64> = Vec::new();
+    let mut state_mins: Vec<f64> = Vec::new();
+    let mut in_maxs: Vec<f64> = Vec::new();
+    let mut out_maxs: Vec<f64> = Vec::new();
+    let mut initial_states: Vec<f64> = Vec::new();
+    let mut state_loss_proportionals: Vec<f64> = Vec::new();
+    let mut scenario_independent_states: Vec<bool> = Vec::new();
+    let mut is_temps: Vec<bool> = Vec::new();
+    let mut t_e_conversions: Vec<f64> = Vec::new();
+    let mut residual_values: Vec<f64> = Vec::new();
+
+    for (node_name, node) in nodes {
+        names.push(node_name.clone());
+        is_commodity.push(node.is_commodity);
+        is_state.push(node.is_state);
+        is_res.push(node.is_res);
+        is_market.push(node.is_market);
+        is_inflow.push(node.is_inflow);
+        state_maxs.push(node.state.state_max);
+        state_mins.push(node.state.state_min);
+        in_maxs.push(node.state.in_max);
+        out_maxs.push(node.state.out_max);
+        initial_states.push(node.state.initial_state);
+        state_loss_proportionals.push(node.state.state_loss_proportional);
+        scenario_independent_states.push(node.state.is_scenario_independent);
+        is_temps.push(node.state.is_temp);
+        t_e_conversions.push(node.state.t_e_conversion);
+        residual_values.push(node.state.residual_value);
+    }
+
+    // Create arrays from the vectors
+    let names_array = Arc::new(StringArray::from(names)) as ArrayRef;
+    let is_commodity_array = Arc::new(BooleanArray::from(is_commodity)) as ArrayRef;
+    let is_state_array = Arc::new(BooleanArray::from(is_state)) as ArrayRef;
+    let is_res_array = Arc::new(BooleanArray::from(is_res)) as ArrayRef;
+    let is_market_array = Arc::new(BooleanArray::from(is_market)) as ArrayRef;
+    let is_inflow_array = Arc::new(BooleanArray::from(is_inflow)) as ArrayRef;
+    let state_maxs_array = Arc::new(Float64Array::from(state_maxs)) as ArrayRef;
+    let state_mins_array = Arc::new(Float64Array::from(state_mins)) as ArrayRef;
+    let in_maxs_array = Arc::new(Float64Array::from(in_maxs)) as ArrayRef;
+    let out_maxs_array = Arc::new(Float64Array::from(out_maxs)) as ArrayRef;
+    let initial_states_array = Arc::new(Float64Array::from(initial_states)) as ArrayRef;
+    let state_loss_proportionals_array = Arc::new(Float64Array::from(state_loss_proportionals)) as ArrayRef;
+    let scenario_independent_states_array = Arc::new(BooleanArray::from(scenario_independent_states)) as ArrayRef;
+    let is_temps_array = Arc::new(BooleanArray::from(is_temps)) as ArrayRef;
+    let t_e_conversions_array = Arc::new(Float64Array::from(t_e_conversions)) as ArrayRef;
+    let residual_values_array = Arc::new(Float64Array::from(residual_values)) as ArrayRef;
+
+    // Now you can create the RecordBatch using these arrays
     let record_batch = RecordBatch::try_new(
         Arc::new(schema),
-        vec![parameter_array, value_array],
+        vec![
+            names_array,
+            is_commodity_array,
+            is_state_array,
+            is_res_array,
+            is_market_array,
+            is_inflow_array,
+            state_maxs_array,
+            state_mins_array,
+            in_maxs_array,
+            out_maxs_array,
+            initial_states_array,
+            state_loss_proportionals_array,
+            scenario_independent_states_array,
+            is_temps_array,
+            t_e_conversions_array,
+            residual_values_array,
+        ],
     );
 
     record_batch
 }
 
-// Function to convert gen_constraints to an Arrow RecordBatch
-pub fn constraints_to_arrow(gen_constraints: &HashMap<String, input_data::GenConstraint>) -> Result<RecordBatch, ArrowError> {
+pub fn processes_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let processes = &input_data.processes;
+
     // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
         Field::new("name", DataType::Utf8, false),
-        Field::new("gc_type", DataType::Utf8, false),
-        Field::new("is_setpoint", DataType::Boolean, false),
-        Field::new("penalty", DataType::Float64, false),
+        Field::new("is_cf", DataType::Boolean, false),
+        Field::new("is_cf_fix", DataType::Boolean, false),
+        Field::new("is_online", DataType::Boolean, false),
+        Field::new("is_res", DataType::Boolean, false),
+        Field::new("conversion", DataType::Int64, false),
+        Field::new("eff", DataType::Float64, false),
+        Field::new("load_min", DataType::Float64, false),
+        Field::new("load_max", DataType::Float64, false),
+        Field::new("start_cost", DataType::Float64, false),
+        Field::new("min_online", DataType::Float64, false),
+        Field::new("min_offline", DataType::Float64, false),
+        Field::new("max_online", DataType::Float64, false),
+        Field::new("max_offline", DataType::Float64, false),
+        Field::new("initial_state", DataType::Float64, false),
+        Field::new("scenario_independent_online", DataType::Boolean, false),
     ]);
 
-    // Initialize vectors to hold the data
+    // Initialize vectors to hold process data
     let mut names: Vec<String> = Vec::new();
-    let mut types: Vec<String> = Vec::new();
-    let mut is_setpoints: Vec<bool> = Vec::new();
-    let mut penalties: Vec<f64> = Vec::new();
+    let mut is_cfs: Vec<bool> = Vec::new();
+    let mut is_cf_fixes: Vec<bool> = Vec::new();
+    let mut is_onlines: Vec<bool> = Vec::new();
+    let mut is_reses: Vec<bool> = Vec::new();
+    let mut conversions: Vec<i64> = Vec::new();
+    let mut effs: Vec<f64> = Vec::new();
+    let mut load_mins: Vec<f64> = Vec::new();
+    let mut load_maxs: Vec<f64> = Vec::new();
+    let mut start_costs: Vec<f64> = Vec::new();
+    let mut min_onlines: Vec<f64> = Vec::new();
+    let mut min_offlines: Vec<f64> = Vec::new();
+    let mut max_onlines: Vec<f64> = Vec::new();
+    let mut max_offlines: Vec<f64> = Vec::new();
+    let mut initial_states: Vec<f64> = Vec::new();
+    let mut scenario_independent_onlines: Vec<bool> = Vec::new();
 
-    // Populate the vectors from the HashMap
-    for (_key, gen_constraint) in gen_constraints.iter() {
-        names.push(gen_constraint.name.clone());
-        types.push(gen_constraint.gc_type.clone());
-        is_setpoints.push(gen_constraint.is_setpoint);
-        penalties.push(gen_constraint.penalty);
+    println!("Processes: Extracting data...");
+    for (name, process) in processes {
+        names.push(process.name.clone());
+        is_cfs.push(process.is_cf);
+        is_cf_fixes.push(process.is_cf_fix);
+        is_onlines.push(process.is_online);
+        is_reses.push(process.is_res);
+        conversions.push(process.conversion);
+        effs.push(process.eff);
+        load_mins.push(process.load_min);
+        load_maxs.push(process.load_max);
+        start_costs.push(process.start_cost);
+        min_onlines.push(process.min_online);
+        min_offlines.push(process.min_offline);
+        max_onlines.push(process.max_online);
+        max_offlines.push(process.max_offline);
+        initial_states.push(process.initial_state);
+        scenario_independent_onlines.push(process.is_scenario_independent);
     }
 
-    // Create Arrow arrays from the vectors
-    let name_array: ArrayRef = Arc::new(StringArray::from(names));
-    let type_array: ArrayRef = Arc::new(StringArray::from(types));
-    let is_setpoint_array: ArrayRef = Arc::new(BooleanArray::from(is_setpoints));
-    let penalty_array: ArrayRef = Arc::new(Float64Array::from(penalties));
+    // Create arrays from the vectors
+    let names_array = Arc::new(StringArray::from(names)) as ArrayRef;
+    let is_cfs_array = Arc::new(BooleanArray::from(is_cfs)) as ArrayRef;
+    let is_cf_fixes_array = Arc::new(BooleanArray::from(is_cf_fixes)) as ArrayRef;
+    let is_onlines_array = Arc::new(BooleanArray::from(is_onlines)) as ArrayRef;
+    let is_reses_array = Arc::new(BooleanArray::from(is_reses)) as ArrayRef;
+    let conversions_array = Arc::new(Int64Array::from(conversions)) as ArrayRef;
+    let effs_array = Arc::new(Float64Array::from(effs)) as ArrayRef;
+    let load_mins_array = Arc::new(Float64Array::from(load_mins)) as ArrayRef;
+    let load_maxs_array = Arc::new(Float64Array::from(load_maxs)) as ArrayRef;
+    let start_costs_array = Arc::new(Float64Array::from(start_costs)) as ArrayRef;
+    let min_onlines_array = Arc::new(Float64Array::from(min_onlines)) as ArrayRef;
+    let min_offlines_array = Arc::new(Float64Array::from(min_offlines)) as ArrayRef;
+    let max_onlines_array = Arc::new(Float64Array::from(max_onlines)) as ArrayRef;
+    let max_offlines_array = Arc::new(Float64Array::from(max_offlines)) as ArrayRef;
+    let initial_states_array = Arc::new(Float64Array::from(initial_states)) as ArrayRef;
+    let scenario_independent_onlines_array = Arc::new(BooleanArray::from(scenario_independent_onlines)) as ArrayRef;
 
-    // Create the RecordBatch using these arrays and the schema
-    RecordBatch::try_new(
+    let record_batch = RecordBatch::try_new(
         Arc::new(schema),
-        vec![name_array, type_array, is_setpoint_array, penalty_array],
-    )
-}
+        vec![
+            names_array,
+            is_cfs_array,
+            is_cf_fixes_array,
+            is_onlines_array,
+            is_reses_array,
+            conversions_array,
+            effs_array,
+            load_mins_array,
+            load_maxs_array,
+            start_costs_array,
+            min_onlines_array,
+            min_offlines_array,
+            max_onlines_array,
+            max_offlines_array,
+            initial_states_array,
+            scenario_independent_onlines_array,
+        ],
+    );
 
-pub fn gen_constraints_to_arrow(
-    gen_constraints: &HashMap<String, input_data::GenConstraint>
-) -> Result<RecordBatch, ArrowError> {
-    let mut fields: Vec<Field> = Vec::new();
-    let mut column_data: HashMap<String, Vec<Option<f64>>> = HashMap::new();
-    let mut timestamps: Vec<Option<String>> = Vec::new();
-
-    // First, handle the constant TimeSeriesData for each GenConstraint
-    for (constraint_name, gen_constraint) in gen_constraints.iter() {
-        for ts in &gen_constraint.constant.ts_data {
-            let col_name = format!("{},{}", constraint_name, ts.scenario);
-            fields.push(Field::new(&col_name, DataType::Float64, true));
-            let series_data: Vec<Option<f64>> = ts.series.iter().map(|(_, value)| Some(*value)).collect();
-            timestamps = ts.series.iter().map(|(time, _)| Some(time.clone())).collect();
-            column_data.insert(col_name, series_data);
-        }
-    }
-
-    // Then, handle the ConFactor data
-    for (constraint_name, gen_constraint) in gen_constraints.iter() {
-        for factor in &gen_constraint.factors {
-            for ts in &factor.data.ts_data {
-                let flow_component = if factor.flow.1.is_empty() {
-                    factor.flow.0.clone()
-                } else {
-                    format!("{},{}", factor.flow.0, factor.flow.1)
-                };
-                let col_name = format!("{},{},{}", constraint_name, flow_component, ts.scenario);
-                fields.push(Field::new(&col_name, DataType::Float64, true));
-                let series_data: Vec<Option<f64>> = ts.series.iter().map(|(_, value)| Some(*value)).collect();
-                // If the series_data length is different from timestamps, it's an error
-                if series_data.len() != timestamps.len() {
-                    return Err(ArrowError::InvalidArgumentError(
-                        format!("Column length for {} does not match timestamps", col_name)
-                    ));
-                }
-                column_data.insert(col_name, series_data);
+    match &record_batch {
+        Ok(batch) => {
+            for i in 0..batch.num_columns() {
+                println!("Column {}: {}", i, batch.column(i).len());
             }
         }
+        Err(e) => {
+            println!("Error creating RecordBatch: {}", e);
+        }
     }
 
-    // Ensure all timestamp vectors are the same length
-    let max_length = timestamps.len();
-    timestamps.resize(max_length, None);
-
-    // Create the timestamp column
-    fields.insert(0, Field::new("t", DataType::Utf8, false));
-    let timestamp_column: ArrayRef = Arc::new(StringArray::from(timestamps.iter().flatten().cloned().collect::<Vec<String>>()));
-    let mut columns: Vec<ArrayRef> = vec![timestamp_column];
-
-    // Create other columns from the collected column_data
-    for field in &fields[1..] { // Skip the timestamp field
-        let col_data = column_data.remove(field.name()).unwrap_or_else(|| vec![None; max_length]);
-        let col_array = Float64Array::from(col_data);
-        columns.push(Arc::new(col_array) as ArrayRef);
-    }
-
-    let schema = Arc::new(Schema::new(fields));
-
-    // Create the RecordBatch using these arrays and the schema
-    RecordBatch::try_new(schema, columns)
+    record_batch
 }
 
-pub fn reserve_type_to_arrow(reserve_type: &HashMap<String, f64>) -> Result<RecordBatch, ArrowError> {
+// Function to convert HashMap<String, Group> to RecordBatch
+pub fn groups_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let groups = &input_data.groups;
+
     // Define the schema for the Arrow RecordBatch
+    println!("Groups.");
     let schema = Schema::new(vec![
         Field::new("type", DataType::Utf8, false),
-        Field::new("ramp_factor", DataType::Float64, false),
+        Field::new("entity", DataType::Utf8, false),
+        Field::new("group", DataType::Utf8, false),
     ]);
 
-    // Initialize vectors to hold the data
+    // Initialize vectors to hold group data
     let mut types: Vec<String> = Vec::new();
-    let mut ramp_factors: Vec<f64> = Vec::new();
+    let mut entities: Vec<String> = Vec::new();
+    let mut group_names: Vec<String> = Vec::new();
 
-    // Populate the vectors from the HashMap
-    for (key, &value) in reserve_type.iter() {
-        types.push(key.clone());
-        ramp_factors.push(value);
+    // Process each group
+    for (_, group) in groups.iter() {
+        for member in &group.members {
+            types.push(group.g_type.clone());
+            entities.push(member.clone());
+            group_names.push(group.name.clone());
+        }
     }
 
-    // Create Arrow arrays from the vectors
-    let type_array: ArrayRef = Arc::new(StringArray::from(types));
-    let ramp_factor_array: ArrayRef = Arc::new(Float64Array::from(ramp_factors));
+    // Create arrays from the vectors
+    let types_array = Arc::new(StringArray::from(types)) as ArrayRef;
+    let entities_array = Arc::new(StringArray::from(entities)) as ArrayRef;
+    let group_names_array = Arc::new(StringArray::from(group_names)) as ArrayRef;
 
-    // Create the RecordBatch using these arrays and the schema
-    RecordBatch::try_new(
+    // Create the RecordBatch using these arrays
+    let record_batch = RecordBatch::try_new(
         Arc::new(schema),
-        vec![type_array, ramp_factor_array],
-    )
+        vec![
+            types_array,
+            entities_array,
+            group_names_array,
+        ],
+    );
+
+    record_batch
 }
 
-pub fn market_realisation_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -> Result<RecordBatch, ArrowError> {
-    // First, collect all scenario names across all markets
-    let mut scenario_names = HashMap::new();
-    for market in markets.values() {
-        for scenario in market.realisation.keys() {
-            scenario_names.insert(scenario.clone(), ());
-        }
-    }
-    let scenario_names: Vec<String> = scenario_names.into_keys().collect();
+// Convert HashMap<String, ProcessTopology> to RecordBatch
+pub fn process_topos_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let process_topologys = &input_data.processes;
 
-    // Define the schema dynamically based on the scenario names
-    let mut fields: Vec<Field> = vec![Field::new("reserve_product", DataType::Utf8, false)];
-    fields.extend(scenario_names.iter().map(|name| Field::new(name, DataType::Float64, false)));
-    
-    // Initialize vectors to hold the data
-    let mut market_names: Vec<String> = Vec::new();
-    let mut scenario_values: Vec<Vec<f64>> = vec![vec![]; scenario_names.len()];
-
-    // Populate the vectors from the HashMap
-    for market in markets.values() {
-        market_names.push(market.name.clone());
-        for (i, scenario_name) in scenario_names.iter().enumerate() {
-            scenario_values[i].push(*market.realisation.get(scenario_name).unwrap_or(&0.0));
-        }
-    }
-
-    // Create Arrow arrays from the vectors
-    let market_names_array: ArrayRef = Arc::new(StringArray::from(market_names));
-    let mut columns: Vec<ArrayRef> = vec![market_names_array];
-    for values in scenario_values {
-        columns.push(Arc::new(Float64Array::from(values)) as ArrayRef);
-    }
-
-    let schema = Arc::new(Schema::new(fields));
-
-    // Create the RecordBatch using these arrays and the schema
-    RecordBatch::try_new(schema, columns)
-}
-
-pub fn market_fixed_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -> Result<RecordBatch, ArrowError> {
-    // Gather all timestamps and sort them
-    let mut all_timestamps: Vec<String> = markets.values()
-        .flat_map(|market| market.fixed.iter().map(|(t, _)| t.clone()))
-        .collect();
-    all_timestamps.sort();
-    all_timestamps.dedup();
-
-    // Initialize a vector for each market
-    let mut columns_data: HashMap<String, Vec<Option<f64>>> = HashMap::new();
-    for market in markets.values() {
-        let mut market_data: Vec<Option<f64>> = vec![None; all_timestamps.len()];
-        for (t, value) in &market.fixed {
-            if let Some(pos) = all_timestamps.iter().position(|timestamp| timestamp == t) {
-                market_data[pos] = Some(*value);
-            }
-        }
-        columns_data.insert(market.name.clone(), market_data);
-    }
-
-    // Create the schema
-    let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
-    fields.extend(markets.keys().map(|name| Field::new(name, DataType::Float64, true)));
-
-    // Create the columns
-    let timestamp_array: ArrayRef = Arc::new(StringArray::from(all_timestamps));
-    let mut columns: Vec<ArrayRef> = vec![timestamp_array];
-    for market_name in markets.keys() {
-        let column_data = columns_data.remove(market_name).expect("Market data should be present");
-        let column_array: ArrayRef = Arc::new(Float64Array::from(column_data));
-        columns.push(column_array);
-    }
-
-    let schema = Arc::new(Schema::new(fields));
-
-    // Create the RecordBatch using these arrays and the schema
-    RecordBatch::try_new(schema, columns)
-}
-
-pub fn market_price_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -> Result<RecordBatch, ArrowError> {
-    let mut columns: HashMap<String, Vec<f64>> = HashMap::new();
-    let mut unique_timestamps: HashSet<String> = HashSet::new();
-
-    // Collect all timestamps and initialize columns
-    for market in markets.values() {
-        for data in &market.price.ts_data {
-            for (timestamp, _) in &data.series {
-                unique_timestamps.insert(timestamp.clone());
-            }
-        }
-    }
-
-    let sorted_timestamps: Vec<String> = unique_timestamps.iter().cloned().collect();
-    println!("Unique Timestamps: {}", sorted_timestamps.len());
-
-    // Initialize column data
-    for market in markets.values() {
-        for data in &market.price.ts_data {
-            let scenario = &data.scenario;
-            let column_name = format!("{},{}", market.name, scenario);  // Updated column name format
-            let mut column_data = vec![f64::NAN; sorted_timestamps.len()]; // Fill with NaN for missing data
-
-            for (timestamp, value) in &data.series {
-                if let Some(pos) = sorted_timestamps.iter().position(|t| t == timestamp) {
-                    column_data[pos] = *value;
-                }
-            }
-
-            println!("Column: {}, Length: {}", column_name, column_data.len());  // Print before moving `column_data`
-            columns.insert(column_name, column_data);
-        }
-    }
-
-    // Sort columns by scenario to ensure order: first all s1, then s2, then s3, etc.
-    let mut column_names: Vec<String> = columns.keys().cloned().collect();
-    column_names.sort_by(|a, b| {
-        let a_parts: Vec<&str> = a.split(',').collect();
-        let b_parts: Vec<&str> = b.split(',').collect();
-        a_parts[1].cmp(&b_parts[1]).then_with(|| a_parts[0].cmp(&b_parts[0]))
-    });
-
-    // Prepare the schema and arrays
-    let mut fields = vec![Field::new("timestamp", DataType::Utf8, false)];
-    let timestamp_array: ArrayRef = Arc::new(StringArray::from(sorted_timestamps));
-    let mut arrays = vec![timestamp_array];
-
-    for name in column_names {
-        fields.push(Field::new(&name, DataType::Float64, false));
-        let array: ArrayRef = Arc::new(Float64Array::from(columns.get(&name).unwrap().clone()));
-        arrays.push(array);
-    }
-
-    // Create the RecordBatch
-    let schema = Arc::new(Schema::new(fields));
-    let record_batch = RecordBatch::try_new(schema, arrays)?;
-    Ok(record_batch)
-}
-
-pub fn market_balance_price_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -> Result<RecordBatch, ArrowError> {
-    let mut columns: HashMap<String, Vec<f64>> = HashMap::new();
-    let mut unique_timestamps: HashSet<String> = HashSet::new();
-
-    // Collect all timestamps and initialize columns
-    for market in markets.values().filter(|m| m.m_type == "energy") {
-        for data in [&market.up_price, &market.down_price].iter() {
-            for ts_data in &data.ts_data {
-                for (timestamp, _) in &ts_data.series {
-                    unique_timestamps.insert(timestamp.clone());
-                }
-            }
-        }
-    }
-
-    let sorted_timestamps: Vec<String> = unique_timestamps.iter().cloned().collect();
-
-    // Initialize column data for up and down prices
-    for market in markets.values().filter(|m| m.m_type == "energy") {
-        for (label, price_data) in [("up", &market.up_price), ("dw", &market.down_price)].iter() {
-            for data in &price_data.ts_data {
-                let column_name = format!("{},{},{}", market.name, label, data.scenario);
-                let mut column_data = vec![f64::NAN; sorted_timestamps.len()];
-
-                for (timestamp, value) in &data.series {
-                    if let Some(pos) = sorted_timestamps.iter().position(|t| t == timestamp) {
-                        column_data[pos] = *value;
-                    }
-                }
-
-                columns.insert(column_name, column_data);
-            }
-        }
-    }
-
-    // Sort columns by scenario to ensure order: first all s1, then s2, then s3, etc.
-    let mut column_names: Vec<String> = columns.keys().cloned().collect();
-    column_names.sort_by(|a, b| {
-        let a_parts: Vec<&str> = a.split(',').collect();
-        let b_parts: Vec<&str> = b.split(',').collect();
-        a_parts[2].cmp(&b_parts[2]).then_with(|| a_parts[0].cmp(&b_parts[0]))
-    });
-
-    // Prepare the schema and arrays
-    let mut fields = vec![Field::new("timestamp", DataType::Utf8, false)];
-    let timestamp_array: ArrayRef = Arc::new(StringArray::from(sorted_timestamps));
-    let mut arrays = vec![timestamp_array];
-
-    for name in column_names {
-        fields.push(Field::new(&name, DataType::Float64, false));
-        let array: ArrayRef = Arc::new(Float64Array::from(columns.get(&name).unwrap().clone()));
-        arrays.push(array);
-    }
-
-    // Create the RecordBatch
-    let schema = Arc::new(Schema::new(fields));
-    return RecordBatch::try_new(schema, arrays);
-}
-
-pub fn node_delays_to_arrow(node_delays: &HashMap<String, input_data::NodeDelay>) -> Result<RecordBatch, ArrowError> {
     // Define the schema for the Arrow RecordBatch
+    println!("Topos");
+    let schema = Schema::new(vec![
+        Field::new("process", DataType::Utf8, false),
+        Field::new("source_sink", DataType::Utf8, false),
+        Field::new("node", DataType::Utf8, false),
+        Field::new("conversion_coeff", DataType::Float64, false),
+        Field::new("capacity", DataType::Float64, false),
+        Field::new("vom_cost", DataType::Float64, false),
+        Field::new("ramp_up", DataType::Float64, false),
+        Field::new("ramp_down", DataType::Float64, false),
+        Field::new("initial_load", DataType::Float64, false),
+        Field::new("initial_flow", DataType::Float64, false),
+    ]);
+
+    // Initialize vectors to hold process data
+    let mut processes: Vec<String> = Vec::new();
+    let mut source_sinks: Vec<String> = Vec::new();
+    let mut nodes: Vec<String> = Vec::new();
+    let mut conversion_coeffs: Vec<f64> = Vec::new();
+    let mut capacities: Vec<f64> = Vec::new();
+    let mut vom_costs: Vec<f64> = Vec::new();
+    let mut ramp_ups: Vec<f64> = Vec::new();
+    let mut ramp_downs: Vec<f64> = Vec::new();
+    let mut initial_loads: Vec<f64> = Vec::new();
+    let mut initial_flows: Vec<f64> = Vec::new();
+
+    // Extract data from the HashMap
+    for (process_name, process) in process_topologys {
+        for topo in &process.topos {
+            processes.push(process_name.clone());
+
+            // Determine the `source_sink` value
+            let source_sink = if !topo.sink.is_empty() {
+                topo.sink.clone()
+            } else {
+                topo.source.clone()
+            };
+
+            // Determine the `node` value
+            let node = if !topo.sink.is_empty() {
+                topo.sink.clone()
+            } else {
+                topo.source.clone()
+            };
+
+            source_sinks.push(source_sink);
+            nodes.push(node);
+            conversion_coeffs.push(1.0); // Example placeholder value for `conversion_coeff`
+            capacities.push(topo.capacity);
+            vom_costs.push(topo.vom_cost);
+            ramp_ups.push(topo.ramp_up);
+            ramp_downs.push(topo.ramp_down);
+            initial_loads.push(topo.initial_load);
+            initial_flows.push(topo.initial_flow);
+        }
+    }
+
+    // Create arrays from the vectors
+    let processes_array = Arc::new(StringArray::from(processes)) as ArrayRef;
+    let source_sinks_array = Arc::new(StringArray::from(source_sinks)) as ArrayRef;
+    let nodes_array = Arc::new(StringArray::from(nodes)) as ArrayRef;
+    let conversion_coeffs_array = Arc::new(Float64Array::from(conversion_coeffs)) as ArrayRef;
+    let capacities_array = Arc::new(Float64Array::from(capacities)) as ArrayRef;
+    let vom_costs_array = Arc::new(Float64Array::from(vom_costs)) as ArrayRef;
+    let ramp_ups_array = Arc::new(Float64Array::from(ramp_ups)) as ArrayRef;
+    let ramp_downs_array = Arc::new(Float64Array::from(ramp_downs)) as ArrayRef;
+    let initial_loads_array = Arc::new(Float64Array::from(initial_loads)) as ArrayRef;
+    let initial_flows_array = Arc::new(Float64Array::from(initial_flows)) as ArrayRef;
+
+    // Create the RecordBatch using these arrays
+    let record_batch = RecordBatch::try_new(
+        Arc::new(schema),
+        vec![
+            processes_array,
+            source_sinks_array,
+            nodes_array,
+            conversion_coeffs_array,
+            capacities_array,
+            vom_costs_array,
+            ramp_ups_array,
+            ramp_downs_array,
+            initial_loads_array,
+            initial_flows_array,
+        ],
+    );
+
+    record_batch
+}
+
+pub fn node_diffusion_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let node_diffusions = &input_data.node_diffusion;
+
+    // Define the schema fields based on the NodeDiffusion structure
+    println!("Dif");
+    let fields = vec![
+        Field::new("node1", DataType::Utf8, false),
+        Field::new("node2", DataType::Utf8, false),
+        Field::new("diff_coeff", DataType::Float64, false),
+    ];
+
+    // Prepare columns for the RecordBatch
+    let mut node1_values: Vec<String> = Vec::new();
+    let mut node2_values: Vec<String> = Vec::new();
+    let mut diff_coeff_values: Vec<f64> = Vec::new();
+
+    // Fill the columns with data from the HashMap
+    for node_diffusion in node_diffusions.values() {
+        node1_values.push(node_diffusion.node1.clone());
+        node2_values.push(node_diffusion.node2.clone());
+        diff_coeff_values.push(node_diffusion.diff_coeff);
+    }
+
+    // Create Arrow arrays for each column
+    let node1_array: ArrayRef = Arc::new(StringArray::from(node1_values));
+    let node2_array: ArrayRef = Arc::new(StringArray::from(node2_values));
+    let diff_coeff_array: ArrayRef = Arc::new(Float64Array::from(diff_coeff_values));
+
+    // Collect arrays into a vector
+    let columns: Vec<ArrayRef> = vec![node1_array, node2_array, diff_coeff_array];
+
+    // Create the schema for the RecordBatch
+    let schema = Arc::new(Schema::new(fields));
+
+    // Create the RecordBatch
+    RecordBatch::try_new(schema, columns)
+}
+
+pub fn node_histories_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let node_histories = &input_data.node_histories;
+
+    // Define the schema for the Arrow RecordBatch dynamically
+    let mut fields = vec![Field::new("t", DataType::Int32, false)];
+    let mut columns: Vec<ArrayRef> = Vec::new();
+
+    // We'll need a column for 't' values
+    let mut ts_values: Vec<i32> = Vec::new();
+
+    // Placeholder to hold time series data
+    let mut string_columns_data: HashMap<String, Vec<String>> = HashMap::new();
+    let mut float_columns_data: HashMap<String, Vec<f64>> = HashMap::new();
+
+    // Populate the columns from the NodeHistory HashMap
+    for (node_name, node_history) in node_histories {
+        for ts in &node_history.steps.ts_data {
+            let column_name_string = format!("{},t,{}", node_name, ts.scenario);
+            let column_name_float = format!("{},{}", node_name, ts.scenario);
+
+            fields.push(Field::new(&column_name_string, DataType::Utf8, false));
+            fields.push(Field::new(&column_name_float, DataType::Float64, false));
+
+            for (t, value) in &ts.series {
+                string_columns_data
+                    .entry(column_name_string.clone())
+                    .or_insert_with(Vec::new)
+                    .push(t.clone());
+                float_columns_data
+                    .entry(column_name_float.clone())
+                    .or_insert_with(Vec::new)
+                    .push(*value);
+            }
+        }
+    }
+
+    // Add 't' column which is just a sequence of integers if there's data
+    if let Some(first_column_data) = string_columns_data.values().next() {
+        for i in 0..first_column_data.len() as i32 {
+            ts_values.push(i + 1);
+        }
+    }
+    columns.push(Arc::new(Int32Array::from(ts_values)) as ArrayRef);
+
+    // Add the string and float columns to the RecordBatch
+    for (key, val) in string_columns_data {
+        println!("String column '{}': {} values", key, val.len());
+        columns.push(Arc::new(StringArray::from(val)) as ArrayRef);
+    }
+    for (key, val) in float_columns_data {
+        println!("Float column '{}': {} values", key, val.len());
+        columns.push(Arc::new(Float64Array::from(val)) as ArrayRef);
+    }
+
+    let schema = Arc::new(Schema::new(fields));
+
+    // Create the RecordBatch using these arrays and the schema
+    let record_batch = RecordBatch::try_new(schema, columns);
+
+    match &record_batch {
+        Ok(batch) => {
+            println!("RecordBatch successfully created with {} columns.", batch.num_columns());
+            println!("Schema: {:?}", batch.schema());
+            for i in 0..batch.num_columns() {
+                println!("Column {}: {} rows", i, batch.column(i).len());
+            }
+        }
+        Err(e) => {
+            println!("Error creating RecordBatch: {}", e);
+        }
+    }
+
+    record_batch
+}
+
+pub fn node_delays_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let node_delays = &input_data.node_delay;
+
+    // Define the schema for the Arrow RecordBatch
+    println!("Delay");
     let schema = Schema::new(vec![
         Field::new("node1", DataType::Utf8, false),
         Field::new("node2", DataType::Utf8, false),
@@ -687,502 +664,87 @@ pub fn node_delays_to_arrow(node_delays: &HashMap<String, input_data::NodeDelay>
     )
 }
 
-pub fn node_histories_to_arrow(node_histories: &HashMap<String, input_data::NodeHistory>) -> ArrowResult<RecordBatch> {
-    // Define the schema for the Arrow RecordBatch dynamically
-    let mut fields = vec![Field::new("t", DataType::Int32, false)];
-    let mut columns: Vec<ArrayRef> = Vec::new();
+pub fn inflow_blocks_to_arrow(
+    input_data: &input_data::InputData,
+) -> Result<RecordBatch, ArrowError> {
+    // Extract inflow_blocks and temporals from input_data
+    let inflow_blocks = &input_data.inflow_blocks;
+    let temporals = &input_data.temporals;
 
-    // We'll need a column for 't' values
-    let mut ts_values: Vec<i32> = Vec::new();
+    // Collect all unique scenario names across all inflow blocks
+    let mut scenario_names = HashMap::new();
+    for block in inflow_blocks.values() {
+        for ts in &block.data.ts_data {
+            scenario_names.insert(ts.scenario.clone(), ());
+        }
+    }
+    let scenario_names: Vec<String> = scenario_names.into_keys().collect();
 
-    // Placeholder to hold time series data
-    let mut string_columns_data = HashMap::new();
-    let mut float_columns_data = HashMap::new();
+    // Define the schema dynamically based on the scenario names
+    let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
+    for block in inflow_blocks.values() {
+        fields.push(Field::new(&format!("{}, {}", block.name, block.node), DataType::Utf8, false));
+        for scenario in &scenario_names {
+            fields.push(Field::new(&format!("{}, {}", block.name, scenario), DataType::Float64, false));
+        }
+    }
 
-    // Populate the columns from the NodeHistory HashMap
-    for (node_name, node_history) in node_histories {
-        for ts in &node_history.steps.ts_data {
-            let column_name_string = format!("{},t,{}", node_name, ts.scenario);
-            let column_name_float = format!("{},{}", node_name, ts.scenario);
+    // Initialize data structures for each column
+    let mut t_values: Vec<String> = temporals.t.clone();
+    let mut start_times: HashMap<String, Vec<String>> = HashMap::new();
+    let mut scenario_values: HashMap<String, Vec<Vec<f64>>> = HashMap::new();
+    for block in inflow_blocks.values() {
+        start_times.insert(block.name.clone(), vec![]);
+        scenario_values.insert(block.name.clone(), vec![vec![]; scenario_names.len()]);
+    }
 
-            fields.push(Field::new(&column_name_string, DataType::Utf8, false));
-            fields.push(Field::new(&column_name_float, DataType::Float64, false));
+    // Populate the vectors from the HashMap
+    for block in inflow_blocks.values() {
+        for ts in &block.data.ts_data {
+            if ts.series.len() != temporals.t.len() {
+                return Err(ArrowError::ComputeError("Timeseries length mismatch".to_string()));
+            }
+        }
 
-            for (t, value) in &ts.series {
-                string_columns_data
-                    .entry(column_name_string.clone())
-                    .or_insert_with(Vec::new)
-                    .push(t.clone());
-                float_columns_data
-                    .entry(column_name_float.clone())
-                    .or_insert_with(Vec::new)
-                    .push(*value);
+        let start_time_vec = start_times.get_mut(&block.name).unwrap();
+        let scenario_vecs = scenario_values.get_mut(&block.name).unwrap();
+        for (i, t) in temporals.t.iter().enumerate() {
+            start_time_vec.push(block.start_time.clone());
+
+            for (j, ts) in block.data.ts_data.iter().enumerate() {
+                if ts.series[i].0 != *t {
+                    return Err(ArrowError::ComputeError("Timeseries mismatch in temporal data".to_string()));
+                }
+                scenario_vecs[j].push(ts.series[i].1);
             }
         }
     }
 
-    // Add 't' column which is just a sequence of integers
-    for i in 0..string_columns_data.values().next().unwrap().len() as i32 {
-        ts_values.push(i + 1);
-    }
-    columns.push(Arc::new(Int32Array::from(ts_values)) as ArrayRef);
+    // Create Arrow arrays from the vectors
+    let t_array: ArrayRef = Arc::new(StringArray::from(t_values));
+    let mut columns: Vec<ArrayRef> = vec![t_array];
 
-    // Add the string and float columns to the RecordBatch
-    for (key, val) in string_columns_data {
-        columns.push(Arc::new(StringArray::from(val)) as ArrayRef);
-    }
-    for (key, val) in float_columns_data {
-        columns.push(Arc::new(Float64Array::from(val)) as ArrayRef);
+    for block in inflow_blocks.values() {
+        let start_times_array: ArrayRef = Arc::new(StringArray::from(start_times.remove(&block.name).unwrap_or_else(Vec::new)));
+        columns.push(start_times_array);
+
+        for values in scenario_values.remove(&block.name).unwrap_or_else(Vec::new) {
+            columns.push(Arc::new(Float64Array::from(values)) as ArrayRef);
+        }
     }
 
+    // Create the schema
     let schema = Arc::new(Schema::new(fields));
 
     // Create the RecordBatch using these arrays and the schema
     RecordBatch::try_new(schema, columns)
 }
 
-// Function to convert a HashMap<String, NodeDiffusion> to an Arrow RecordBatch
-pub fn node_diffusion_to_arrow(
-    node_diffusions: &HashMap<String, input_data::NodeDiffusion>,
-) -> Result<RecordBatch, ArrowError> {
-    // Define the schema fields based on the NodeDiffusion structure
-    let fields = vec![
-        Field::new("node1", DataType::Utf8, false),
-        Field::new("node2", DataType::Utf8, false),
-        Field::new("diff_coeff", DataType::Float64, false),
-    ];
+pub fn markets_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let markets = &input_data.markets;
 
-    // Prepare columns for the RecordBatch
-    let mut node1_values: Vec<String> = Vec::new();
-    let mut node2_values: Vec<String> = Vec::new();
-    let mut diff_coeff_values: Vec<f64> = Vec::new();
-
-    // Fill the columns with data from the HashMap
-    for node_diffusion in node_diffusions.values() {
-        node1_values.push(node_diffusion.node1.clone());
-        node2_values.push(node_diffusion.node2.clone());
-        diff_coeff_values.push(node_diffusion.diff_coeff);
-    }
-
-    // Create Arrow arrays for each column
-    let node1_array: ArrayRef = Arc::new(StringArray::from(node1_values));
-    let node2_array: ArrayRef = Arc::new(StringArray::from(node2_values));
-    let diff_coeff_array: ArrayRef = Arc::new(Float64Array::from(diff_coeff_values));
-
-    // Collect arrays into a vector
-    let columns: Vec<ArrayRef> = vec![node1_array, node2_array, diff_coeff_array];
-
-    // Create the schema for the RecordBatch
-    let schema = Arc::new(Schema::new(fields));
-
-    // Create the RecordBatch
-    RecordBatch::try_new(schema, columns)
-}
-
-pub fn serialize_batch_and_encode_to_base64(batch: &RecordBatch) -> Result<String, Box<dyn Error>> {
-    // Serialize the RecordBatch to a Vec<u8>
-    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(batch)?;
-
-    // Encode the Vec<u8> into a base64 String
-    let encoded_arrow_data: String = encode(&arrow_data);
-
-    // Return the base64 encoded string
-    Ok(encoded_arrow_data)
-}
-
-pub fn serialize_record_batch_to_vec(batch: &RecordBatch) -> Result<Vec<u8>, Box<dyn Error>> {
-    let mut buf: Vec<u8> = Vec::new();
-    {
-        // Place the writer in a scoped block
-        let mut writer = StreamWriter::try_new(&mut buf, &batch.schema())?;
-        writer.write(batch)?;
-        writer.finish()?;
-        // `writer` gets dropped here, at the end of the scoped block, releasing the borrow on `buf`
-    }
-    // Now that the writer is dropped, it's safe to move `buf`
-    println!("Buffer size after serialization: {}", buf.len());
-    Ok(buf)
-}
-
-pub fn create_arrow_data_buffer() -> Result<Vec<u8>, Box<dyn Error>> {
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("id", DataType::Int32, false),
-        Field::new("name", DataType::Utf8, false),
-    ]));
-
-    let id_values = vec![1, 2, 3, 4];
-    let name_values = vec!["Alice", "Bob", "Cindy", "David"];
-    let ids = Int32Array::from(id_values);
-    let names = StringArray::from(name_values);
-
-    let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(ids), Arc::new(names)])?;
-
-    let mut buffer: Vec<u8> = Vec::new();
-    {
-        let mut writer = StreamWriter::try_new(&mut buffer, &schema)?;
-        writer.write(&batch)?;
-        writer.finish()?;
-    }
-
-    Ok(buffer)
-}
-
-// This function converts a HashMap<String, Node> of inflow TimeSeriesData to an Arrow RecordBatch
-pub fn nodes_inflow_to_arrow(nodes: &HashMap<String, input_data::Node>) -> Result<RecordBatch, ArrowError> {
-    let mut fields = vec![Field::new("t", DataType::Utf8, false)];
-    let mut columns: Vec<ArrayRef> = Vec::new();
-    
-    // Assume all nodes have the same timestamps
-    if let Some((_, first_node)) = nodes.iter().next() {
-        let timestamps: Vec<String> = first_node.inflow.ts_data[0].series.iter().map(|(t, _)| t.clone()).collect();
-        let timestamp_array = Arc::new(StringArray::from(timestamps)) as ArrayRef;
-        columns.push(timestamp_array);
-    }
-
-    for (node_name, node) in nodes {
-        for ts in &node.inflow.ts_data {
-            let column_name = format!("{},{}", node_name, ts.scenario);
-            fields.push(Field::new(&column_name, DataType::Float64, false));
-    
-            let values: Vec<f64> = ts.series.iter().map(|(_, v)| *v).collect();
-            let value_array = Arc::new(Float64Array::from(values)) as ArrayRef;
-            columns.push(value_array);
-        }
-    }
-
-    let schema = Arc::new(Schema::new(fields));
-    RecordBatch::try_new(schema, columns)
-}
-
-pub fn nodes_commodity_price_to_arrow(nodes: &HashMap<String, input_data::Node>) -> Result<RecordBatch, ArrowError> {
-    let mut fields = vec![Field::new("t", DataType::Utf8, false)];
-    let mut columns: Vec<ArrayRef> = Vec::new();
-
-    // Assume all nodes have the same timestamps for simplicity
-    if let Some((_, first_node)) = nodes.iter().find(|(_, n)| n.is_commodity) {
-        let timestamps = first_node.cost.ts_data[0].series.iter().map(|(t, _)| t.clone()).collect::<Vec<String>>();
-        let timestamp_array = Arc::new(StringArray::from(timestamps)) as ArrayRef;
-        columns.push(timestamp_array);
-    }
-
-    // Process only the nodes where `is_commodity` is true
-    for (node_name, node) in nodes.iter().filter(|(_, n)| n.is_commodity) {
-        for ts in &node.cost.ts_data {
-            let column_name = format!("{},{}", node_name, ts.scenario);
-            fields.push(Field::new(&column_name, DataType::Float64, false));
-
-            let values: Vec<f64> = ts.series.iter().map(|(_, value)| *value).collect();
-            let value_array = Arc::new(Float64Array::from(values)) as ArrayRef;
-            columns.push(value_array);
-        }
-    }
-
-    let schema = Arc::new(Schema::new(fields));
-    let record_batch = RecordBatch::try_new(schema, columns)?;
-    Ok(record_batch)
-}
-
-// Function to convert eff_ops of Process to an Arrow RecordBatch
-pub fn processes_eff_ops_to_arrow(
-    processes: &HashMap<String, input_data::Process>,
-) -> Result<RecordBatch, ArrowError> {
-    let mut fields: Vec<Field> = Vec::new();
-    let mut columns: Vec<ArrayRef> = Vec::new();
-
-    // Calculate the maximum number of operations across all processes
-    let max_ops = processes.values()
-                           .map(|p| p.eff_ops.len())
-                           .max()
-                           .unwrap_or(0);
-    
-    for i in 0..max_ops {
-        let column_name = format!("op{}", i+1);
-        fields.push(Field::new(&column_name, DataType::Float64, true));
-    }
-
-    // Create a data column for each operation index
-    for i in 0..max_ops {
-        let mut column_values: Vec<Option<f64>> = Vec::new();
-
-        for process in processes.values() {
-            if i < process.eff_ops.len() {
-                match process.eff_ops[i].parse::<f64>() {
-                    Ok(num) => column_values.push(Some(num)),
-                    Err(_) => column_values.push(None),
-                }
-            } else {
-                column_values.push(None); // Pad with None if the process has fewer ops than max_ops
-            }
-        }
-
-        let float_array = Arc::new(Float64Array::from(column_values)) as ArrayRef;
-        columns.push(float_array);
-    }
-
-    if columns.len() != fields.len() {
-        println!("Mismatch error: {} columns for {} fields", columns.len(), fields.len());
-        return Err(ArrowError::InvalidArgumentError(format!(
-            "number of columns({}) must match number of fields({}) in schema",
-            columns.len(),
-            fields.len()
-        )));
-    }
-
-    let schema = Arc::new(Schema::new(fields));
-    RecordBatch::try_new(schema, columns)
-}
-
-pub fn processes_eff_fun_to_arrow(
-    processes: &HashMap<String, input_data::Process>,
-) -> Result<RecordBatch, ArrowError> {
-    let mut fields: Vec<Field> = vec![Field::new("process", DataType::Utf8, false)];
-    let mut column_data: Vec<Vec<Option<f64>>> = Vec::new();
-    let mut process_column: Vec<String> = Vec::new();
-
-    // Calculate the maximum length of eff_fun across all processes
-    let max_length = processes.values()
-        .map(|p| p.eff_fun.len())
-        .max()
-        .unwrap_or(0);
-
-    // Create fields for each index in eff_fun
-    for i in 1..=max_length {
-        fields.push(Field::new(&format!("{}", i), DataType::Float64, true));
-        column_data.push(Vec::new());
-    }
-
-    // Construct columns for operation points and efficiency values
-    for (process_name, process) in processes {
-        process_column.push(format!("{},op", process_name));
-        process_column.push(format!("{},eff", process_name));
-
-        for (i, (op_point, eff_value)) in process.eff_fun.iter().enumerate() {
-            if i < column_data.len() {
-                column_data[i].push(Some(*op_point));
-                column_data[i].push(Some(*eff_value));
-            }
-        }
-
-        // Pad remaining columns with None
-        for i in process.eff_fun.len()..max_length {
-            column_data[i].push(None); // For op
-            column_data[i].push(None); // For eff
-        }
-    }
-
-    // Create an Arrow column for the 'process' field
-    let process_column = Arc::new(StringArray::from(process_column)) as ArrayRef;
-    let mut columns: Vec<ArrayRef> = vec![process_column];
-
-    // Create Arrow columns for each tuple index in eff_fun
-    for col in column_data {
-        let arrow_col = Arc::new(Float64Array::from(col)) as ArrayRef;
-        columns.push(arrow_col);
-    }
-
-    // Create the schema from the fields
-    let schema = Arc::new(Schema::new(fields));
-
-    // Construct and return the RecordBatch
-    RecordBatch::try_new(schema, columns)
-}
-
-pub fn processes_cf_to_arrow(
-    processes: &HashMap<String, input_data::Process>
-) -> Result<RecordBatch, ArrowError> {
-    let mut fields: Vec<Field> = Vec::new(); // Fields for the schema
-    let mut columns: Vec<ArrayRef> = Vec::new(); // Data columns
-    let mut timestamp_set: Option<HashSet<String>> = None; // Set to check for consistent timestamps
-
-    // Validate and collect timestamps, and create fields for each time series
-    for (process_name, process) in processes {
-        for ts in &process.cf.ts_data {
-            let column_name = format!("{},{}", process_name, ts.scenario);
-            fields.push(Field::new(&column_name, DataType::Float64, true)); // Add a field for each column
-
-            let timestamps: HashSet<String> = ts.series.iter().map(|(t, _)| t.clone()).collect();
-            if let Some(ref ts_set) = timestamp_set {
-                // Check that all time series have the same timestamps
-                if ts_set != &timestamps {
-                    return Err(ArrowError::InvalidArgumentError(
-                        "Timestamps do not match across all time series.".to_string(),
-                    ));
-                }
-            } else {
-                timestamp_set = Some(timestamps);
-            }
-        }
-    }
-
-    // Convert timestamp_set into a sorted Vec of timestamps
-    let mut timestamps = timestamp_set
-        .unwrap_or_default()
-        .into_iter()
-        .collect::<Vec<String>>();
-    timestamps.sort_by(|a, b| {
-        NaiveDateTime::parse_from_str(a, "%d.%m.%Y %H:%M")
-            .unwrap()
-            .cmp(&NaiveDateTime::parse_from_str(b, "%d.%m.%Y %H:%M").unwrap())
-    });
-    fields.insert(0, Field::new("t", DataType::Utf8, false)); // Timestamp field
-
-    // Create the timestamp column
-    let timestamp_column = StringArray::from(timestamps.clone());
-    columns.push(Arc::new(timestamp_column) as ArrayRef);
-
-    // Collect data for each time series and add it to the columns
-    for (process_name, process) in processes {
-        for ts in &process.cf.ts_data {
-            let column_name = format!("{},{}", process_name, ts.scenario);
-            // Match timestamps to values
-            let column_values: Vec<Option<f64>> = timestamps
-                .iter()
-                .map(|t| {
-                    ts.series
-                        .iter()
-                        .find(|(ts, _)| ts == t)
-                        .map(|(_, value)| Some(*value))
-                        .unwrap_or(None) // If timestamp not found, use None
-                })
-                .collect();
-            
-            // Check for length consistency again, just to be safe
-            if column_values.len() != timestamps.len() {
-                return Err(ArrowError::InvalidArgumentError(format!(
-                    "Length mismatch for column '{}'",
-                    column_name
-                )));
-            }
-            
-            // Add the data column
-            columns.push(Arc::new(Float64Array::from(column_values)) as ArrayRef);
-        }
-    }
-
-    // Create the schema from the fields
-    let schema = Arc::new(Schema::new(fields));
-
-    // Construct and return the RecordBatch
-    RecordBatch::try_new(schema, columns)
-}
-
-pub fn processes_cap_to_arrow(
-    processes: &HashMap<String, input_data::Process>,
-) -> Result<RecordBatch, ArrowError> {
-    let mut fields: Vec<Field> = Vec::new();
-    let mut columns: Vec<ArrayRef> = Vec::new();
-    let mut timestamps: Vec<Option<String>> = Vec::new();
-    let mut column_data: HashMap<String, Vec<Option<f64>>> = HashMap::new();
-
-    fields.push(Field::new("t", DataType::Utf8, true)); // Timestamp column is nullable
-
-    for (process_name, process) in processes {
-        for topology in &process.topos {
-            let flow = if topology.sink == *process_name {
-                &topology.source
-            } else if topology.source == *process_name {
-                &topology.sink
-            } else {
-                continue;
-            };
-
-            for time_series in &process.eff_ts.ts_data {
-                let column_name = format!("{},{},{}", process_name, flow, time_series.scenario);
-                fields.push(Field::new(&column_name, DataType::Float64, true));
-
-                let series_data: Vec<Option<f64>> = time_series.series.iter().map(|(_, value)| Some(*value)).collect();
-                if timestamps.is_empty() {
-                    timestamps = time_series.series.iter().map(|(time, _)| Some(time.clone())).collect();
-                }
-
-                if column_data.contains_key(&column_name) {
-                    // If the column already exists, ensure its length matches the new series data
-                    if let Some(existing_data) = column_data.get(&column_name) {
-                        if existing_data.len() != series_data.len() {
-                            return Err(ArrowError::InvalidArgumentError(format!(
-                                "Mismatch in column lengths for '{}'",
-                                column_name
-                            )));
-                        }
-                    }
-                } else {
-                    column_data.insert(column_name, series_data);
-                }
-            }
-        }
-    }
-
-    // Check if all series are of the same length
-    let series_length = timestamps.len();
-    if column_data.values().any(|v| v.len() != series_length) {
-        return Err(ArrowError::InvalidArgumentError(
-            "All columns in a record batch must have the same length".to_string(),
-        ));
-    }
-
-    // Create Arrow columns from the collected data
-    for (column_name, data) in &column_data {
-        columns.push(Arc::new(Float64Array::from(data.clone())) as ArrayRef);
-    }
-    // Create the timestamp column and prepend it
-    let timestamp_column = Arc::new(StringArray::from(timestamps.iter().flatten().cloned().collect::<Vec<String>>())) as ArrayRef;
-    columns.insert(0, timestamp_column);
-
-    // Create the schema from the field definitions
-    let schema = Arc::new(Schema::new(fields));
-
-    // Construct and return the RecordBatch
-    RecordBatch::try_new(schema, columns)
-}
-
-pub fn processes_eff_to_arrow(processes: &HashMap<String, input_data::Process>) -> Result<RecordBatch, ArrowError> {
-    // Initialize fields and columns for the RecordBatch
-    let mut fields: Vec<Field> = Vec::new();
-    let mut columns: Vec<ArrayRef> = Vec::new();
-
-    // Find the first process with a non-empty eff_ts to establish the timestamps
-    let timestamps = if let Some((_, first_process)) = processes.iter().find(|(_, p)| !p.eff_ts.ts_data.is_empty()) {
-        first_process.eff_ts.ts_data[0].series.iter().map(|(t, _)| t.clone()).collect::<Vec<String>>()
-    } else {
-        return Err(ArrowError::ComputeError("No processes with time series data.".to_string()));
-    };
-
-    // Create the timestamp column
-    let timestamp_array = Arc::new(StringArray::from(timestamps)) as ArrayRef;
-    fields.push(Field::new("t", DataType::Utf8, false));
-    columns.push(timestamp_array);
-
-    // Group and sort the scenarios across all processes
-    let mut scenario_groups: BTreeMap<String, Vec<(String, Vec<f64>)>> = BTreeMap::new();
-    for (process_name, process) in processes {
-        for time_series in &process.eff_ts.ts_data {
-            scenario_groups.entry(time_series.scenario.clone())
-                .or_insert_with(Vec::new)
-                .push((process_name.clone(), time_series.series.iter().map(|(_, v)| *v).collect()));
-        }
-    }
-
-    // Now iterate over the sorted scenario groups and add columns accordingly
-    for (scenario, proc_values) in scenario_groups {
-        for (process_name, values) in proc_values {
-            let column_name = format!("{},{}", process_name, scenario);
-            fields.push(Field::new(&column_name, DataType::Float64, false));
-            let value_array = Arc::new(Float64Array::from(values)) as ArrayRef;
-            columns.push(value_array);
-        }
-    }
-
-    // Construct the schema from the fields
-    let schema = Arc::new(Schema::new(fields));
-
-    // Construct the record batch
-    let record_batch = RecordBatch::try_new(schema, columns)?;
-    Ok(record_batch)
-}
-
-// Convert HashMap<String, MarketNew> to RecordBatch
-pub fn markets_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -> Result<RecordBatch, ArrowError> {
     // Define the schema for the Arrow RecordBatch
+    println!("Market");
     let schema = Schema::new(vec![
         Field::new("market", DataType::Utf8, false),
         Field::new("m_type", DataType::Utf8, false),
@@ -1256,11 +818,53 @@ pub fn markets_to_arrow(markets: &HashMap<String, input_data::MarketNew>) -> Res
     );
 
     record_batch
-
 }
 
-// Function to convert scenarios HashMap into an Arrow RecordBatch
-pub fn scenarios_to_arrow(scenarios: &HashMap<String, f64>) -> Result<RecordBatch, ArrowError> {
+pub fn market_realisation_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let markets = &input_data.markets;
+
+    // First, collect all scenario names across all markets
+    println!("Market real");
+    let mut scenario_names = HashMap::new();
+    for market in markets.values() {
+        for scenario in market.realisation.keys() {
+            scenario_names.insert(scenario.clone(), ());
+        }
+    }
+    let scenario_names: Vec<String> = scenario_names.into_keys().collect();
+
+    // Define the schema dynamically based on the scenario names
+    let mut fields: Vec<Field> = vec![Field::new("reserve_product", DataType::Utf8, false)];
+    fields.extend(scenario_names.iter().map(|name| Field::new(name, DataType::Float64, false)));
+    
+    // Initialize vectors to hold the data
+    let mut market_names: Vec<String> = Vec::new();
+    let mut scenario_values: Vec<Vec<f64>> = vec![vec![]; scenario_names.len()];
+
+    // Populate the vectors from the HashMap
+    for market in markets.values() {
+        market_names.push(market.name.clone());
+        for (i, scenario_name) in scenario_names.iter().enumerate() {
+            scenario_values[i].push(*market.realisation.get(scenario_name).unwrap_or(&0.0));
+        }
+    }
+
+    // Create Arrow arrays from the vectors
+    let market_names_array: ArrayRef = Arc::new(StringArray::from(market_names));
+    let mut columns: Vec<ArrayRef> = vec![market_names_array];
+    for values in scenario_values {
+        columns.push(Arc::new(Float64Array::from(values)) as ArrayRef);
+    }
+
+    let schema = Arc::new(Schema::new(fields));
+
+    // Create the RecordBatch using these arrays and the schema
+    RecordBatch::try_new(schema, columns)
+}
+
+pub fn scenarios_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let scenarios = &input_data.scenarios;
+
     // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
         Field::new("name", DataType::Utf8, false),
@@ -1281,6 +885,16 @@ pub fn scenarios_to_arrow(scenarios: &HashMap<String, f64>) -> Result<RecordBatc
     let names_array = Arc::new(StringArray::from(names)) as ArrayRef;
     let probabilities_array = Arc::new(Float64Array::from(probabilities)) as ArrayRef;
 
+    // Check if both columns have the same length
+    let names_len = names_array.len();
+    let probabilities_len = probabilities_array.len();
+    if names_len != probabilities_len {
+        return Err(ArrowError::InvalidArgumentError(format!(
+            "Mismatched column lengths: 'name' ({}), 'probability' ({})",
+            names_len, probabilities_len
+        )));
+    }
+
     // Create the RecordBatch using these arrays
     let record_batch = RecordBatch::try_new(
         Arc::new(schema),
@@ -1289,387 +903,853 @@ pub fn scenarios_to_arrow(scenarios: &HashMap<String, f64>) -> Result<RecordBatc
 
     Ok(record_batch)
 }
-/* 
-// Convert HashMap<String, ProcessTopology> to RecordBatch
-pub fn process_topos_to_arrow(process_topologys: &HashMap<String, input_data::Process>) -> Result<RecordBatch, ArrowError> {
-    // Define the schema for the Arrow RecordBatch
-    let schema = Schema::new(vec![
-        Field::new("process", DataType::Utf8, false),
-        Field::new("source_sink", DataType::Utf8, false),
-        Field::new("node", DataType::Utf8, false),
-        Field::new("conversion_coeff", DataType::Float64, false),
-        Field::new("capacity", DataType::Float64, false),
-        Field::new("vom_cost", DataType::Float64, false),
-        Field::new("ramp_up", DataType::Float64, false),
-        Field::new("ramp_down", DataType::Float64, false),
-        Field::new("initial_load", DataType::Float64, false),
-        Field::new("initial_flow", DataType::Float64, false),
-    ]);
 
-    let mut processes: Vec<String> = Vec::new();
-    let mut source_sinks: Vec<String> = Vec::new();
-    let mut nodes: Vec<String> = Vec::new();
-    let mut conversion_coeffs: Vec<f64> = Vec::new();
-    let mut capacities: Vec<f64> = Vec::new();
-    let mut vom_costs: Vec<f64> = Vec::new();
-    let mut ramp_ups: Vec<f64> = Vec::new();
-    let mut ramp_downs: Vec<f64> = Vec::new();
-    let mut initial_loads: Vec<f64> = Vec::new();
-    let mut initial_flows: Vec<f64> = Vec::new();
+pub fn processes_eff_fun_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let processes = &input_data.processes;
 
-    for (process_name, process) in process_topologys {
-        processes.push(process.process.clone());
-        source_sinks.push(process.source_sink.clone());
-        nodes.push(process.node.clone());
-        conversion_coeffs.push(process.conversion_coeff);
-        capacities.push(process.capacity);
-        vom_costs.push(process.vom_cost);
-        ramp_ups.push(process.ramp_up);
-        ramp_downs.push(process.ramp_down);
-        initial_loads.push(process.initial_load);
-        initial_flows.push(process.initial_flow);
-    }    
+    println!("Process eff fun");
+    let mut fields: Vec<Field> = vec![Field::new("process", DataType::Utf8, false)];
+    let mut column_data: Vec<Vec<Option<f64>>> = Vec::new();
+    let mut process_column: Vec<String> = Vec::new();
 
-    // Create arrays from the vectors
-    let processes_array = Arc::new(StringArray::from(processes)) as ArrayRef;
-    let source_sinks_array = Arc::new(StringArray::from(source_sinks)) as ArrayRef;
-    let nodes_array = Arc::new(StringArray::from(nodes)) as ArrayRef;
-    let conversion_coeffs_array = Arc::new(Float64Array::from(conversion_coeffs)) as ArrayRef;
-    let capacities_array = Arc::new(Float64Array::from(capacities)) as ArrayRef;
-    let vom_costs_array = Arc::new(Float64Array::from(vom_costs)) as ArrayRef;
-    let ramp_ups_array = Arc::new(Float64Array::from(ramp_ups)) as ArrayRef;
-    let ramp_downs_array = Arc::new(Float64Array::from(ramp_downs)) as ArrayRef;
-    let initial_loads_array = Arc::new(Float64Array::from(initial_loads)) as ArrayRef;
-    let initial_flows_array = Arc::new(Float64Array::from(initial_flows)) as ArrayRef;
+    // Calculate the maximum length of eff_fun across all processes
+    let max_length = processes.values()
+        .map(|p| p.eff_fun.len())
+        .max()
+        .unwrap_or(0);
 
-    let record_batch = RecordBatch::try_new(
-        Arc::new(schema),
-        vec![
-            processes_array,
-            source_sinks_array,
-            nodes_array,
-            conversion_coeffs_array,
-            capacities_array,
-            vom_costs_array,
-            ramp_ups_array,
-            ramp_downs_array,
-            initial_loads_array,
-            initial_flows_array,
-        ],
-    );    
-
-    record_batch
-}
-*/
-
-// Convert HashMap<String, Process> to RecordBatch
-pub fn processes_to_arrow(processes: &HashMap<String, input_data::Process>) -> Result<RecordBatch, ArrowError> {
-    // Define the schema for the Arrow RecordBatch
-    let schema = Schema::new(vec![
-        Field::new("name", DataType::Utf8, false),
-        Field::new("is_cf", DataType::Boolean, false),
-        Field::new("is_cf_fix", DataType::Boolean, false),
-        Field::new("is_online", DataType::Boolean, false),
-        Field::new("is_res", DataType::Boolean, false),
-        Field::new("conversion", DataType::Int64, false),
-        Field::new("eff", DataType::Float64, false),
-        Field::new("load_min", DataType::Float64, false),
-        Field::new("load_max", DataType::Float64, false),
-        Field::new("start_cost", DataType::Float64, false),
-        Field::new("min_online", DataType::Float64, false),
-        Field::new("min_offline", DataType::Float64, false),
-        Field::new("max_online", DataType::Float64, false),
-        Field::new("max_offline", DataType::Float64, false),
-        Field::new("initial_state", DataType::Float64, false),
-        Field::new("scenario_independent_online", DataType::Boolean, false),
-        Field::new("delay", DataType::Float64, false),
-    ]);
-
-    // Initialize vectors to hold process data
-    let mut names: Vec<String> = Vec::new();
-    let mut is_cfs: Vec<bool> = Vec::new();
-    let mut is_cf_fixes: Vec<bool> = Vec::new();
-    let mut is_onlines: Vec<bool> = Vec::new();
-    let mut is_reses: Vec<bool> = Vec::new();
-    let mut conversions: Vec<i64> = Vec::new();
-    let mut effs: Vec<f64> = Vec::new();
-    let mut load_mins: Vec<f64> = Vec::new();
-    let mut load_maxs: Vec<f64> = Vec::new();
-    let mut start_costs: Vec<f64> = Vec::new();
-    let mut min_onlines: Vec<f64> = Vec::new();
-    let mut min_offlines: Vec<f64> = Vec::new();
-    let mut max_onlines: Vec<f64> = Vec::new();
-    let mut max_offlines: Vec<f64> = Vec::new();
-    let mut initial_states: Vec<f64> = Vec::new();
-    let mut scenario_independent_onlines: Vec<bool> = Vec::new();
-
-    for (name, process) in processes {
-        names.push(process.name.clone());
-        is_cfs.push(process.is_cf);
-        is_cf_fixes.push(process.is_cf_fix);
-        is_onlines.push(process.is_online);
-        is_reses.push(process.is_res);
-        conversions.push(process.conversion);
-        effs.push(process.eff);
-        load_mins.push(process.load_min);
-        load_maxs.push(process.load_max);
-        start_costs.push(process.start_cost);
-        min_onlines.push(process.min_online);
-        min_offlines.push(process.min_offline);
-        max_onlines.push(process.max_online);
-        max_offlines.push(process.max_offline);
-        initial_states.push(process.initial_state);
-        scenario_independent_onlines.push(process.is_scenario_independent);
+    // Create fields for each index in eff_fun
+    for i in 1..=max_length {
+        fields.push(Field::new(&format!("{}", i), DataType::Float64, true));
+        column_data.push(Vec::new());
     }
 
-    // Create arrays from the vectors
-    let names_array = Arc::new(StringArray::from(names)) as ArrayRef;
-    let is_cfs_array = Arc::new(BooleanArray::from(is_cfs)) as ArrayRef;
-    let is_cf_fixes_array = Arc::new(BooleanArray::from(is_cf_fixes)) as ArrayRef;
-    let is_onlines_array = Arc::new(BooleanArray::from(is_onlines)) as ArrayRef;
-    let is_reses_array = Arc::new(BooleanArray::from(is_reses)) as ArrayRef;
-    let conversions_array = Arc::new(Int64Array::from(conversions)) as ArrayRef;
-    let effs_array = Arc::new(Float64Array::from(effs)) as ArrayRef;
-    let load_mins_array = Arc::new(Float64Array::from(load_mins)) as ArrayRef;
-    let load_maxs_array = Arc::new(Float64Array::from(load_maxs)) as ArrayRef;
-    let start_costs_array = Arc::new(Float64Array::from(start_costs)) as ArrayRef;
-    let min_onlines_array = Arc::new(Float64Array::from(min_onlines)) as ArrayRef;
-    let min_offlines_array = Arc::new(Float64Array::from(min_offlines)) as ArrayRef;
-    let max_onlines_array = Arc::new(Float64Array::from(max_onlines)) as ArrayRef;
-    let max_offlines_array = Arc::new(Float64Array::from(max_offlines)) as ArrayRef;
-    let initial_states_array = Arc::new(Float64Array::from(initial_states)) as ArrayRef;
-    let scenario_independent_onlines_array = Arc::new(BooleanArray::from(scenario_independent_onlines)) as ArrayRef;
+    // Construct columns for operation points and efficiency values
+    for (process_name, process) in processes {
+        process_column.push(format!("{},op", process_name));
+        process_column.push(format!("{},eff", process_name));
 
-    // Now you can create the RecordBatch using these arrays
-    let record_batch = RecordBatch::try_new(
-        Arc::new(schema),
-        vec![
-            names_array,
-            is_cfs_array,
-            is_cf_fixes_array,
-            is_onlines_array,
-            is_reses_array,
-            conversions_array,
-            effs_array,
-            load_mins_array,
-            load_maxs_array,
-            start_costs_array,
-            min_onlines_array,
-            min_offlines_array,
-            max_onlines_array,
-            max_offlines_array,
-            initial_states_array,
-            scenario_independent_onlines_array,
-        ],
-    );
+        for (i, (op_point, eff_value)) in process.eff_fun.iter().enumerate() {
+            if i < column_data.len() {
+                column_data[i].push(Some(*op_point));
+                column_data[i].push(Some(*eff_value));
+            }
+        }
 
-    record_batch
-
-}
-
-// Convert HashMap<String, Node> to RecordBatch
-pub fn nodes_to_arrow(nodes: &HashMap<String, input_data::Node>) -> Result<RecordBatch, ArrowError> {
-    // Define the schema for the Arrow RecordBatch
-    let schema = Schema::new(vec![
-        Field::new("node", DataType::Utf8, false),
-        Field::new("is_commodity", DataType::Boolean, false),
-        Field::new("is_state", DataType::Boolean, false),
-        Field::new("is_res", DataType::Boolean, false),
-        Field::new("is_market", DataType::Boolean, false),
-        Field::new("is_inflow", DataType::Boolean, false),
-        Field::new("state_max", DataType::Float64, false),
-        Field::new("state_min", DataType::Float64, false),
-        Field::new("in_max", DataType::Float64, false),
-        Field::new("out_max", DataType::Float64, false),
-        Field::new("initial_state", DataType::Float64, false),
-        Field::new("state_loss_proportional", DataType::Float64, false),
-        Field::new("scenario_independent_state", DataType::Boolean, false),
-        Field::new("is_temp", DataType::Boolean, false),
-        Field::new("t_e_conversion", DataType::Float64, false),
-        Field::new("residual_value", DataType::Float64, false),
-    ]);
-
-    let mut names: Vec<String> = Vec::new();
-    let mut is_commodity: Vec<bool> = Vec::new();
-    let mut is_state: Vec<bool> = Vec::new();
-    let mut is_res: Vec<bool> = Vec::new();
-    let mut is_market: Vec<bool> = Vec::new();
-    let mut is_inflow: Vec<bool> = Vec::new();
-    let mut state_maxs: Vec<f64> = Vec::new();
-    let mut state_mins: Vec<f64> = Vec::new();
-    let mut in_maxs: Vec<f64> = Vec::new();
-    let mut out_maxs: Vec<f64> = Vec::new();
-    let mut initial_states: Vec<f64> = Vec::new();
-    let mut state_loss_proportionals: Vec<f64> = Vec::new();
-    let mut scenario_independent_states: Vec<bool> = Vec::new();
-    let mut is_temps: Vec<bool> = Vec::new();
-    let mut t_e_conversions: Vec<f64> = Vec::new();
-    let mut residual_values: Vec<f64> = Vec::new();
-
-    for (node_name, node) in nodes {
-        names.push(node_name.clone());
-        is_commodity.push(node.is_commodity);
-        is_state.push(node.is_state);
-        is_res.push(node.is_res);
-        is_market.push(node.is_market);
-        is_inflow.push(node.is_inflow);
-        state_maxs.push(node.state.state_max);
-        state_mins.push(node.state.state_min);
-        in_maxs.push(node.state.in_max);
-        out_maxs.push(node.state.out_max);
-        initial_states.push(node.state.initial_state);
-        state_loss_proportionals.push(node.state.state_loss_proportional);
-        scenario_independent_states.push(node.state.is_scenario_independent); // Adjust if you have a specific field for this
-        is_temps.push(node.state.is_temp);
-        t_e_conversions.push(node.state.t_e_conversion);
-        residual_values.push(node.state.residual_value);
-    }
-
-    // Create arrays from the vectors
-    let names_array = Arc::new(StringArray::from(names)) as ArrayRef;
-    let is_commodity_array = Arc::new(BooleanArray::from(is_commodity)) as ArrayRef;
-    let is_state_array = Arc::new(BooleanArray::from(is_state)) as ArrayRef;
-    let is_res_array = Arc::new(BooleanArray::from(is_res)) as ArrayRef;
-    let is_market_array = Arc::new(BooleanArray::from(is_market)) as ArrayRef;
-    let is_inflow_array = Arc::new(BooleanArray::from(is_inflow)) as ArrayRef;
-    let state_maxs_array = Arc::new(Float64Array::from(state_maxs)) as ArrayRef;
-    let state_mins_array = Arc::new(Float64Array::from(state_mins)) as ArrayRef;
-    let in_maxs_array = Arc::new(Float64Array::from(in_maxs)) as ArrayRef;
-    let out_maxs_array = Arc::new(Float64Array::from(out_maxs)) as ArrayRef;
-    let initial_states_array = Arc::new(Float64Array::from(initial_states)) as ArrayRef;
-    let state_loss_proportionals_array = Arc::new(Float64Array::from(state_loss_proportionals)) as ArrayRef;
-    let scenario_independent_states_array = Arc::new(BooleanArray::from(scenario_independent_states)) as ArrayRef;
-    let is_temps_array = Arc::new(BooleanArray::from(is_temps)) as ArrayRef;
-    let t_e_conversions_array = Arc::new(Float64Array::from(t_e_conversions)) as ArrayRef;
-    let residual_values_array = Arc::new(Float64Array::from(residual_values)) as ArrayRef;
-
-
-    // Now you can create the RecordBatch using these arrays
-    let record_batch = RecordBatch::try_new(
-        Arc::new(schema),
-        vec![
-            names_array,
-            is_commodity_array,
-            is_state_array,
-            is_res_array,
-            is_market_array,
-            is_inflow_array,
-            state_maxs_array,
-            state_mins_array,
-            in_maxs_array,
-            out_maxs_array,
-            initial_states_array,
-            state_loss_proportionals_array,
-            scenario_independent_states_array,
-            is_temps_array,
-            t_e_conversions_array,
-            residual_values_array,
-        ],
-    );
-
-    record_batch
-}
-
-pub fn inputdatasetup_to_arrow(setup: &input_data::InputDataSetup) -> Result<RecordBatch, ArrowError> {
-    println!("Starting inputdatasetup_to_arrow function.");
-
-    // Define the schema for the Arrow RecordBatch
-    let schema = Schema::new(vec![
-        Field::new("parameter", DataType::Utf8, false),
-        Field::new("value", DataType::Utf8, true), // Using Utf8 for all values for simplicity
-    ]);
-    println!("Schema defined.");
-
-    // Prepare data
-    let parameters = vec![
-        "contains_reserves", "contains_online", "contains_states", "contains_piecewise_eff",
-        "contains_risk", "contains_diffusion", "contains_delay", "contains_markets",
-        "reserve_realisation", "use_market_bids", "common_timesteps", "common_scenario_name",
-        "use_node_dummy_variables", "use_ramp_dummy_variables",
-    ];
-    
-    println!("Parameters prepared.");
-
-    let values: Vec<String> = vec![
-        setup.contains_reserves.to_string(), setup.contains_online.to_string(), setup.contains_states.to_string(),
-        setup.contains_piecewise_eff.to_string(), setup.contains_risk.to_string(), setup.contains_diffusion.to_string(),
-        setup.contains_delay.to_string(), setup.contains_markets.to_string(), setup.reserve_realisation.to_string(),
-        setup.use_market_bids.to_string(), setup.common_timesteps.to_string(), setup.common_scenario_name.clone(),
-        setup.use_node_dummy_variables.to_string(), setup.use_ramp_dummy_variables.to_string(),
-    ];
-
-    println!("Values prepared.");
-
-    /* 
-    // Debug print to check the first few parameters and values
-    for i in 0..parameters.len().min(5) { // Just print the first 5 for brevity
-        println!("{}: {}", parameters[i], values[i]);
-    }
-    */
-
-    // Create arrays
-    let parameter_array = Arc::new(StringArray::from(parameters)) as ArrayRef;
-    let value_array = Arc::new(StringArray::from(values)) as ArrayRef;
-
-    //println!("Arrays created.");
-
-    // Attempt to create a RecordBatch
-    match RecordBatch::try_new(Arc::new(schema), vec![parameter_array, value_array]) {
-        Ok(batch) => {
-            println!("RecordBatch successfully created.");
-            Ok(batch)
-        },
-        Err(e) => {
-            println!("Error creating RecordBatch: {:?}", e);
-            Err(e)
+        // Pad remaining columns with None
+        for i in process.eff_fun.len()..max_length {
+            column_data[i].push(None); // For op
+            column_data[i].push(None); // For eff
         }
     }
+
+    // Create an Arrow column for the 'process' field
+    let process_column = Arc::new(StringArray::from(process_column)) as ArrayRef;
+    let mut columns: Vec<ArrayRef> = vec![process_column];
+
+    // Create Arrow columns for each tuple index in eff_fun
+    for col in column_data {
+        let arrow_col = Arc::new(Float64Array::from(col)) as ArrayRef;
+        columns.push(arrow_col);
+    }
+
+    // Create the schema from the fields
+    let schema = Arc::new(Schema::new(fields));
+
+    // Construct and return the RecordBatch
+    RecordBatch::try_new(schema, columns)
 }
- 
-// Function to convert HashMap<String, Group> to RecordBatch
-pub fn groups_to_arrow(groups: &HashMap<String, input_data::Group>) -> Result<RecordBatch, ArrowError> {
+
+pub fn reserve_type_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let reserve_type = &input_data.reserve_type;
+
     // Define the schema for the Arrow RecordBatch
+    println!("reserve type");
     let schema = Schema::new(vec![
         Field::new("type", DataType::Utf8, false),
-        Field::new("entity", DataType::Utf8, false),
-        Field::new("group", DataType::Utf8, false),
+        Field::new("ramp_factor", DataType::Float64, false),
     ]);
 
-    // Initialize vectors to hold group data
+    // Initialize vectors to hold the data
     let mut types: Vec<String> = Vec::new();
-    let mut entities: Vec<String> = Vec::new();
-    let mut group_names: Vec<String> = Vec::new();
+    let mut ramp_factors: Vec<f64> = Vec::new();
 
-    // Process each group
-    for (_, group) in groups.iter() {
-        for member in &group.members {
-            types.push(group.g_type.clone());
-            entities.push(member.clone());
-            group_names.push(group.name.clone());
+    // Populate the vectors from the HashMap
+    for (key, &value) in reserve_type.iter() {
+        types.push(key.clone());
+        ramp_factors.push(value);
+    }
+
+    // Create Arrow arrays from the vectors
+    let type_array: ArrayRef = Arc::new(StringArray::from(types));
+    let ramp_factor_array: ArrayRef = Arc::new(Float64Array::from(ramp_factors));
+
+    // Create the RecordBatch using these arrays and the schema
+    RecordBatch::try_new(
+        Arc::new(schema),
+        vec![type_array, ramp_factor_array],
+    )
+}
+
+pub fn processes_cap_to_arrow(
+    input_data: &input_data::InputData,
+) -> Result<RecordBatch, ArrowError> {
+    println!("Process cap");
+    
+    let temporals = &input_data.temporals;
+    let processes = &input_data.processes;
+    
+    let mut fields: Vec<Field> = Vec::new();
+    let mut columns: Vec<ArrayRef> = Vec::new();
+    let mut timestamps: Vec<Option<String>> = temporals.t.iter().map(|t| Some(t.clone())).collect();
+    let mut column_data: HashMap<String, Vec<Option<f64>>> = HashMap::new();
+
+    fields.push(Field::new("t", DataType::Utf8, true)); // Timestamp column is nullable
+
+    for (process_name, process) in processes {
+        for topology in &process.topos {
+            let flow = if topology.sink == *process_name {
+                &topology.source
+            } else if topology.source == *process_name {
+                &topology.sink
+            } else {
+                continue;
+            };
+
+            for time_series in &process.eff_ts.ts_data {
+                let column_name = format!("{},{},{}", process_name, flow, time_series.scenario);
+                fields.push(Field::new(&column_name, DataType::Float64, true));
+
+                let series_data: Vec<Option<f64>> = time_series.series.iter().map(|(_, value)| Some(*value)).collect();
+
+                // Check if the series data timestamps match temporals.t
+                if time_series.series.len() != temporals.t.len() {
+                    return Err(ArrowError::ComputeError("Timeseries length mismatch".to_string()));
+                }
+                for (i, (timestamp, _)) in time_series.series.iter().enumerate() {
+                    if &temporals.t[i] != timestamp {
+                        return Err(ArrowError::ComputeError("Timeseries mismatch in temporal data".to_string()));
+                    }
+                }
+
+                if !series_data.is_empty() {
+                    column_data.insert(column_name, series_data);
+                }
+            }
         }
     }
 
-    // Create arrays from the vectors
-    let types_array = Arc::new(StringArray::from(types)) as ArrayRef;
-    let entities_array = Arc::new(StringArray::from(entities)) as ArrayRef;
-    let group_names_array = Arc::new(StringArray::from(group_names)) as ArrayRef;
+    // Check if we have any data to insert
+    if column_data.is_empty() {
+        let schema = Arc::new(Schema::new(fields));
+        return RecordBatch::try_new(schema, columns);
+    }
 
-    // Create the RecordBatch using these arrays
+    // Create Arrow columns from the collected data
+    for (column_name, data) in &column_data {
+        columns.push(Arc::new(Float64Array::from(data.clone())) as ArrayRef);
+    }
+
+    // Create the timestamp column and prepend it
+    let timestamp_column = Arc::new(StringArray::from(timestamps.iter().flatten().cloned().collect::<Vec<String>>())) as ArrayRef;
+    columns.insert(0, timestamp_column);
+
+    // Create the schema from the field definitions
+    let schema = Arc::new(Schema::new(fields));
+
+    // Construct and return the RecordBatch
+    RecordBatch::try_new(schema, columns)
+}
+
+pub fn risk_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let risk = &input_data.risk;
+
+    // Define the schema for the Arrow RecordBatch
+    println!("Risk");
+    let schema = Schema::new(vec![
+        Field::new("parameter", DataType::Utf8, false),
+        Field::new("value", DataType::Float64, false),
+    ]);
+
+    // Initialize vectors to hold the data
+    let mut parameters: Vec<String> = Vec::new();
+    let mut values: Vec<f64> = Vec::new();
+
+    // Populate the vectors from the HashMap
+    for (key, &value) in risk.iter() {
+        parameters.push(key.clone());
+        values.push(value);
+    }
+
+    // Create Arrow arrays from the vectors
+    let parameter_array: ArrayRef = Arc::new(StringArray::from(parameters));
+    let value_array: ArrayRef = Arc::new(Float64Array::from(values));
+
+    // Create the RecordBatch using these arrays and the schema
     let record_batch = RecordBatch::try_new(
         Arc::new(schema),
-        vec![
-            types_array,
-            entities_array,
-            group_names_array,
-        ],
+        vec![parameter_array, value_array],
     );
 
     record_batch
 }
+
+pub fn gen_constraints_to_arrow(
+    input_data: &input_data::InputData,
+) -> Result<RecordBatch, ArrowError> {
+    println!("gen const");
+
+    let temporals = &input_data.temporals;
+    let gen_constraints = &input_data.gen_constraints;
+    
+    let mut fields: Vec<Field> = Vec::new();
+    let mut column_data: HashMap<String, Vec<Option<f64>>> = HashMap::new();
+    let mut timestamps: Vec<Option<String>> = temporals.t.iter().map(|t| Some(t.clone())).collect();
+
+    fields.push(Field::new("t", DataType::Utf8, false)); // Timestamp column is not nullable
+
+    // Handle the constant TimeSeriesData for each GenConstraint
+    for (constraint_name, gen_constraint) in gen_constraints.iter() {
+        for ts in &gen_constraint.constant.ts_data {
+            let col_name = format!("{},{}", constraint_name, ts.scenario);
+            fields.push(Field::new(&col_name, DataType::Float64, true));
+            let series_data: Vec<Option<f64>> = ts.series.iter().map(|(_, value)| Some(*value)).collect();
+
+            // Check if the series data timestamps match temporals.t
+            if ts.series.len() != temporals.t.len() {
+                return Err(ArrowError::ComputeError("Timeseries length mismatch".to_string()));
+            }
+            for (i, (timestamp, _)) in ts.series.iter().enumerate() {
+                if &temporals.t[i] != timestamp {
+                    return Err(ArrowError::ComputeError("Timeseries mismatch in temporal data".to_string()));
+                }
+            }
+
+            if !series_data.is_empty() {
+                column_data.insert(col_name, series_data);
+            }
+        }
+    }
+
+    // Handle the ConFactor data
+    for (constraint_name, gen_constraint) in gen_constraints.iter() {
+        for factor in &gen_constraint.factors {
+            for ts in &factor.data.ts_data {
+                let flow_component = if factor.flow.1.is_empty() {
+                    factor.flow.0.clone()
+                } else {
+                    format!("{},{}", factor.flow.0, factor.flow.1)
+                };
+                let col_name = format!("{},{},{}", constraint_name, flow_component, ts.scenario);
+                fields.push(Field::new(&col_name, DataType::Float64, true));
+                let series_data: Vec<Option<f64>> = ts.series.iter().map(|(_, value)| Some(*value)).collect();
+
+                // Check if the series data timestamps match temporals.t
+                if ts.series.len() != temporals.t.len() {
+                    return Err(ArrowError::ComputeError("Timeseries length mismatch".to_string()));
+                }
+                for (i, (timestamp, _)) in ts.series.iter().enumerate() {
+                    if &temporals.t[i] != timestamp {
+                        return Err(ArrowError::ComputeError("Timeseries mismatch in temporal data".to_string()));
+                    }
+                }
+
+                if !series_data.is_empty() {
+                    column_data.insert(col_name, series_data);
+                }
+            }
+        }
+    }
+
+    // Check if we have any data to insert
+    if column_data.is_empty() {
+        let schema = Arc::new(Schema::new(fields));
+        return RecordBatch::try_new(schema, columns);
+    }
+
+    // Create the timestamp column
+    let timestamp_column: ArrayRef = Arc::new(StringArray::from(timestamps.iter().flatten().cloned().collect::<Vec<String>>()));
+    let mut columns: Vec<ArrayRef> = vec![timestamp_column];
+
+    // Create other columns from the collected column_data
+    for field in &fields[1..] { // Skip the timestamp field
+        if let Some(col_data) = column_data.remove(field.name()) {
+            let col_array = Float64Array::from(col_data);
+            columns.push(Arc::new(col_array) as ArrayRef);
+        }
+    }
+
+    let schema = Arc::new(Schema::new(fields));
+
+    // Create the RecordBatch using these arrays and the schema
+    RecordBatch::try_new(schema, columns)
+}
+
+pub fn constraints_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let gen_constraints = &input_data.gen_constraints;
+
+    // Define the schema for the Arrow RecordBatch
+    println!("cons");
+    let schema = Schema::new(vec![
+        Field::new("name", DataType::Utf8, false),
+        Field::new("gc_type", DataType::Utf8, false),
+        Field::new("is_setpoint", DataType::Boolean, false),
+        Field::new("penalty", DataType::Float64, false),
+    ]);
+
+    // Initialize vectors to hold the data
+    let mut names: Vec<String> = Vec::new();
+    let mut types: Vec<String> = Vec::new();
+    let mut is_setpoints: Vec<bool> = Vec::new();
+    let mut penalties: Vec<f64> = Vec::new();
+
+    // Populate the vectors from the HashMap
+    for (_key, gen_constraint) in gen_constraints.iter() {
+        names.push(gen_constraint.name.clone());
+        types.push(gen_constraint.gc_type.clone());
+        is_setpoints.push(gen_constraint.is_setpoint);
+        penalties.push(gen_constraint.penalty);
+    }
+
+    // Create Arrow arrays from the vectors
+    let name_array: ArrayRef = Arc::new(StringArray::from(names));
+    let type_array: ArrayRef = Arc::new(StringArray::from(types));
+    let is_setpoint_array: ArrayRef = Arc::new(BooleanArray::from(is_setpoints));
+    let penalty_array: ArrayRef = Arc::new(Float64Array::from(penalties));
+
+    // Create the RecordBatch using these arrays and the schema
+    RecordBatch::try_new(
+        Arc::new(schema),
+        vec![name_array, type_array, is_setpoint_array, penalty_array],
+    )
+}
+
+pub fn processes_cf_to_arrow(
+    input_data: &input_data::InputData,
+) -> Result<RecordBatch, ArrowError> {
+    println!("Processes cf");
+    
+    let temporals = &input_data.temporals;
+    let processes = &input_data.processes;
+
+    let mut fields: Vec<Field> = Vec::new();
+    let mut columns: Vec<ArrayRef> = Vec::new();
+
+    // Validate timestamps in each process
+    for process in processes.values() {
+        check_timestamps_match(&temporals.t, &process.cf.ts_data)?;
+    }
+
+    // Extract the temporals.t as timestamps
+    let timestamps = temporals.t.clone();
+
+    // Validate and collect timestamps, and create fields for each time series
+    for (process_name, process) in processes {
+        for ts in &process.cf.ts_data {
+            let column_name = format!("{},{}", process_name, ts.scenario);
+            fields.push(Field::new(&column_name, DataType::Float64, true));
+        }
+    }
+
+    // Check if we have any data to insert
+    if fields.is_empty() {
+        let schema = Arc::new(Schema::new(fields));
+        return RecordBatch::try_new(schema, columns);
+    }
+
+    // Create the timestamp column
+    fields.insert(0, Field::new("t", DataType::Utf8, false)); // Timestamp field
+    let timestamp_column = StringArray::from(timestamps.clone());
+    columns.push(Arc::new(timestamp_column) as ArrayRef);
+
+    // Collect data for each time series and add it to the columns
+    for (process_name, process) in processes {
+        for ts in &process.cf.ts_data {
+            let column_name = format!("{},{}", process_name, ts.scenario);
+            // Match timestamps to values
+            let column_values: Vec<Option<f64>> = timestamps
+                .iter()
+                .map(|t| {
+                    ts.series
+                        .iter()
+                        .find(|(ts, _)| ts == t)
+                        .map(|(_, value)| Some(*value))
+                        .unwrap_or(None) // If timestamp not found, use None
+                })
+                .collect();
+
+            // Add the data column
+            columns.push(Arc::new(Float64Array::from(column_values)) as ArrayRef);
+        }
+    }
+
+    // Create the schema from the fields
+    let schema = Arc::new(Schema::new(fields));
+
+    // Construct and return the RecordBatch
+    RecordBatch::try_new(schema, columns)
+}
+
+pub fn market_fixed_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let markets = &input_data.markets;
+
+    // Gather all timestamps and sort them
+    let mut all_timestamps: Vec<String> = markets.values()
+        .flat_map(|market| market.fixed.iter().map(|(t, _)| t.clone()))
+        .collect();
+    all_timestamps.sort();
+    all_timestamps.dedup();
+
+    // Initialize a vector for each market
+    let mut columns_data: HashMap<String, Vec<Option<f64>>> = HashMap::new();
+    for market in markets.values() {
+        let mut market_data: Vec<Option<f64>> = vec![None; all_timestamps.len()];
+        for (t, value) in &market.fixed {
+            if let Some(pos) = all_timestamps.iter().position(|timestamp| timestamp == t) {
+                market_data[pos] = Some(*value);
+            }
+        }
+        columns_data.insert(market.name.clone(), market_data);
+    }
+
+    // Create the schema
+    let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
+    fields.extend(markets.keys().map(|name| Field::new(name, DataType::Float64, true)));
+
+    // Create the columns
+    let timestamp_array: ArrayRef = Arc::new(StringArray::from(all_timestamps));
+    let mut columns: Vec<ArrayRef> = vec![timestamp_array];
+    for market_name in markets.keys() {
+        let column_data = columns_data.remove(market_name).expect("Market data should be present");
+        let column_array: ArrayRef = Arc::new(Float64Array::from(column_data));
+        columns.push(column_array);
+    }
+
+    let schema = Arc::new(Schema::new(fields));
+
+    // Create the RecordBatch using these arrays and the schema
+    RecordBatch::try_new(schema, columns)
+}
+
+pub fn market_price_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let temporals_t = &input_data.temporals.t;
+
+    // Ensure temporals_t is not empty
+    if temporals_t.is_empty() {
+        return Err(ArrowError::InvalidArgumentError("Temporals timestamps are empty".to_string()));
+    }
+
+    // Check if the timestamps in market price data match temporals_t
+    for market in input_data.markets.values() {
+        check_timestamps_match(temporals_t, &market.price.ts_data)?;
+    }
+
+    // Collect all timestamps and initialize columns
+    let mut columns: HashMap<String, Vec<f64>> = HashMap::new();
+    let mut unique_timestamps: HashSet<String> = HashSet::new();
+
+    for market in input_data.markets.values() {
+        for data in &market.price.ts_data {
+            for (timestamp, _) in &data.series {
+                unique_timestamps.insert(timestamp.clone());
+            }
+        }
+    }
+
+    let sorted_timestamps: Vec<String> = temporals_t.clone();
+
+    // If there are no unique timestamps, return an empty RecordBatch
+    if sorted_timestamps.is_empty() {
+        let schema = Arc::new(Schema::new(vec![Field::new("timestamp", DataType::Utf8, false)]));
+        let timestamp_array: ArrayRef = Arc::new(StringArray::from(sorted_timestamps));
+        let arrays = vec![timestamp_array];
+        return RecordBatch::try_new(schema, arrays);
+    }
+
+    // Initialize column data
+    for market in input_data.markets.values() {
+        for data in &market.price.ts_data {
+            let scenario = &data.scenario;
+            let column_name = format!("{},{}", market.name, scenario); // Updated column name format
+            let mut column_data = vec![f64::NAN; sorted_timestamps.len()]; // Fill with NaN for missing data
+
+            for (timestamp, value) in &data.series {
+                if let Some(pos) = sorted_timestamps.iter().position(|t| t == timestamp) {
+                    column_data[pos] = *value;
+                }
+            }
+
+            // Only add the column if it contains any non-NaN values
+            if column_data.iter().any(|&x| !x.is_nan()) {
+                columns.insert(column_name, column_data);
+            }
+        }
+    }
+
+    // Sort columns by scenario to ensure order: first all s1, then s2, then s3, etc.
+    let mut column_names: Vec<String> = columns.keys().cloned().collect();
+    column_names.sort_by(|a, b| {
+        let a_parts: Vec<&str> = a.split(',').collect();
+        let b_parts: Vec<&str> = b.split(',').collect();
+        a_parts[1].cmp(&b_parts[1]).then_with(|| a_parts[0].cmp(&b_parts[0]))
+    });
+
+    // Prepare the schema and arrays
+    let mut fields = vec![Field::new("timestamp", DataType::Utf8, false)];
+    let timestamp_array: ArrayRef = Arc::new(StringArray::from(sorted_timestamps));
+    let mut arrays = vec![timestamp_array];
+
+    for name in column_names {
+        fields.push(Field::new(&name, DataType::Float64, true));
+        let array: ArrayRef = Arc::new(Float64Array::from(columns.get(&name).unwrap().clone()));
+        arrays.push(array);
+    }
+
+    // Create the RecordBatch
+    let schema = Arc::new(Schema::new(fields));
+    let record_batch = RecordBatch::try_new(schema, arrays)?;
+    Ok(record_batch)
+}
+
+pub fn market_balance_price_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let temporals_t = &input_data.temporals.t;
+
+    // Ensure temporals_t is not empty
+    if temporals_t.is_empty() {
+        return Err(ArrowError::InvalidArgumentError("Temporals timestamps are empty".to_string()));
+    }
+
+    // Check if the timestamps in market price data match temporals_t
+    for market in input_data.markets.values().filter(|m| m.m_type == "energy") {
+        check_timestamps_match(temporals_t, &market.up_price.ts_data)?;
+        check_timestamps_match(temporals_t, &market.down_price.ts_data)?;
+    }
+
+    // Collect all timestamps and initialize columns
+    let mut columns: HashMap<String, Vec<f64>> = HashMap::new();
+    let mut unique_timestamps: HashSet<String> = HashSet::new();
+
+    for market in input_data.markets.values().filter(|m| m.m_type == "energy") {
+        for data in [&market.up_price, &market.down_price].iter() {
+            for ts_data in &data.ts_data {
+                for (timestamp, _) in &ts_data.series {
+                    unique_timestamps.insert(timestamp.clone());
+                }
+            }
+        }
+    }
+
+    let sorted_timestamps: Vec<String> = temporals_t.clone();
+
+    // If there are no unique timestamps, return an empty RecordBatch
+    if sorted_timestamps.is_empty() {
+        let schema = Arc::new(Schema::new(vec![Field::new("timestamp", DataType::Utf8, false)]));
+        let timestamp_array: ArrayRef = Arc::new(StringArray::from(sorted_timestamps));
+        let arrays = vec![timestamp_array];
+        return RecordBatch::try_new(schema, arrays);
+    }
+
+    // Initialize column data for up and down prices
+    for market in input_data.markets.values().filter(|m| m.m_type == "energy") {
+        for (label, price_data) in [("up", &market.up_price), ("dw", &market.down_price)].iter() {
+            for data in &price_data.ts_data {
+                let column_name = format!("{},{},{}", market.name, label, data.scenario);
+                let mut column_data = vec![f64::NAN; sorted_timestamps.len()];
+
+                for (timestamp, value) in &data.series {
+                    if let Some(pos) = sorted_timestamps.iter().position(|t| t == timestamp) {
+                        column_data[pos] = *value;
+                    }
+                }
+
+                // Only add the column if it contains any non-NaN values
+                if column_data.iter().any(|&x| !x.is_nan()) {
+                    columns.insert(column_name, column_data);
+                }
+            }
+        }
+    }
+
+    // Sort columns by scenario to ensure order: first all s1, then s2, then s3, etc.
+    let mut column_names: Vec<String> = columns.keys().cloned().collect();
+    column_names.sort_by(|a, b| {
+        let a_parts: Vec<&str> = a.split(',').collect();
+        let b_parts: Vec<&str> = b.split(',').collect();
+        a_parts[2].cmp(&b_parts[2]).then_with(|| a_parts[0].cmp(&b_parts[0]))
+    });
+
+    // Prepare the schema and arrays
+    let mut fields = vec![Field::new("timestamp", DataType::Utf8, false)];
+    let timestamp_array: ArrayRef = Arc::new(StringArray::from(sorted_timestamps));
+    let mut arrays = vec![timestamp_array];
+
+    for name in column_names {
+        fields.push(Field::new(&name, DataType::Float64, true));
+        let array: ArrayRef = Arc::new(Float64Array::from(columns.get(&name).unwrap().clone()));
+        arrays.push(array);
+    }
+
+    // Create the RecordBatch
+    let schema = Arc::new(Schema::new(fields));
+    let record_batch = RecordBatch::try_new(schema, arrays)?;
+    Ok(record_batch)
+}
+
+pub fn serialize_batch_and_encode_to_base64(batch: &RecordBatch) -> Result<String, Box<dyn Error>> {
+    // Serialize the RecordBatch to a Vec<u8>
+    let arrow_data: Vec<u8> = serialize_record_batch_to_vec(batch)?;
+
+    // Encode the Vec<u8> into a base64 String
+    let encoded_arrow_data: String = encode(&arrow_data);
+
+    // Return the base64 encoded string
+    Ok(encoded_arrow_data)
+}
+
+pub fn serialize_record_batch_to_vec(batch: &RecordBatch) -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        // Place the writer in a scoped block
+        let mut writer = StreamWriter::try_new(&mut buf, &batch.schema())?;
+        writer.write(batch)?;
+        writer.finish()?;
+        // `writer` gets dropped here, at the end of the scoped block, releasing the borrow on `buf`
+    }
+    // Now that the writer is dropped, it's safe to move `buf`
+    println!("Buffer size after serialization: {}", buf.len());
+    Ok(buf)
+}
+
+// This function converts a HashMap<String, Node> of inflow TimeSeriesData to an Arrow RecordBatch
+pub fn nodes_inflow_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let temporals_t = &input_data.temporals.t;
+    let nodes = &input_data.nodes;
+
+    // Ensure temporals_t is not empty
+    if temporals_t.is_empty() {
+        return Err(ArrowError::InvalidArgumentError("Temporals timestamps are empty".to_string()));
+    }
+
+    // Check if the timestamps in node inflow data match temporals_t
+    for node in nodes.values() {
+        check_timestamps_match(temporals_t, &node.inflow.ts_data)?;
+    }
+
+    let mut fields = vec![Field::new("t", DataType::Utf8, false)];
+    let mut columns: Vec<ArrayRef> = Vec::new();
+
+    // Determine the common length using the timestamps of the temporals
+    let timestamps = temporals_t.clone();
+    let common_length = timestamps.len();
+    let timestamp_array = Arc::new(StringArray::from(timestamps.clone())) as ArrayRef;
+    columns.push(timestamp_array);
+
+    // Collect inflow data for each node and scenario
+    for (node_name, node) in nodes {
+        for ts in &node.inflow.ts_data {
+            if ts.series.is_empty() {
+                continue;
+            }
+
+            let column_name = format!("{},{}", node_name, ts.scenario);
+            fields.push(Field::new(&column_name, DataType::Float64, true));
+
+            // Prepare values and ensure they have the same length as the timestamps
+            let values: Vec<Option<f64>> = ts.series.iter().map(|(_, v)| Some(*v)).collect();
+            if values.len() != common_length {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "Inconsistent data length for node '{}', scenario '{}': expected {}, got {}",
+                    node_name, ts.scenario, common_length, values.len()
+                )));
+            }
+
+            let value_array = Arc::new(Float64Array::from(values)) as ArrayRef;
+            columns.push(value_array);
+        }
+    }
+
+    let schema = Arc::new(Schema::new(fields));
+    let record_batch = RecordBatch::try_new(schema, columns)?;
+    println!("RecordBatch successfully created with {} columns and {} rows.", record_batch.num_columns(), record_batch.num_rows());
+
+    Ok(record_batch)
+}
+
+pub fn nodes_commodity_price_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let temporals_t = &input_data.temporals.t;
+    let nodes = &input_data.nodes;
+
+    // Ensure temporals_t is not empty
+    if temporals_t.is_empty() {
+        return Err(ArrowError::InvalidArgumentError("Temporals timestamps are empty".to_string()));
+    }
+
+    // Check if the timestamps in node cost data match temporals_t
+    for node in nodes.values().filter(|n| n.is_commodity) {
+        check_timestamps_match(temporals_t, &node.cost.ts_data)?;
+    }
+
+    let mut fields = vec![Field::new("t", DataType::Utf8, false)];
+    let mut columns: Vec<ArrayRef> = Vec::new();
+
+    // First column from Temporals
+    let timestamp_array = Arc::new(StringArray::from(temporals_t.clone())) as ArrayRef;
+    columns.push(timestamp_array);
+
+    // Check the common length from temporals
+    let common_length = temporals_t.len();
+
+    // Process only the nodes where `is_commodity` is true
+    for (node_name, node) in nodes.iter().filter(|(_, n)| n.is_commodity) {
+        for ts in &node.cost.ts_data {
+            if ts.series.is_empty() {
+                continue; // Skip empty time series
+            }
+
+            let column_name = format!("{},{}", node_name, ts.scenario);
+            fields.push(Field::new(&column_name, DataType::Float64, true));
+
+            let values: Vec<Option<f64>> = ts.series.iter().map(|(_, value)| Some(*value)).collect();
+            if values.len() != common_length {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "Inconsistent data length for node '{}', scenario '{}': expected {}, got {}",
+                    node_name, ts.scenario, common_length, values.len()
+                )));
+            }
+
+            let value_array = Arc::new(Float64Array::from(values)) as ArrayRef;
+            columns.push(value_array);
+        }
+    }
+
+    let schema = Arc::new(Schema::new(fields));
+    let record_batch = RecordBatch::try_new(schema, columns)?;
+    println!("RecordBatch successfully created with {} columns and {} rows.", record_batch.num_columns(), record_batch.num_rows());
+
+    Ok(record_batch)
+}
+
+// Function to convert eff_ops of Process to an Arrow RecordBatch
+pub fn processes_eff_ops_to_arrow(
+    processes: &HashMap<String, input_data::Process>,
+) -> Result<RecordBatch, ArrowError> {
+    let mut fields: Vec<Field> = Vec::new();
+    let mut columns: Vec<ArrayRef> = Vec::new();
+    println!("Process eff ops");
+    // Calculate the maximum number of operations across all processes
+    let max_ops = processes.values()
+                           .map(|p| p.eff_ops.len())
+                           .max()
+                           .unwrap_or(0);
+    
+    for i in 0..max_ops {
+        let column_name = format!("op{}", i+1);
+        fields.push(Field::new(&column_name, DataType::Float64, true));
+    }
+
+    // Create a data column for each operation index
+    for i in 0..max_ops {
+        let mut column_values: Vec<Option<f64>> = Vec::new();
+
+        for process in processes.values() {
+            if i < process.eff_ops.len() {
+                match process.eff_ops[i].parse::<f64>() {
+                    Ok(num) => column_values.push(Some(num)),
+                    Err(_) => column_values.push(None),
+                }
+            } else {
+                column_values.push(None); // Pad with None if the process has fewer ops than max_ops
+            }
+        }
+
+        let float_array = Arc::new(Float64Array::from(column_values)) as ArrayRef;
+        columns.push(float_array);
+    }
+
+    if columns.len() != fields.len() {
+        println!("Mismatch error: {} columns for {} fields", columns.len(), fields.len());
+        return Err(ArrowError::InvalidArgumentError(format!(
+            "number of columns({}) must match number of fields({}) in schema",
+            columns.len(),
+            fields.len()
+        )));
+    }
+
+    let schema = Arc::new(Schema::new(fields));
+    RecordBatch::try_new(schema, columns)
+}
+
+pub fn processes_eff_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let processes = &input_data.processes;
+    let temporals_t = &input_data.temporals.t;
+
+    // Ensure temporals_t is not empty
+    if temporals_t.is_empty() {
+        return Err(ArrowError::InvalidArgumentError("Temporals timestamps are empty".to_string()));
+    }
+
+    // Check if the timestamps in process efficiency data match temporals_t
+    for process in processes.values() {
+        check_timestamps_match(temporals_t, &process.eff_ts.ts_data)?;
+    }
+
+    let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
+    let mut columns: Vec<ArrayRef> = Vec::new();
+
+    // Create the timestamp column from Temporals
+    let timestamp_array = Arc::new(StringArray::from(temporals_t.clone())) as ArrayRef;
+    columns.push(timestamp_array);
+
+    let common_length = temporals_t.len();
+
+    // Group and sort the scenarios across all processes
+    let mut scenario_groups: BTreeMap<String, Vec<(String, Vec<f64>)>> = BTreeMap::new();
+    for (process_name, process) in processes {
+        for time_series in &process.eff_ts.ts_data {
+            if time_series.series.is_empty() {
+                continue; // Skip empty time series
+            }
+
+            let values: Vec<f64> = time_series.series.iter().map(|(_, v)| *v).collect();
+            if values.len() != common_length {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "Inconsistent data length for process '{}', scenario '{}': expected {}, got {}",
+                    process_name, time_series.scenario, common_length, values.len()
+                )));
+            }
+
+            scenario_groups
+                .entry(time_series.scenario.clone())
+                .or_insert_with(Vec::new)
+                .push((process_name.clone(), values));
+        }
+    }
+
+    // Iterate over the sorted scenario groups and add columns accordingly
+    for (scenario, proc_values) in scenario_groups {
+        for (process_name, values) in proc_values {
+            let column_name = format!("{},{}", process_name, scenario);
+            fields.push(Field::new(&column_name, DataType::Float64, true));
+            let value_array = Arc::new(Float64Array::from(values)) as ArrayRef;
+            columns.push(value_array);
+        }
+    }
+
+    // Construct the schema from the fields
+    let schema = Arc::new(Schema::new(fields));
+
+    // Construct the record batch
+    let record_batch = RecordBatch::try_new(schema, columns)?;
+    println!("RecordBatch successfully created with {} columns and {} rows.", record_batch.num_columns(), record_batch.num_rows());
+
+    Ok(record_batch)
+}
+
 
 // Function to convert Vec<String> of timeseries data to RecordBatch
 pub fn timeseries_to_arrow(timeseries: Vec<String>) -> Result<RecordBatch, ArrowError> {
     // Define the schema for the Arrow RecordBatch with a single column of strings
+    println!("timeseries");
     let schema = Schema::new(vec![
         Field::new("t", DataType::Utf8, false),
     ]);
@@ -1686,393 +1766,195 @@ pub fn timeseries_to_arrow(timeseries: Vec<String>) -> Result<RecordBatch, Arrow
     record_batch
 }
 
-pub fn vec_to_record_batch(timeseries: Vec<String>) -> ArrowResult<RecordBatch> {
-    // Convert the Vec<String> to a StringArray
-    let array: ArrayRef = Arc::new(StringArray::from(timeseries));
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_yaml;
+    use std::fs::File;
+    use std::io::Read;
+    use std::path::PathBuf;
+    use std::env;
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::record_batch::RecordBatch;
+    use std::sync::Arc;
+    use arrow::array::{StringArray, ArrayRef};
 
-    // Define the schema of the record batch. This schema only has one field.
-    let schema = Schema::new(vec![
-        Field::new("timeseries", DataType::Utf8, false),
-    ]);
-
-    // Create the record batch
-    let batch = RecordBatch::try_new(Arc::new(schema), vec![array])?;
-
-    Ok(batch)
-}
-
-pub fn bool_to_record_batch(value: bool, field_name: &str) -> ArrowResult<RecordBatch> {
-    // Convert the bool value to a BooleanArray
-    let array: ArrayRef = Arc::new(BooleanArray::from(vec![value]));
-
-    // Define the schema of the record batch. This schema only has one field.
-    let schema = Schema::new(vec![
-        Field::new(field_name, DataType::Boolean, false),
-    ]);
-
-    // Create the record batch
-    let batch = RecordBatch::try_new(Arc::new(schema), vec![array])?;
-
-    Ok(batch)
-}
-
-/// Converts a State struct to an Arrow RecordBatch, including a node_id for each record.
-pub fn state_to_record_batch_with_node_id(state: input_data::State, node_id: i32) -> ArrowResult<RecordBatch> {
-    // Define the schema, now including a field for the node_id
-    let schema = Schema::new(vec![
-        Field::new("node_id", DataType::Int32, false),
-        Field::new("in_max", DataType::Float64, false),
-        Field::new("out_max", DataType::Float64, false),
-        Field::new("state_loss_proportional", DataType::Float64, false),
-        Field::new("state_max", DataType::Float64, false),
-        Field::new("state_min", DataType::Float64, false),
-        Field::new("initial_state", DataType::Float64, false),
-        Field::new("is_temp", DataType::Boolean, false),
-        Field::new("t_e_conversion", DataType::Float64, false),
-        Field::new("residual_value", DataType::Float64, false),
-    ]);
-
-    // Arrays for the State fields
-    let node_id_array = Int32Array::from(vec![node_id]); // Correctly use Int32Array for node_id
-    let in_max_array = Float64Array::from(vec![state.in_max]);
-    let out_max_array = Float64Array::from(vec![state.out_max]);
-    let state_loss_proportional_array = Float64Array::from(vec![state.state_loss_proportional]);
-    let state_max_array = Float64Array::from(vec![state.state_max]);
-    let state_min_array = Float64Array::from(vec![state.state_min]);
-    let initial_state_array = Float64Array::from(vec![state.initial_state]);
-    let is_temp_array = BooleanArray::from(vec![state.is_temp]);
-    let t_e_conversion_array = Float64Array::from(vec![state.t_e_conversion]);
-    let residual_value_array = Float64Array::from(vec![state.residual_value]);
-
-    // Include the node_id array in the list of arrays for the RecordBatch
-    let arrays: Vec<ArrayRef> = vec![
-        Arc::new(node_id_array),
-        Arc::new(in_max_array),
-        Arc::new(out_max_array),
-        Arc::new(state_loss_proportional_array),
-        Arc::new(state_max_array),
-        Arc::new(state_min_array),
-        Arc::new(initial_state_array),
-        Arc::new(is_temp_array),
-        Arc::new(t_e_conversion_array),
-        Arc::new(residual_value_array),
-    ];
-
-    RecordBatch::try_new(Arc::new(schema), arrays)
-}
-
-/// Converts TimeSeriesData to an Arrow RecordBatch, including a node_id for each record.
-pub fn time_series_data_to_record_batch_with_node_id(ts_data: input_data::TimeSeriesData, node_id: i32) -> ArrowResult<RecordBatch> {
-    // Flatten the data
-    let mut scenarios = Vec::new();
-    let mut dates = Vec::new();
-    let mut values = Vec::new();
-    let mut node_ids = Vec::new(); // Vector to hold the node_id for each record
+    pub fn read_yaml_file(file_path: &str) -> Result<input_data::InputData, FileReadError> {
+        let mut file = File::open(file_path).map_err(FileReadError::open_error)?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents).map_err(FileReadError::read_error)?;
     
-    for ts in ts_data.ts_data {
-        for (date, value) in ts.series {
-            scenarios.push(ts.scenario.clone());
-            dates.push(date);
-            values.push(value);
-            node_ids.push(node_id); // Associate each record with the node_id
+        match serde_yaml::from_str(&contents) {
+            Ok(data) => Ok(data),
+            Err(e) => {
+                // Log or handle the detailed parsing error message here
+                eprintln!("Failed to parse YAML content: {}", e);
+                Err(FileReadError::Parse(e))
+            }
         }
     }
 
-    // Create Arrow arrays for each column, including the node_id column
-    let scenario_array: ArrayRef = Arc::new(StringArray::from(scenarios));
-    let date_array: ArrayRef = Arc::new(StringArray::from(dates));
-    let value_array: ArrayRef = Arc::new(Float64Array::from(values));
-    let node_id_array: ArrayRef = Arc::new(Int32Array::from(node_ids)); // Array for node_ids
+    #[test]
+    fn test_input_datasetup_to_arrow() {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests/mocks/arrow_tests/full_data.yaml");
+        assert!(path.exists(), "Test file does not exist at the expected path");
 
-    // Define the schema, now including a field for the node_id
-    let schema = Schema::new(vec![
-        Field::new("node_id", DataType::Int32, false),
-        Field::new("scenario", DataType::Utf8, false),
-        Field::new("date", DataType::Utf8, false),
-        Field::new("value", DataType::Float64, false),
-    ]);
+        let input_data = read_yaml_file(path.to_str().unwrap()).expect("Should read the YAML file correctly");
 
-    // Create the RecordBatch with the node_id column included
-    RecordBatch::try_new(Arc::new(schema), vec![node_id_array, scenario_array, date_array, value_array])
-}
-
-/* 
-pub fn convert_test_input_data_to_record_batch(input_data: &TestInputData) -> Result<RecordBatch, Box<dyn std::error::Error>> {
-    let node_keys: Vec<String> = input_data.nodes.keys().cloned().collect();
-    let node_names: Vec<String> = input_data.nodes.values().map(|v| v.name.clone()).collect();
-    let node_values: Vec<i32> = input_data.nodes.values().map(|v| v.value).collect();
-
-    // Metadata is repeated for each node to keep the table size consistent
-    let metadata: Vec<String> = vec![input_data.metadata.clone(); input_data.nodes.len()];
-
-    let node_keys_array: ArrayRef = Arc::new(StringArray::from(node_keys));
-    let node_names_array: ArrayRef = Arc::new(StringArray::from(node_names));
-    let node_values_array: ArrayRef = Arc::new(Int32Array::from(node_values));
-    let metadata_array: ArrayRef = Arc::new(StringArray::from(metadata));
-
-    let fields = vec![
-        Field::new("node_key", DataType::Utf8, false),
-        Field::new("node_name", DataType::Utf8, false),
-        Field::new("node_value", DataType::Int32, false),
-        Field::new("metadata", DataType::Utf8, false),
-    ];
-    let schema = Arc::new(Schema::new(fields));
-
-    let record_batch = RecordBatch::try_new(schema, vec![node_keys_array, node_names_array, node_values_array, metadata_array])?;
-
-    Ok(record_batch)
-}
-*/
-
-pub fn read_input_data_from_yaml<P: AsRef<Path>>(path: P) -> Result<InputData, Box<dyn Error>> {
-    // Open the file
-    let mut file = File::open(path)?;
-    
-    // Read the contents into a string
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)?;
-    
-    // Deserialize the YAML string into InputData
-    let input_data: InputData = serde_yaml::from_str(&contents)?;
-    
-    Ok(input_data)
-}
-
-
-/* 
-pub fn nodes_to_record_batches(nodes: HashMap<String, input_data::Node>) -> ArrowResult<Vec<RecordBatch>> {
-    let mut batches = Vec::new();
-
-    for (index, (key, node)) in nodes.iter().enumerate() {
-        let node_id = index as i32; // Example ID generation
-        let name_array: ArrayRef = Arc::new(StringArray::from(vec![node.name.clone()]));
-
-        // Directly convert boolean fields to BooleanArray here, rather than using bool_to_record_batch
-        let is_commodity_array: ArrayRef = Arc::new(BooleanArray::from(vec![node.is_commodity]));
-        let is_state_array: ArrayRef = Arc::new(BooleanArray::from(vec![node.is_state]));
-        let is_res_array: ArrayRef = Arc::new(BooleanArray::from(vec![node.is_res]));
-        let is_market_array: ArrayRef = Arc::new(BooleanArray::from(vec![node.is_market]));
-        let is_inflow_array: ArrayRef = Arc::new(BooleanArray::from(vec![node.is_inflow]));
-
-        let cost_batch = time_series_data_to_record_batch(node.cost.clone(), node_id)?;
-        let inflow_batch = time_series_data_to_record_batch(node.inflow.clone(), node_id)?;
-        let state_batch = state_to_record_batch(node.state.clone(), node_id)?;
-
-        batches.push(cost_batch);
-        batches.push(inflow_batch);
-        batches.push(state_batch);
-
-        // Define the schema for the node
+        // Dynamic Schema Construction
         let schema = Schema::new(vec![
-            Field::new("node_id", DataType::Int32, false),
-            Field::new("name", DataType::Utf8, false),
+            Field::new("parameter", DataType::Utf8, false),
+            Field::new("value", DataType::Utf8, true),
+        ]);
+
+        // Include all fields and check for non-empty 'common_scenario_name' to include it
+        let mut parameters = vec![
+            "contains_reserves", "contains_online", "contains_states", "contains_piecewise_eff",
+            "contains_risk", "contains_diffusion", "contains_delay", "contains_markets",
+            "reserve_realisation", "use_market_bids", "common_timesteps",
+            "use_node_dummy_variables", "use_ramp_dummy_variables", "common_scenario_name"
+        ];
+
+        let mut values = vec![
+            input_data.setup.contains_reserves.to_string(), input_data.setup.contains_online.to_string(),
+            input_data.setup.contains_states.to_string(), input_data.setup.contains_piecewise_eff.to_string(),
+            input_data.setup.contains_risk.to_string(), input_data.setup.contains_diffusion.to_string(),
+            input_data.setup.contains_delay.to_string(), input_data.setup.contains_markets.to_string(),
+            input_data.setup.reserve_realisation.to_string(), input_data.setup.use_market_bids.to_string(),
+            input_data.setup.common_timesteps.to_string(), input_data.setup.use_node_dummy_variables.to_string(),
+            input_data.setup.use_ramp_dummy_variables.to_string(), input_data.setup.common_scenario_name.clone()
+        ];
+
+        let parameter_array = Arc::new(StringArray::from(parameters)) as ArrayRef;
+        let value_array = Arc::new(StringArray::from(values)) as ArrayRef;
+        let expected_record_batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![parameter_array, value_array]
+        ).unwrap();
+
+        // Test the function
+        let result = inputdatasetup_to_arrow(&input_data.setup).expect("Conversion should succeed");
+
+        // Validate the output
+        assert_eq!(result.num_columns(), expected_record_batch.num_columns());
+        assert_eq!(result.num_rows(), expected_record_batch.num_rows());
+
+        for (i, column) in result.columns().iter().enumerate() {
+            let expected_column = expected_record_batch.column(i).as_any().downcast_ref::<StringArray>().unwrap();
+            let result_column = column.as_any().downcast_ref::<StringArray>().unwrap();
+            assert_eq!(result_column, expected_column, "Column data does not match");
+        }
+    }
+
+    #[test]
+    fn test_nodes_to_arrow() {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests/mocks/arrow_tests/full_data.yaml");
+        assert!(path.exists(), "Test file does not exist at the expected path");
+
+        let input_data = read_yaml_file(path.to_str().unwrap()).expect("Should read the YAML file correctly");
+
+        let batch = nodes_to_arrow(&input_data.nodes).expect("Conversion to arrow should succeed");
+
+        // Define expected schema and order of the fields
+        let expected_fields = vec![
+            "node", "is_commodity", "is_state", "is_res", "is_market", "is_inflow",
+            "state_max", "state_min", "in_max", "out_max", "initial_state",
+            "state_loss_proportional", "scenario_independent_state", "is_temp", "t_e_conversion", "residual_value"
+        ];
+
+        let expected_schema = Schema::new(vec![
+            Field::new("node", DataType::Utf8, false),
             Field::new("is_commodity", DataType::Boolean, false),
             Field::new("is_state", DataType::Boolean, false),
             Field::new("is_res", DataType::Boolean, false),
             Field::new("is_market", DataType::Boolean, false),
             Field::new("is_inflow", DataType::Boolean, false),
-            // Add other fields as necessary...
-        ]);
-
-        // Create the RecordBatch for the node
-        let batch = RecordBatch::try_new(
-            Arc::new(schema),
-            vec![Arc::new(Int32Array::from(vec![node_id])), name_array, is_commodity_array /*, other arrays */],
-        )?;
-
-        batches.push(batch);
-    }
-
-    Ok(batches)
-}
-*/
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use arrow::array::{StringArray, Array, Float64Array, BooleanArray};
-    use arrow::datatypes::{DataType, Field, Schema};
-    use arrow::record_batch::RecordBatch;
-    use arrow::error::Result as ArrowResult;
-    use std::sync::Arc;
-
-    #[test]
-    pub fn test_time_series_data_to_record_batch() {
-        // Setup sample TimeSeriesData
-        let ts_data = input_data::TimeSeriesData {
-            ts_data: vec![
-                input_data::TimeSeries {
-                    scenario: "Scenario A".to_string(),
-                    series: vec![
-                        ("2021-01-01".to_string(), 100.0),
-                        ("2021-01-02".to_string(), 110.0),
-                    ],
-                },
-                input_data::TimeSeries {
-                    scenario: "Scenario B".to_string(),
-                    series: vec![
-                        ("2021-01-01".to_string(), 200.0),
-                        ("2021-01-02".to_string(), 210.0),
-                    ],
-                },
-            ],
-        };
-
-        // Convert TimeSeriesData to RecordBatch
-        let batch = time_series_data_to_record_batch(ts_data).expect("Failed to create RecordBatch");
-
-        // Validate schema
-        assert_eq!(batch.schema().fields().len(), 3, "Schema should have three fields");
-        assert_eq!(batch.schema().fields()[0].as_ref(), &Field::new("scenario", DataType::Utf8, false), "Field schema does not match expected for 'scenario'");
-        assert_eq!(batch.schema().fields()[1].as_ref(), &Field::new("date", DataType::Utf8, false), "Field schema does not match expected for 'date'");
-        assert_eq!(batch.schema().fields()[2].as_ref(), &Field::new("value", DataType::Float64, false), "Field schema does not match expected for 'value'");
-
-        // Validate data
-        // Scenario column
-        let scenario_col = batch.column(0);
-        let scenario_col = scenario_col.as_any().downcast_ref::<StringArray>().expect("Failed to downcast");
-        assert_eq!(scenario_col.value(0), "Scenario A");
-        assert_eq!(scenario_col.value(2), "Scenario B");
-
-        // Date column
-        let date_col = batch.column(1);
-        let date_col = date_col.as_any().downcast_ref::<StringArray>().expect("Failed to downcast");
-        assert_eq!(date_col.value(0), "2021-01-01");
-        assert_eq!(date_col.value(1), "2021-01-02");
-
-        // Value column
-        let value_col = batch.column(2);
-        let value_col = value_col.as_any().downcast_ref::<Float64Array>().expect("Failed to downcast");
-        assert_eq!(value_col.value(0), 100.0);
-        assert_eq!(value_col.value(3), 210.0);
-    }
-
-    #[test]
-    pub fn test_vec_to_record_batch() {
-        // Setup the test input: a Vec<String> of timeseries data
-        let timeseries_data = vec!["2021-01-01".to_string(), "2021-01-02".to_string(), "2021-01-03".to_string()];
-        
-        // Call the function to test
-        let batch_result = vec_to_record_batch(timeseries_data.clone()).expect("Failed to create RecordBatch");
-        
-        // Check that the schema is correct
-        assert_eq!(batch_result.schema().fields().len(), 1, "Schema should have exactly one field");
-        assert_eq!(batch_result.schema().fields()[0].as_ref(), &Field::new("timeseries", DataType::Utf8, false), "Field schema does not match expected");
-        
-        // Check the data
-        let column = batch_result.column(0);
-        let column = column.as_any().downcast_ref::<StringArray>().expect("Failed to downcast to StringArray");
-        assert_eq!(column.len(), timeseries_data.len(), "Column length does not match input data length");
-        
-        // Check each value
-        for (i, value) in timeseries_data.iter().enumerate() {
-            assert_eq!(column.value(i), *value, "Column value does not match input data value at index {}", i);
-        }
-    }
-
-    #[test]
-    pub fn test_bool_to_record_batch() {
-        // Example usage of the test
-        let field_name = "contains_online";
-        let batch = bool_to_record_batch(true, field_name).expect("Failed to create RecordBatch");
-
-        // Verify schema is correct
-        assert_eq!(batch.schema().fields().len(), 1, "Schema should have exactly one field");
-        assert_eq!(batch.schema().fields()[0].as_ref(), &Field::new(field_name, DataType::Boolean, false), "Field schema does not match expected");
-
-        // Verify data
-        let column = batch.column(0);
-        let column = column.as_any().downcast_ref::<BooleanArray>().expect("Failed to downcast to BooleanArray");
-        assert_eq!(column.len(), 1, "Column length should be 1");
-        assert_eq!(column.value(0), true, "Column value does not match input value");
-    }
-
-
-    #[test]
-    pub fn test_state_to_record_batch() {
-        // Create a sample State instance
-        let state_sample = input_data::State {
-            in_max: 100.0,
-            out_max: 80.0,
-            state_loss_proportional: 0.01,
-            state_max: 120.0,
-            state_min: 20.0,
-            initial_state: 50.0,
-            is_temp: true,
-            t_e_conversion: 0.95,
-            residual_value: 10.0,
-        };
-
-        // Convert the State instance to a RecordBatch
-        let batch = state_to_record_batch(state_sample).expect("Failed to create RecordBatch");
-
-        // Check that the schema is correct
-        let expected_schema = Schema::new(vec![
-            Field::new("in_max", DataType::Float64, false),
-            Field::new("out_max", DataType::Float64, false),
-            Field::new("state_loss_proportional", DataType::Float64, false),
             Field::new("state_max", DataType::Float64, false),
             Field::new("state_min", DataType::Float64, false),
+            Field::new("in_max", DataType::Float64, false),
+            Field::new("out_max", DataType::Float64, false),
             Field::new("initial_state", DataType::Float64, false),
+            Field::new("state_loss_proportional", DataType::Float64, false),
+            Field::new("scenario_independent_state", DataType::Boolean, false),
             Field::new("is_temp", DataType::Boolean, false),
             Field::new("t_e_conversion", DataType::Float64, false),
             Field::new("residual_value", DataType::Float64, false),
         ]);
 
-        assert_eq!(batch.schema().as_ref(), &expected_schema);
+        // Verify schema and order of fields
+        assert_eq!(batch.schema().fields().len(), expected_fields.len(), "Number of fields does not match");
+        for (i, field) in batch.schema().fields().iter().enumerate() {
+            assert_eq!(field.name(), expected_fields[i], "Field name or order does not match expected");
+        }
 
-        // Check the data in each column
-        let check_float_column = |idx: usize, expected_val: f64| {
-            let col = batch.column(idx);
-            let col = col.as_any().downcast_ref::<Float64Array>().expect("Failed to downcast");
-            assert_eq!(col.value(0), expected_val);
-        };
+        // Verify the content of the first node 'interiorair'
+        let names_array = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let is_commodity_array = batch.column(1).as_any().downcast_ref::<BooleanArray>().unwrap();
+        let is_state_array = batch.column(2).as_any().downcast_ref::<BooleanArray>().unwrap();
 
-        let check_bool_column = |idx: usize, expected_val: bool| {
-            let col = batch.column(idx);
-            let col = col.as_any().downcast_ref::<BooleanArray>().expect("Failed to downcast");
-            assert_eq!(col.value(0), expected_val);
-        };
+        // More fields as needed
+        let initial_state_array = batch.column(10).as_any().downcast_ref::<Float64Array>().unwrap();
+        let t_e_conversion_array = batch.column(14).as_any().downcast_ref::<Float64Array>().unwrap();
 
-        check_float_column(0, 100.0);
-        check_float_column(1, 80.0);
-        check_float_column(2, 0.01);
-        check_float_column(3, 120.0);
-        check_float_column(4, 20.0);
-        check_float_column(5, 50.0);
-        check_bool_column(6, true);
-        check_float_column(7, 0.95);
-        check_float_column(8, 10.0);
+        // Check values specifically for 'interiorair'
+        assert_eq!(names_array.value(0), "interiorair", "Node name mismatch");
+        assert_eq!(is_commodity_array.value(0), false, "is_commodity mismatch for interiorair");
+        assert_eq!(is_state_array.value(0), true, "is_state mismatch for interiorair");
+        assert_eq!(initial_state_array.value(0), 296.15, "initial_state mismatch for interiorair");
+        assert_eq!(t_e_conversion_array.value(0), 0.5, "t_e_conversion mismatch for interiorair");
+    } 
+
+    #[test]
+    fn test_read_yaml_file_with_empty_data() {
+        // Construct the path to the empty YAML file
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests/mocks/arrow_tests/empty_input_data.yaml"); // Adjust the path as necessary
+
+        // Check if the file actually exists to avoid false negatives
+        assert!(path.exists(), "Test file does not exist at the expected path");
+
+        // Attempt to read and parse the empty YAML file
+        let result = read_yaml_file(path.to_str().unwrap());
+
+        // Check that the result is an error
+        assert!(result.is_err(), "Expected an error for empty input data, but got Ok");
+        
+        // Optionally, to assert specific error types or messages:
+        if let Err(e) = result {
+            match e {
+                FileReadError::Parse(parse_error) => {
+                    println!("Received expected parsing error: {}", parse_error);
+                },
+                _ => panic!("Expected a parsing error, but got a different error"),
+            }
+        }
     }
 
     #[test]
-    pub fn test_time_series_to_record_batch() {
-        // Setup sample TimeSeries data
-        let sample_ts = input_data::TimeSeries {
-            scenario: "Base".to_string(),
-            series: vec![
-                ("2021-01-01".to_string(), 100.0),
-                ("2021-01-02".to_string(), 110.0),
-            ],
-        };
-    
-        // Convert TimeSeries to RecordBatch
-        let batch = time_series_to_record_batch(sample_ts).expect("Failed to create RecordBatch");
-    
-        // Validate schema
-        assert_eq!(batch.schema().fields().len(), 2, "Schema should have two fields");
-        assert_eq!(batch.schema().fields()[0].as_ref(), &Field::new("date", DataType::Utf8, false), "Field schema does not match expected for 'date'");
-        assert_eq!(batch.schema().fields()[1].as_ref(), &Field::new("value", DataType::Float64, false), "Field schema does not match expected for 'value'");
-    
-        // Validate data
-        let date_col = batch.column(0);
-        let date_col = date_col.as_any().downcast_ref::<StringArray>().expect("Failed to downcast");
-        assert_eq!(date_col.value(0), "2021-01-01");
-        assert_eq!(date_col.value(1), "2021-01-02");
-    
-        let value_col = batch.column(1);
-        let value_col = value_col.as_any().downcast_ref::<Float64Array>().expect("Failed to downcast");
-        assert_eq!(value_col.value(0), 100.0);
-        assert_eq!(value_col.value(1), 110.0);
-    }    
+    fn test_read_yaml_file_with_wrong_format() {
+        // Construct the path to the YAML file with incorrect format
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests/mocks/arrow_tests/wrong_input_data.yaml"); // Adjust the path as necessary
+
+        // Check if the file actually exists to avoid false negatives
+        assert!(path.exists(), "Test file does not exist at the expected path");
+
+        // Attempt to read and parse the YAML file with wrong format
+        let result = read_yaml_file(path.to_str().unwrap());
+
+        // Check that the result is an error
+        assert!(result.is_err(), "Expected an error for wrongly formatted input data, but got Ok");
+        
+        // Optionally, to assert specific error types or messages:
+        if let Err(e) = result {
+            match e {
+                FileReadError::Parse(parse_error) => {
+                    println!("Received expected parsing error due to format issue: {}", parse_error);
+                },
+                _ => panic!("Expected a parsing error due to wrong format, but got a different type of error"),
+            }
+        }
+    }
 }

@@ -36,7 +36,6 @@ pub struct Temporals {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InputData {
-    pub timeseries: Vec<String>,
     pub temporals: Temporals,
     pub setup: InputDataSetup,
     pub processes: HashMap<String, Process>,
@@ -135,25 +134,6 @@ pub struct Node {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Market {
-    pub name: String,
-    pub m_type: String,
-    pub node: String, //mikä tyyppi
-    pub pgroup: String,
-    pub direction: String,
-    pub realisation: f64,
-    pub reserve_type: String,
-    pub is_bid: bool,
-    pub is_limited: bool,
-    pub min_bid: f64,
-    pub max_bid: f64,
-    pub fee: f64,
-    pub price: TimeSeriesData,
-    pub up_price: TimeSeriesData,
-    pub down_price: TimeSeriesData,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct MarketNew {
     pub name: String,
     pub m_type: String,
     pub node: String, 

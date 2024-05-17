@@ -195,9 +195,9 @@ pub fn create_example_realisation() -> HashMap<String, f64> {
     realisation
 }
 
-// Function to create a test HashMap for MarketNew
-pub fn create_test_markets_hashmap() -> HashMap<String, input_data::MarketNew> {
-    let mut markets: HashMap<String, input_data::MarketNew> = HashMap::new();
+// Function to create a test HashMap for Market
+pub fn create_test_markets_hashmap() -> HashMap<String, input_data::Market> {
+    let mut markets: HashMap<String, input_data::Market> = HashMap::new();
 
     let timeseries = create_timeseries();
     let realisation = create_example_realisation();
@@ -210,7 +210,7 @@ pub fn create_test_markets_hashmap() -> HashMap<String, input_data::MarketNew> {
     ];
 
     // Example markets
-    let market1 = input_data::MarketNew {
+    let market1 = input_data::Market {
         name: "Market1".to_string(),
         m_type: "energy".to_string(),
         node: "Node1".to_string(),
@@ -229,7 +229,7 @@ pub fn create_test_markets_hashmap() -> HashMap<String, input_data::MarketNew> {
         fixed: data.clone(),
     };
 
-    let market2 = input_data::MarketNew {
+    let market2 = input_data::Market {
         name: "Market2".to_string(),
         m_type: "Tertiary".to_string(),
         node: "Node2".to_string(),

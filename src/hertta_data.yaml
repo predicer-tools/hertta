@@ -1,7 +1,16 @@
 
-timeseries: []
 temporals:
-  t: [] 
+  t:
+  - "20.4.2022 0:00"
+  - "20.4.2022 1:00"
+  - "20.4.2022 2:00"
+  - "20.4.2022 3:00"
+  - "20.4.2022 4:00"
+  - "20.4.2022 5:00"
+  - "20.4.2022 6:00"
+  - "20.4.2022 7:00"
+  - "20.4.2022 8:00"
+  - "20.4.2022 9:00"
   dtf: 0.0  
   is_variable_dt: false  
   variable_dt: []  
@@ -229,7 +238,7 @@ markets:
     node: "electricitygrid"
     pgroup: "p1"
     direction: "none"
-    realisation: 0.0
+    realisation: {}
     reserve_type: "none"
     is_bid: true
     is_limited: false
@@ -314,6 +323,7 @@ markets:
             - ["20.4.2022 7:00", 14.4]
             - ["20.4.2022 8:00", 9.9]
             - ["20.4.2022 9:00", 10.8]
+    fixed: []        
 groups:
   p1:
     name: "p1"

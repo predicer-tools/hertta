@@ -321,7 +321,7 @@ fn update_timeseries(optimization_data: &mut OptimizationData) -> Result<(), &'s
     
     // Check if model_data is available and update timeseries
     if let Some(model_data) = &mut optimization_data.model_data {
-        model_data.input_data.timeseries = time_data.series.clone();
+        model_data.input_data.temporals.t = time_data.series.clone();
         Ok(())
     } else {
         Err("Model data is not available.")
