@@ -271,7 +271,7 @@ pub fn send_data_to_julia(server_address: &str, batches: &HashMap<String, Record
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
 
-    /* 
+    
 
     // Path to the YAML file
     let yaml_file_path = "src/hertta_data.yaml";
@@ -279,15 +279,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Read the YAML data into `InputData`
     let input_data = read_yaml_file(yaml_file_path)?;
 
-    // Path to the Julia script and port
-    let julia_script = "arrow_conversion.jl";
-    let port = 5555;
+    // Create the record batches
+    let batches = arrow_input::create_record_batches(&input_data)?;
 
-    // Send the Arrow data to the Julia server
-    send_data_to_julia(julia_script, port, &input_data)?;
-    Ok(())
-
-    */
+    // Print the record batches
+    arrow_input::print_record_batches(&batches)?;
 
     Ok(())
     
