@@ -46,7 +46,7 @@ pub fn _print_tuple_vector(v: &Vec<(String, f64)>) {
 ///
 /// Returns an `Err` with a string message if `vector1` and `vector2` have different lengths.
 ///
-pub fn combine_vectors(vector1: Vec<String>, vector2: Vec<f64>) -> Result<Vec<(String, f64)>, String> {
+pub fn _combine_vectors(vector1: Vec<String>, vector2: Vec<f64>) -> Result<Vec<(String, f64)>, String> {
     if vector1.len() != vector2.len() {
         return Err("Vectors have different lengths".to_string());
     }

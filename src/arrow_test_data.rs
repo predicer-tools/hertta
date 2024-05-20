@@ -1,8 +1,8 @@
+
+/* 
 use crate::input_data;
 use serde::{Serialize, Deserialize};
-use crate::input_data::InputData;
 use std::collections::HashMap;
-use std::error::Error;
 use chrono::{NaiveTime, NaiveDate};
 use rand::Rng;
 
@@ -310,9 +310,9 @@ pub fn create_test_genconstraints() -> HashMap<String, input_data::GenConstraint
 pub fn create_test_nodes_hashmap() -> HashMap<String, input_data::Node> {
     let mut nodes: HashMap<String, input_data::Node> = HashMap::new();
 
-    let node1_state = create_state();
-    let node2_state = create_state();
-    let node3_state = create_state();
+    let node1_state = _create_state();
+    let node2_state = _create_state();
+    let node3_state = _create_state();
     let node1_timeseries = create_timeseries();
     let node2_timeseries = create_timeseries();
     let node3_timeseries = create_timeseries();
@@ -425,7 +425,7 @@ pub fn create_test_groups_hashmap() -> HashMap<String, input_data::Group> {
     groups
 }
 
-pub fn create_test_topologies_for_process(process_name: &str) -> Vec<input_data::Topology> {
+pub fn _create_test_topologies_for_process(process_name: &str) -> Vec<input_data::Topology> {
     let mut topologies: Vec<input_data::Topology> = Vec::new();
     
     let time_series_data = create_timeseries(); // Placeholder function
@@ -459,7 +459,7 @@ pub fn create_test_topologies_for_process(process_name: &str) -> Vec<input_data:
     topologies
 }
 
-pub fn create_test_eff_ops(num_ops: usize, min_val: f64, max_val: f64) -> Vec<String> {
+pub fn _create_test_eff_ops(num_ops: usize, min_val: f64, max_val: f64) -> Vec<String> {
     let mut rng = rand::thread_rng();
     (0..num_ops).map(|_| {
         // Generate a random f64 value within the specified range
@@ -469,7 +469,7 @@ pub fn create_test_eff_ops(num_ops: usize, min_val: f64, max_val: f64) -> Vec<St
     }).collect()
 }
 
-pub fn create_example_eff_fun_data() -> Vec<(f64, f64)> {
+pub fn _create_example_eff_fun_data() -> Vec<(f64, f64)> {
     vec![
         (0.4, 0.8),  // Corresponds to columns 1 of op and eff
         (0.6, 0.78), // Corresponds to columns 2 of op and eff
@@ -479,12 +479,12 @@ pub fn create_example_eff_fun_data() -> Vec<(f64, f64)> {
     ]
 }
 
-pub fn create_test_processes_hashmap() -> HashMap<String, input_data::Process> {
+pub fn _create_test_processes_hashmap() -> HashMap<String, input_data::Process> {
     let mut processes = HashMap::new();
 
     // Assuming create_test_eff_ops and create_timeseries are available and return the appropriate types
-    let p1_eff_ops = create_test_eff_ops(10, 0.5, 1.0);
-    let p2_eff_ops = create_test_eff_ops(10, 0.5, 1.0);
+    let p1_eff_ops = _create_test_eff_ops(10, 0.5, 1.0);
+    let p2_eff_ops = _create_test_eff_ops(10, 0.5, 1.0);
     
     let p1_cf_ts = create_timeseries(); // Assuming this creates TimeSeriesData
     let p1_eff_ts = create_timeseries(); // Assuming this creates TimeSeriesData
@@ -492,11 +492,11 @@ pub fn create_test_processes_hashmap() -> HashMap<String, input_data::Process> {
     let p2_cf_ts = create_timeseries(); // Assuming this creates TimeSeriesData
     let p2_eff_ts = create_timeseries(); // Assuming this creates TimeSeriesData
 
-    let p1_topo = create_test_topologies_for_process("Process1");
-    let p2_topo = create_test_topologies_for_process("Process2");
+    let p1_topo = _create_test_topologies_for_process("Process1");
+    let p2_topo = _create_test_topologies_for_process("Process2");
 
-    let p1_eff_fun = create_example_eff_fun_data();
-    let p2_eff_fun = create_example_eff_fun_data();
+    let p1_eff_fun = _create_example_eff_fun_data();
+    let p2_eff_fun = _create_example_eff_fun_data();
 
     // Create the Process instances
     let process1 = input_data::Process {
@@ -556,7 +556,7 @@ pub fn create_test_processes_hashmap() -> HashMap<String, input_data::Process> {
     processes
 }
 
-pub fn create_state() -> input_data::State {
+pub fn _create_state() -> input_data::State {
     // Initialize default values for State
     input_data::State {
         in_max: 50.0,
@@ -571,3 +571,5 @@ pub fn create_state() -> input_data::State {
         residual_value: 10.0,
     }
 }
+
+*/

@@ -4,7 +4,7 @@ use std::error::Error;
 use arrow::error::ArrowError;
 use serde::{Serialize, Deserialize};
 use thiserror::Error;
-use std::io::{self, Read};
+use std::io;
 
 #[derive(Error, Debug)]
 pub enum DataConversionError {
@@ -16,10 +16,10 @@ pub enum DataConversionError {
 
     // You can add more specific errors as needed
     #[error("Unexpected error: {0}")]
-    Unexpected(String),
+    _Unexpected(String),
 
     #[error("Empty or default input found for crucial parameters")]
-    EmptyOrDefaultInput,
+    _EmptyOrDefaultInput,
 }
 
 #[derive(Error, Debug)]
@@ -192,6 +192,7 @@ impl fmt::Display for WeatherDataError {
 pub struct TimeDataParseError(String);
 
 impl TimeDataParseError {
+    #[allow(dead_code)]
     pub fn new(msg: &str) -> Self {
         TimeDataParseError(msg.to_owned())
     }

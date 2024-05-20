@@ -8,44 +8,25 @@ mod arrow_input;
 mod julia_process;
 mod arrow_test_data;
 
-use julia_process::JuliaProcess;
-use std::env;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, AUTHORIZATION};
 use serde_json::json;
-//use tokio::time::{self, Duration, Instant};
-use warp::Filter;
-use serde::{Deserialize, Serialize};
 use serde_json;
-use tokio::sync::mpsc;
 use std::num::NonZeroUsize;
 use jlrs::prelude::*;
 use jlrs::error::JlrsError;
 use tokio::task::JoinHandle;
-//use std::fmt;
 use reqwest::Client;
-use tokio::sync::Mutex;
-use std::sync::Arc;
-use std::fs;
-use std::net::SocketAddr;
 use std::fs::File;
-use std::io::Write;
 use std::collections::HashMap;
-use base64::{encode, decode};
 use std::error::Error;
-use std::process::{Command, Stdio};
-use std::thread;
-use std::time::Duration;
+use std::process::Command;
 use std::net::TcpStream;
-use bincode;
-use std::path::PathBuf;
 use std::io::Read;
 use errors::FileReadError;
 
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
 use std::io::BufWriter;
-use arrow::datatypes::{Field, Schema, DataType};
-use arrow::array::{StringArray, ArrayRef};
 
 //use std::time::{SystemTime, UNIX_EPOCH};
 //use tokio::join;
@@ -127,7 +108,7 @@ async fn _make_post_request(url: &str, entity_id: &str, token: &str, brightness:
 /// This function contains unsafe code that assumes correct usage of the Julia runtime API.
 /// Channel capacity not tested yet.
 ///
-fn init_julia_runtime() -> Result<(AsyncJulia<Tokio>, JoinHandle<Result<(), Box<JlrsError>>>), errors::JuliaError> {
+fn _init_julia_runtime() -> Result<(AsyncJulia<Tokio>, JoinHandle<Result<(), Box<JlrsError>>>), errors::JuliaError> {
     unsafe {
         // Create a new runtime builder for Julia, using the Tokio async runtime.
         RuntimeBuilder::new()
@@ -190,51 +171,6 @@ pub fn start_weather_forecast_server() {
 
 }
 
-pub fn start_julia_server_and_send_data(julia_script_path: &str, server_address: &str, data: HashMap<String, Vec<u8>>) -> Result<(), Box<dyn Error>> {
-    let mut child = Command::new("julia")
-        .arg(julia_script_path)
-        .arg("--server")
-        .arg(format!("--address={}", server_address))
-        .spawn()?;
-
-    // Attempt to connect to the server with retries
-    let mut attempts = 0;
-    let max_attempts = 10;
-    let delay = Duration::from_secs(1);
-    let mut connected = false;
-
-    while attempts < max_attempts && !connected {
-        match TcpStream::connect(server_address) {
-            Ok(_) => {
-                println!("Successfully connected to the server.");
-                connected = true;
-            },
-            Err(e) => {
-                println!("Attempt {} failed: {}", attempts + 1, e);
-                thread::sleep(delay);
-            }
-        }
-        attempts += 1;
-    }
-
-    if !connected {
-        return Err("Failed to connect to the server within the maximum number of attempts.".into());
-    }
-
-    // If connected, proceed to serialize, encode, and send data
-    let serialized_data = bincode::serialize(&data)?;
-    let encoded_data = encode(&serialized_data);
-    let full_message = format!("data:{}", encoded_data);
-    let mut stream = TcpStream::connect(server_address)?;
-    stream.write_all(encoded_data.as_bytes())?;
-
-    // Ensure the child process is not abruptly terminated, affecting cleanup
-    // You might want to add logic to gracefully shut down the server if needed
-    // child.kill()?;
-
-    Ok(())
-}
-
 pub fn read_yaml_file(file_path: &str) -> Result<input_data::InputData, FileReadError> {
     // Attempt to open the file and handle errors specifically related to file opening
     let mut file = File::open(file_path).map_err(FileReadError::open_error)?;
@@ -279,75 +215,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Read the YAML data into `InputData`
     let input_data = read_yaml_file(yaml_file_path)?;
 
-    // Create the record batches
-    let batches = arrow_input::create_record_batches(&input_data)?;
+    //Create one example batch of inputdatasetup
+    let mut batches = HashMap::new();
+    println!("Creating setup batch");
+    batches.insert("setup".to_string(), arrow_input::inputdatasetup_to_arrow(&input_data)?);
 
-    // Print the record batches
+    // Create all the record batches for Predicer
+    let _all_batches = arrow_input::create_record_batches(&input_data)?;
+
+    // Test print the record batches
     arrow_input::print_record_batches(&batches)?;
+
+    //SEND DATA TO JULIA PROCESS
 
     Ok(())
     
-}
-
-
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_init_julia_runtime_success() {
-        let result = init_julia_runtime();
-        assert!(result.is_ok());
-    }
-
-    /* 
-
-    use mockito::{mock, server_url};
-    use tokio;
-
-    #[tokio::test]
-    async fn test_make_post_request_light_success() {
-        // Set up a mock server to simulate the Home Assistant endpoint
-        let mock_server = mock("POST", "/some_endpoint")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body("{\"success\": true}")
-            .create();
-
-        // The mock server URL acts as a stand-in for the real Home Assistant URL
-        let test_url = server_url() + "/some_endpoint";
-
-        // Call the function with the mock server's URL
-        let result = _make_post_request_light(&test_url, "entity1", "token123", 50.0).await;
-
-        // Assert that the function returns Ok(())
-        assert!(result.is_ok());
-
-        // Confirm that the mock was called as expected
-        mock_server.assert();
-    }
-
-    #[tokio::test]
-    async fn test_invalid_token_header() {
-    let result = _make_post_request_light("http://example.com", "entity1", "\u{7FFF}", 50.0).await;
-    assert!(result.is_err()); // Ensure that an error is returned
-    }
-
-    #[tokio::test]
-    async fn test_post_request_light_http_error() {
-        let _mock = mock("POST", "/")
-            .with_status(500) // Simulate an internal server error
-            .create();
-
-        let test_url = mockito::server_url();
-        let result = _make_post_request_light(&test_url, "entity1", "token123", 50.0).await;
-        assert!(result.is_err()); // The function should return an error
-    }
-
-    */
-
-
 }
 

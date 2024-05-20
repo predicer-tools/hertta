@@ -1,14 +1,13 @@
+/*
 use tokio::time::{self, Duration};
 //use serde_json::json;
 use tokio::sync::{mpsc};
 use crate::errors;
 use crate::input_data;
 use std::error::Error;
-use std::collections::HashMap;
 use crate::input_data::{OptimizationData};
 use serde_yaml;
 use jlrs::prelude::*;
-use jlrs::error::JlrsError;
 use tokio::sync::Mutex;
 use std::sync::Arc;
 
@@ -22,13 +21,13 @@ pub async fn event_loop(
     let (tx_weather, rx_weather) = mpsc::channel::<OptimizationData>(32);
     let (tx_elec, rx_elec) = mpsc::channel::<OptimizationData>(32);
     let (tx_update, rx_update) = mpsc::channel::<OptimizationData>(32);
-    let (tx_optimization, rx_optimization) = mpsc::channel::<OptimizationData>(32);
+    let (tx_optimization, _rx_optimization) = mpsc::channel::<OptimizationData>(32);
     let (_tx_final, mut _rx_final) = mpsc::channel::<OptimizationData>(32);
 
 
     // Spawn the model data task
     tokio::spawn(async move {
-        fetch_model_data_task(tx_time).await; // Pass to next task
+        _fetch_model_data_task(tx_time).await; // Pass to next task
     });
 
     // Spawn the create_time_data_task
@@ -52,8 +51,8 @@ pub async fn event_loop(
     });
 
     // Spawn the optimization task
-    let julia_clone_for_optimization = Arc::clone(&julia);
-    let predicer_dir_clone_for_optimization = predicer_dir.clone();
+    let _julia_clone_for_optimization = Arc::clone(&julia);
+    let _predicer_dir_clone_for_optimization = predicer_dir.clone();
     tokio::spawn(async move {
         //optimization_task_logic(rx_optimization, julia_clone_for_optimization, predicer_dir_clone_for_optimization).await;
     });
@@ -73,7 +72,7 @@ pub async fn event_loop(
     }
 }
 
-/*
+
 // Define a function for the optimization logic
 async fn optimization_task_logic(
     mut rx_optimization: mpsc::Receiver<OptimizationData>,
@@ -97,7 +96,7 @@ async fn optimization_task_logic(
         }
     }
 }
-*/
+
 /// Executes Run Predicer task using a Julia runtime.
 ///
 /// This function handles the execution of optimization task by interfacing with a Julia runtime.
@@ -117,7 +116,7 @@ async fn optimization_task_logic(
 /// - All errors are converted to `JuliaError` for a consistent error handling experience.
 ///
 /// 
-/* 
+
 async fn run_predicer(
     julia: Arc<Mutex<AsyncJulia<Tokio>>>,
     data: input_data::InputData,
@@ -157,7 +156,7 @@ async fn run_predicer(
     Ok(result)
 
 }
-*/
+
 
 /// Executes a specific task using the Julia runtime.
 ///
@@ -173,7 +172,8 @@ async fn run_predicer(
 ///
 /// # Errors
 /// - Returns `JuliaError` if there is an issue with the channel communication or if the Julia task execution fails.
-/* 
+
+
 async fn execute_task(julia: &AsyncJulia<Tokio>) -> Result<(), errors::JuliaError> {
     // Create a one-shot channel for task communication. `sender` is used to send the task result,
     // and `receiver` is used to await this result.
@@ -194,7 +194,7 @@ async fn execute_task(julia: &AsyncJulia<Tokio>) -> Result<(), errors::JuliaErro
     // This typically indicates a failure within the task's logic or processing.
     task_result.map_err(|e| errors::JuliaError(format!("Task execution error: {:?}", e)))
 }
-*/
+
 /// Asynchronously sends a task to the Julia runtime for execution.
 ///
 /// This function prepares a task with the provided input data and Predicer directory, then dispatches it
@@ -212,7 +212,7 @@ async fn execute_task(julia: &AsyncJulia<Tokio>) -> Result<(), errors::JuliaErro
 ///
 /// # Errors
 /// Returns `JuliaError` with a message indicating failure in dispatching the task to the runtime.
-/* 
+
 async fn send_task_to_runtime(
     julia: &AsyncJulia<Tokio>,
     data: input_data::InputData, 
@@ -242,7 +242,7 @@ async fn send_task_to_runtime(
         }
     }
 }
-*/
+
 /// Asynchronously receives the result of a Julia task execution.
 ///
 /// This function waits for the result of a task sent to the Julia runtime, which is received via a one-shot channel.
@@ -260,7 +260,7 @@ async fn send_task_to_runtime(
 /// - If there is an error in receiving the task result from the channel, a `JuliaError` indicating this failure is returned.
 ///
 /// 
-/* 
+
 async fn receive_task_result(
     receiver: tokio::sync::oneshot::Receiver<Result<HashMap<String, predicer::ControlValues>, Box<JlrsError>>>,
 ) -> Result<HashMap<String, predicer::ControlValues>, errors::JuliaError> {
@@ -279,7 +279,7 @@ async fn receive_task_result(
         Err(errors::JuliaError(format!("Failed to receive task result from channel in julia task: {:?}", e))),
     }
 }
-*/
+
 async fn update_model_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
     while let Some(mut optimization_data) = rx.recv().await {
         
@@ -328,7 +328,7 @@ fn update_timeseries(optimization_data: &mut OptimizationData) -> Result<(), &'s
     }
 }
 
-/* 
+
 fn update_gen_constraints(optimization_data: &mut OptimizationData)  -> Result<(), &'static str> {
 
     if let Some(time_data) = &optimization_data.time_data {
@@ -342,7 +342,7 @@ fn update_gen_constraints(optimization_data: &mut OptimizationData)  -> Result<(
 
 
 }
-*/
+
 
 fn update_interior_air_initial_state(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
     // Check if sensor_data is Some
@@ -419,13 +419,13 @@ async fn send_to_server_task(final_data: OptimizationData) -> Result<(), Box<dyn
 }
 
 
-async fn fetch_model_data_task(tx: mpsc::Sender<OptimizationData>) {
+async fn _fetch_model_data_task(tx: mpsc::Sender<OptimizationData>) {
     let mut interval = time::interval(Duration::from_secs(10));
 
     loop {
         interval.tick().await;
 
-        match fetch_model_data().await {
+        match _fetch_model_data().await {
             Ok(optimization_data) => {
                 // Update the token in the optimization data
                 /* 
@@ -446,7 +446,7 @@ async fn fetch_model_data_task(tx: mpsc::Sender<OptimizationData>) {
     }
 }
 
-/* 
+
 async fn update_token_in_optimization_data(optimization_data: &mut OptimizationData) -> Result<(), io::Error> {
     let token = fs::read_to_string("config/token.txt")?;
 
@@ -465,7 +465,7 @@ async fn update_token_in_optimization_data(optimization_data: &mut OptimizationD
 
     Ok(())
 }
-*/
+
 
 async fn create_time_data_task(
     mut rx: mpsc::Receiver<OptimizationData>,
@@ -671,7 +671,7 @@ async fn fetch_electricity_prices(start_time: String, end_time: String, country:
     let url = format!("https://dashboard.elering.ee/api/nps/price?start={}&end={}", start_time, end_time);
 
     // Fetch the response
-    let response = client.get(&url).header("accept", "*/*").send().await.map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+    let response = client.get(&url).header("accept", "").send().await.map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
 
     // Attempt to print the raw response text for debugging before parsing
     let response_text = response.text().await.map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
@@ -744,7 +744,7 @@ fn create_modified_price_series_data(
     }
 }
 
-/* 
+
 async fn fetch_entsoe_electricity_prices(
     start_time: String,
     end_time: String,
@@ -778,7 +778,7 @@ async fn fetch_entsoe_electricity_prices(
 
     Ok(electricity_price_data)
 }
-*/
+
 
 
 async fn fetch_elec_price_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
@@ -820,7 +820,7 @@ async fn fetch_elec_price_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mps
     }
 }
 
-pub async fn fetch_model_data() -> Result<input_data::OptimizationData, errors::ModelDataError> {
+pub async fn _fetch_model_data() -> Result<input_data::OptimizationData, errors::ModelDataError> {
     let url = "http://localhost:8000/to_hertta/model_data"; // Replace with the actual URL
     let client = reqwest::Client::new();
     
@@ -849,7 +849,7 @@ pub async fn fetch_model_data() -> Result<input_data::OptimizationData, errors::
 }
 
 
-/* 
+
 async fn run_bd_test_with_mock_data(mock_file_path: &str) -> Result<(), String> {
     let (tx, rx) = broadcast::channel(1);
 
@@ -891,7 +891,9 @@ async fn test_scenario_failure() {
     }
 }
 
-*/
+
+
+
 
 #[cfg(test)]
 mod tests {
@@ -1045,7 +1047,7 @@ mod tests {
         assert_eq!(result.ts_data[1].scenario, "s2", "Second scenario should be 's2'.");
     }
 
-    /* 
+    
     #[tokio::test]
     async fn test_update_series_in_optimization_data() {
         // Mock the OptimizationData
@@ -1070,7 +1072,11 @@ mod tests {
         assert_eq!(time_data.series[0], "2022-04-20T00:00:00+00:00");
         // Further assertions can be made on the series if necessary
     }
-    */
+    
 
 
 }
+
+*/
+
+
