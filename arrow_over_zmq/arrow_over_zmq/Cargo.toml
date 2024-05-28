@@ -1,0 +1,11 @@
+[package]
+name = "arrow_over_zmq"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arrow = {version = "51.0", features = ["ipc"]}
+arrow-ipc = "51.0"
+zmq = "0.10"
+
+[features]

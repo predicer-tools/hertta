@@ -9,6 +9,7 @@ use std::error::Error;
 use std::collections::HashSet;
 use errors::{DataConversionError};
 use prettytable::{Table, Row, Cell};
+use arrow_ipc::writer::StreamWriter;
 
 pub fn print_record_batches(batches: &HashMap<String, RecordBatch>) -> Result<(), Box<dyn Error>> {
     for (name, batch) in batches {
@@ -68,6 +69,21 @@ pub fn print_record_batches(batches: &HashMap<String, RecordBatch>) -> Result<()
         println!("\n");
     }
     Ok(())
+}
+
+// Function to create and serialize multiple RecordBatches
+pub fn create_and_serialize_record_batches(
+    input_data: &input_data::InputData,
+) -> Result<HashMap<String, Vec<u8>>, Box<dyn Error>> {
+    let mut batches = create_record_batches(input_data)?;
+    let mut serialized_batches = HashMap::new();
+
+    for (key, batch) in batches.iter() {
+        let buffer = serialize_batch_to_buffer(batch)?;
+        serialized_batches.insert(key.clone(), buffer);
+    }
+
+    Ok(serialized_batches)
 }
 
 pub fn create_record_batches(
@@ -151,6 +167,19 @@ pub fn create_record_batches(
     batches.insert("balance_prices".to_string(), market_balance_price_to_arrow(&input_data)?);
 
     Ok(batches)
+}
+
+// Function to serialize the batch to a buffer
+pub fn serialize_batch_to_buffer(batch: &RecordBatch) -> Result<Vec<u8>, Box<dyn Error>> {
+    let schema = batch.schema();
+    let schema_ref: &Schema = schema.as_ref(); // Dereference the Arc<Schema>
+    let mut buffer: Vec<u8> = Vec::new();
+    {
+        let mut stream_writer = StreamWriter::try_new(&mut buffer, schema_ref)?;
+        stream_writer.write(batch)?;
+        stream_writer.finish()?;
+    } // `stream_writer` is dropped here
+    Ok(buffer)
 }
 
 pub fn inputdatasetup_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, DataConversionError> {

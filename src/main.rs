@@ -27,6 +27,9 @@ use errors::FileReadError;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
 use std::io::BufWriter;
+use zmq;
+use std::thread;
+use std::env;
 
 //use std::time::{SystemTime, UNIX_EPOCH};
 //use tokio::join;
@@ -207,7 +210,11 @@ pub fn send_data_to_julia(server_address: &str, batches: &HashMap<String, Record
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
 
-    
+    // Get the current working directory
+    let current_dir = env::current_dir()?;
+
+    // Print the current working directory
+    println!("Current working directory: {:?}", current_dir);
 
     // Path to the YAML file
     let yaml_file_path = "src/hertta_data.yaml";
@@ -215,18 +222,51 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Read the YAML data into `InputData`
     let input_data = read_yaml_file(yaml_file_path)?;
 
-    //Create one example batch of inputdatasetup
-    let mut batches = HashMap::new();
-    println!("Creating setup batch");
-    batches.insert("setup".to_string(), arrow_input::inputdatasetup_to_arrow(&input_data)?);
+    // Create and serialize record batches
+    let serialized_batches = arrow_input::create_and_serialize_record_batches(&input_data)?;
 
-    // Create all the record batches for Predicer
-    let _all_batches = arrow_input::create_record_batches(&input_data)?;
+    // Spawn a separate thread for ZeroMQ
+    let thread_join_handle = thread::Builder::new().name("Predicer data server".to_string()).spawn(move || {
+        let zmq_context = zmq::Context::new();
+        let responder = zmq_context.socket(zmq::REP).unwrap();
+        assert!(responder.bind("tcp://*:5555").is_ok());
+        let mut is_running = true;
+        let receive_flags = 0;
+        let send_flags = 0;
+        while is_running {
+            let request_result = responder.recv_string(receive_flags);
+            match request_result {
+                Ok(inner_result) => {
+                    match inner_result {
+                        Ok(command) => {
+                            if let Some(buffer) = serialized_batches.get(&command) {
+                                println!("Received request for {}", command);
+                                responder.send(buffer, send_flags).unwrap();
+                            } else if command == "Quit" {
+                                println!("Received request to quit");
+                                is_running = false;
+                            } else {
+                                println!("Received unknown command {}", command);
+                            }
+                        }
+                        Err(_) => println!("Received absolute gibberish"),
+                    }
+                }
+                Err(_) => println!("Failed to receive data")
+            }
+        }
+    }).expect("failed to start server thread");
 
-    // Test print the record batches
-    arrow_input::print_record_batches(&batches)?;
+    // Path to the Julia script
+    let julia_script_path = current_dir.join("Predicer/src/arrow_conversion.jl");
 
-    //SEND DATA TO JULIA PROCESS
+    // Run the Julia script
+    let mut julia_command = Command::new("julia");
+    julia_command.arg(julia_script_path.to_str().unwrap());
+    julia_command.status().expect("Julia process failed to execute");
+
+    // Wait for the ZeroMQ thread to complete
+    thread_join_handle.join().expect("failed to join with server thread");
 
     Ok(())
     
