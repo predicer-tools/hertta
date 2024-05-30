@@ -1,11 +1,13 @@
 use std::process::Command;
 use std::sync::Arc;
 use std::thread;
+use std::time;
 use arrow::array::Int32Array;
 use arrow::datatypes::DataType;
 use arrow::datatypes::Field;
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
+use arrow_ipc::reader::StreamReader;
 use arrow_ipc::writer::StreamWriter;
 
 fn main() {
@@ -39,6 +41,11 @@ fn main() {
                                 println!("Received Hello");
                                 responder.send(buffer_ref, send_flags).unwrap();
                             }
+                            else if command.starts_with("Take this!") {
+                                let endpoint = command.strip_prefix("Take this! ").expect("cannot dechipher endpoint");
+                                responder.send("ready to receive", send_flags).expect("failed to confirm readiness for input");
+                                pull_data(endpoint, &zmq_context);
+                            }
                             else if command == "Quit" {
                                 println!("Received request to quit");
                                 is_running = false;
@@ -50,7 +57,10 @@ fn main() {
                         Err(_) => println!("Received absolute gibberish"),
                     }
                 }
-                Err(_) => println!("Failed to receive data")
+                Err(_) => {
+                    println!("Failed to receive data");
+                    thread::sleep(time::Duration::from_secs(1));
+                }
             }
         }
     }).expect("failed to start server thread");
@@ -59,4 +69,22 @@ fn main() {
     julia_command.arg("C:\\users\\ajsanttij\\sources\\rust_projects\\arrow_over_zmq\\ReceiveArrow.jl");
     julia_command.status().expect("Julia process failed to execute");
     let _ = thread_join_handle.join().expect("failed to join with server thread");
+}
+
+
+fn pull_data(endpoint: &str, zmq_context: &zmq::Context) {
+    let receiver = zmq_context.socket(zmq::PULL).unwrap();
+    assert!(receiver.connect(endpoint).is_ok());
+    let flags = 0;
+    let pull_result = receiver.recv_bytes(flags);
+    match pull_result {
+        Ok(bytes) => {
+            let reader = StreamReader::try_new(bytes.as_slice(), None).expect("Failed to construct Arrow reader");
+            for record_batch_result in reader {
+                let record_batch = record_batch_result.expect("Failed to read record batch");
+                println!("Received record batch, columns {} rows {}", record_batch.num_columns(), record_batch.num_rows());
+            }
+        }
+        Err(_) => println!("Failed to pull data")
+    }
 }

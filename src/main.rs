@@ -7,6 +7,7 @@ mod event_loop;
 mod arrow_input;
 mod julia_process;
 mod arrow_test_data;
+mod arrow_zmq;
 
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, AUTHORIZATION};
 use serde_json::json;

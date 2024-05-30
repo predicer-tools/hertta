@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use errors::{DataConversionError};
 use prettytable::{Table, Row, Cell};
 use arrow_ipc::writer::StreamWriter;
+use crate::errors::FileReadError;
 
 pub fn print_record_batches(batches: &HashMap<String, RecordBatch>) -> Result<(), Box<dyn Error>> {
     for (name, batch) in batches {
@@ -1872,7 +1873,7 @@ mod tests {
         ).unwrap();
 
         // Test the function
-        let result = inputdatasetup_to_arrow(&input_data.setup).expect("Conversion should succeed");
+        let result = inputdatasetup_to_arrow(&input_data).expect("Conversion should succeed");
 
         // Validate the output
         assert_eq!(result.num_columns(), expected_record_batch.num_columns());
@@ -1893,7 +1894,7 @@ mod tests {
 
         let input_data = read_yaml_file(path.to_str().unwrap()).expect("Should read the YAML file correctly");
 
-        let batch = nodes_to_arrow(&input_data.nodes).expect("Conversion to arrow should succeed");
+        let batch = nodes_to_arrow(&input_data).expect("Conversion to arrow should succeed");
 
         // Define expected schema and order of the fields
         let expected_fields = vec![

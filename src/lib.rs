@@ -6,3 +6,4 @@ pub mod event_loop;
 pub mod arrow_input;
 pub mod julia_process;
 pub mod arrow_test_data;
+pub mod arrow_zmq;
