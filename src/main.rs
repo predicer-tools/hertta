@@ -13,8 +13,6 @@ use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, AUTHORIZATION};
 use serde_json::json;
 use serde_json;
 use std::num::NonZeroUsize;
-use jlrs::prelude::*;
-use jlrs::error::JlrsError;
 use tokio::task::JoinHandle;
 use reqwest::Client;
 use std::fs::File;
@@ -31,6 +29,7 @@ use std::io::BufWriter;
 use zmq;
 use std::thread;
 use std::env;
+use std::time::Duration;
 
 //use std::time::{SystemTime, UNIX_EPOCH};
 //use tokio::join;
@@ -99,61 +98,6 @@ async fn _make_post_request(url: &str, entity_id: &str, token: &str, brightness:
     Ok(())
 }
 
-/// Initializes the Julia runtime with an asynchronous interface.
-///
-/// This function sets up a new Julia runtime environment using the Tokio async runtime.
-/// It configures the runtime with a specified channel capacity and starts it asynchronously.
-/// 
-/// # Errors
-/// Returns `JuliaError` if the channel capacity is set to an invalid value or if the
-/// runtime fails to start.
-///
-/// # Safety
-/// This function contains unsafe code that assumes correct usage of the Julia runtime API.
-/// Channel capacity not tested yet.
-///
-fn _init_julia_runtime() -> Result<(AsyncJulia<Tokio>, JoinHandle<Result<(), Box<JlrsError>>>), errors::JuliaError> {
-    unsafe {
-        // Create a new runtime builder for Julia, using the Tokio async runtime.
-        RuntimeBuilder::new()
-            .async_runtime::<Tokio>()
-             // Set the channel capacity for the runtime. An error is returned if the capacity is invalid.
-            .channel_capacity(NonZeroUsize::new(4).ok_or(errors::JuliaError("Invalid channel capacity".to_string()))?)
-            // Attempt to start the runtime asynchronously. Errors during startup are captured and returned.
-            .start_async::<1>()
-            .map_err(|e| errors::JuliaError(format!("Could not init Julia: {:?}", e)))
-    }
-}
-
-/// Shuts down the Julia runtime and waits for the completion of its associated tasks.
-///
-/// This function drops the Julia runtime object to initiate its shutdown and then waits for
-/// the completion of tasks associated with it, handling any errors that may occur.
-///
-/// # Parameters
-/// - `julia`: The Julia runtime object to be shut down.
-/// - `handle`: The join handle associated with a potentially running task in the runtime.
-///
-/// # Returns
-/// Returns `Ok(())` if the runtime shuts down successfully and all tasks complete without error.
-/// Returns `JuliaError` if any error occurs during task completion or runtime shutdown.
-///
-/// # Errors
-/// - Returns `JuliaError` if the task running in the Julia runtime exits with an error or if the
-///   thread associated with the runtime panics or encounters a similar issue.
-///
-async fn _shutdown_julia_runtime(julia: AsyncJulia<Tokio>, handle: JoinHandle<Result<(), Box<JlrsError>>>) -> Result<(), errors::JuliaError> {
-    // Dropping `julia` to shut down the runtime
-    std::mem::drop(julia);
-
-    // Await the handle and handle any errors
-    match handle.await {
-        Ok(Ok(())) => Ok(()), // Both thread execution and task were successful
-        Ok(Err(e)) => Err(errors::JuliaError(format!("Julia task exited with an error: {:?}", e))), 
-        Err(e) => Err(errors::JuliaError(format!("Join handle failed: {:?}", e))),
-    }
-}
-
 
 
 pub fn start_hass_backend_server() {
@@ -191,23 +135,6 @@ pub fn read_yaml_file(file_path: &str) -> Result<input_data::InputData, FileRead
     Ok(input_data)
 }
 
-pub fn send_data_to_julia(server_address: &str, batches: &HashMap<String, RecordBatch>) -> Result<(), Box<dyn Error>> {
-    let stream = TcpStream::connect(server_address)?;
-    let writer = BufWriter::new(stream);
-
-    // Assume that "setup" batch is what we want to send. Validate its existence.
-    if let Some(batch) = batches.get("setup") {
-        let mut arrow_writer = StreamWriter::try_new(writer, &batch.schema())?;
-        arrow_writer.write(batch)?;
-        arrow_writer.finish()?;
-        println!("Data sent to Julia server.");
-    } else {
-        return Err("Batch 'setup' not found in the batches.".into());
-    }
-
-    Ok(())
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
 
@@ -226,50 +153,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Create and serialize record batches
     let serialized_batches = arrow_input::create_and_serialize_record_batches(&input_data)?;
 
-    // Spawn a separate thread for ZeroMQ
-    let thread_join_handle = thread::Builder::new().name("Predicer data server".to_string()).spawn(move || {
-        let zmq_context = zmq::Context::new();
-        let responder = zmq_context.socket(zmq::REP).unwrap();
-        assert!(responder.bind("tcp://*:5555").is_ok());
-        let mut is_running = true;
-        let receive_flags = 0;
-        let send_flags = 0;
-        while is_running {
-            let request_result = responder.recv_string(receive_flags);
-            match request_result {
-                Ok(inner_result) => {
-                    match inner_result {
-                        Ok(command) => {
-                            if let Some(buffer) = serialized_batches.get(&command) {
-                                println!("Received request for {}", command);
-                                responder.send(buffer, send_flags).unwrap();
-                            } else if command == "Quit" {
-                                println!("Received request to quit");
-                                is_running = false;
-                            } else {
-                                println!("Received unknown command {}", command);
-                            }
-                        }
-                        Err(_) => println!("Received absolute gibberish"),
-                    }
-                }
-                Err(_) => println!("Failed to receive data")
+    // Start the ZMQ server in a separate thread
+    let server_handle = arrow_zmq::run_server();
+    println!("Server started.");
+
+    // Give the server some time to start
+    thread::sleep(Duration::from_secs(2));
+
+    // Start the Julia process
+    match arrow_zmq::start_julia_local() {
+        Ok(status) => {
+            if status.success() {
+                println!("Julia process executed successfully.");
+            } else {
+                eprintln!("Julia process failed with status: {:?}", status);
             }
+        },
+        Err(e) => {
+            eprintln!("Failed to start Julia process: {:?}", e);
         }
-    }).expect("failed to start server thread");
+    }
 
-    // Path to the Julia script
-    let julia_script_path = current_dir.join("Predicer/src/arrow_conversion.jl");
-
-    // Run the Julia script
-    let mut julia_command = Command::new("julia");
-    julia_command.arg(julia_script_path.to_str().unwrap());
-    julia_command.status().expect("Julia process failed to execute");
-
-    // Wait for the ZeroMQ thread to complete
-    thread_join_handle.join().expect("failed to join with server thread");
+    // Join the server thread to ensure it exits cleanly
+    server_handle.join().expect("Failed to join server thread");
 
     Ok(())
+
     
 }
 
