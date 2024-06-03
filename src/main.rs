@@ -29,7 +29,8 @@ use std::io::BufWriter;
 use zmq;
 use std::thread;
 use std::env;
-use std::time::Duration;
+use std::time;
+use std::process::ExitStatus;
 
 //use std::time::{SystemTime, UNIX_EPOCH};
 //use tokio::join;
@@ -135,8 +136,39 @@ pub fn read_yaml_file(file_path: &str) -> Result<input_data::InputData, FileRead
     Ok(input_data)
 }
 
+
+// Function to send serialized batches
+pub fn send_serialized_batches(serialized_batches: &HashMap<String, Vec<u8>>, zmq_context: &zmq::Context) -> Result<(), Box<dyn Error>> {
+    let push_socket = zmq_context.socket(zmq::PUSH)?;
+    push_socket.connect("tcp://127.0.0.1:5555")?;
+
+    for (key, batch) in serialized_batches {
+        println!("Sending batch: {}", key); // Debug print
+        push_socket.send(batch, 0)?;
+    }
+
+    Ok(())
+}
+
+// Function to start the Julia process locally
+pub fn start_julia_local() -> Result<ExitStatus, std::io::Error> {
+    let push_port = find_available_port();
+    std::env::set_var("PUSH_PORT", push_port.to_string());
+
+    let mut julia_command = Command::new("C:\\Users\\enessi\\AppData\\Local\\Microsoft\\WindowsApps\\julia.exe");
+    julia_command.arg("--project=C:\\users\\enessi\\Documents\\hertta");
+    julia_command.arg("C:\\users\\enessi\\Documents\\hertta\\src\\Pr_ArrowConnection.jl");
+    julia_command.status()  // Ensure this line returns the status
+}
+
+pub fn find_available_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("Failed to bind to address");
+    listener.local_addr().unwrap().port()
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+
 
     // Get the current working directory
     let current_dir = env::current_dir()?;
@@ -153,32 +185,92 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Create and serialize record batches
     let serialized_batches = arrow_input::create_and_serialize_record_batches(&input_data)?;
 
-    // Start the ZMQ server in a separate thread
-    let server_handle = arrow_zmq::run_server();
-    println!("Server started.");
+     // Start the server in a separate thread
+     let thread_join_handle = thread::Builder::new()
+     .name("Predicer data server".to_string())
+     .spawn(move || {
+         // Setup ZMQ server
+         let zmq_context = zmq::Context::new();
+         let responder = zmq_context.socket(zmq::REP).unwrap();
+         assert!(responder.bind("tcp://*:5555").is_ok());
 
-    // Give the server some time to start
-    thread::sleep(Duration::from_secs(2));
+         let mut is_running = true;
+         let receive_flags = 0;
+         let send_flags = 0;
+
+         // Server loop to handle requests
+         while is_running {
+             let request_result = responder.recv_string(receive_flags);
+             match request_result {
+                 Ok(inner_result) => {
+                     match inner_result {
+                         Ok(command) => {
+                             if command == "Hello" {
+                                 println!("Received Hello");
+
+                                 // Send all serialized batches
+                                 for (key, buffer) in &serialized_batches {
+                                     println!("Sending batch: {}", key);
+                                     if let Err(e) = responder.send(buffer, send_flags) {
+                                         eprintln!("Failed to send batch {}: {:?}", key, e);
+                                         is_running = false;
+                                         break;
+                                     }
+
+                                     // Wait for acknowledgment from the client
+                                     let ack_result = responder.recv_string(receive_flags);
+                                     match ack_result {
+                                         Ok(ack) => {
+                                             println!("Received acknowledgment for batch: {}", key);
+                                         }
+                                         Err(e) => {
+                                             eprintln!("Failed to receive acknowledgment: {:?}", e);
+                                             is_running = false;
+                                             break;
+                                         }
+                                     }
+                                 }
+
+                                 // Send END signal after all batches are sent
+                                 println!("Sending END signal");
+                                 if let Err(e) = responder.send("END", send_flags) {
+                                     eprintln!("Failed to send END signal: {:?}", e);
+                                 }
+                             } else if command == "Quit" {
+                                 println!("Received request to quit");
+                                 is_running = false;
+                             } else {
+                                 println!("Received unknown command {}", command);
+                             }
+                         }
+                         Err(_) => println!("Received absolute gibberish"),
+                     }
+                 }
+                 Err(e) => {
+                     println!("Failed to receive data: {:?}", e);
+                     thread::sleep(time::Duration::from_secs(1));
+                 }
+             }
+         }
+     })
+     .expect("failed to start server thread");
 
     // Start the Julia process
-    match arrow_zmq::start_julia_local() {
+    match start_julia_local() {
         Ok(status) => {
-            if status.success() {
-                println!("Julia process executed successfully.");
-            } else {
+            if !status.success() {
                 eprintln!("Julia process failed with status: {:?}", status);
             }
-        },
+        }
         Err(e) => {
             eprintln!("Failed to start Julia process: {:?}", e);
         }
     }
 
-    // Join the server thread to ensure it exits cleanly
-    server_handle.join().expect("Failed to join server thread");
+    // Wait for the server thread to finish
+    let _ = thread_join_handle.join().expect("failed to join with server thread");
 
     Ok(())
-
     
 }
 

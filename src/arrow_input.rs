@@ -75,97 +75,49 @@ pub fn print_record_batches(batches: &HashMap<String, RecordBatch>) -> Result<()
 // Function to create and serialize multiple RecordBatches
 pub fn create_and_serialize_record_batches(
     input_data: &input_data::InputData,
-) -> Result<HashMap<String, Vec<u8>>, Box<dyn Error>> {
-    let mut batches = create_record_batches(input_data)?;
-    let mut serialized_batches = HashMap::new();
+) -> Result<Vec<(String, Vec<u8>)>, Box<dyn Error>> {
+    let batches = create_record_batches(input_data)?;
+    let mut serialized_batches = Vec::new();
 
-    for (key, batch) in batches.iter() {
-        let buffer = serialize_batch_to_buffer(batch)?;
-        serialized_batches.insert(key.clone(), buffer);
+    for (key, batch) in batches {
+        let buffer = serialize_batch_to_buffer(&batch)?;
+        serialized_batches.push((key, buffer));
     }
 
     Ok(serialized_batches)
 }
 
+// Function to create RecordBatches (implement your Arrow conversion functions)
 pub fn create_record_batches(
     input_data: &input_data::InputData,
-) -> Result<HashMap<String, RecordBatch>, Box<dyn Error>> {
-    let mut batches = HashMap::new();
-
-    //println!("Creating setup batch");
-    batches.insert("setup".to_string(), inputdatasetup_to_arrow(&input_data)?);
+) -> Result<Vec<(String, RecordBatch)>, Box<dyn Error>> {
+    let mut batches = Vec::new();
     
-    //println!("Creating nodes batch");
-    batches.insert("nodes".to_string(), nodes_to_arrow(&input_data)?);
-    
-    //println!("Creating processes batch");
-    batches.insert("processes".to_string(), processes_to_arrow(&input_data)?);
-    
-    //println!("Creating groups batch");
-    batches.insert("groups".to_string(), groups_to_arrow(&input_data)?);
-    
-    //println!("Creating process_topology batch");
-    batches.insert("process_topology".to_string(), process_topos_to_arrow(&input_data)?);
-    
-    //println!("Creating node_diffusion batch");
-    batches.insert("node_diffusion".to_string(), node_diffusion_to_arrow(&input_data)?);
-    
-    //println!("Creating node_history batch");
-    batches.insert("node_history".to_string(), node_histories_to_arrow(&input_data)?);
-    
-    //println!("Creating node_delay batch");
-    batches.insert("node_delay".to_string(), node_delays_to_arrow(&input_data)?);
-    
-    //println!("Creating inflow_blocks batch");
-    batches.insert("inflow_blocks".to_string(), inflow_blocks_to_arrow(&input_data)?);
-    
-    //println!("Creating markets batch");
-    batches.insert("markets".to_string(), markets_to_arrow(&input_data)?);
-    
-    //println!("Creating reserve_realisation batch");
-    batches.insert("reserve_realisation".to_string(), market_realisation_to_arrow(&input_data)?);
-    
-    //println!("Creating scenarios batch");
-    batches.insert("scenarios".to_string(), scenarios_to_arrow(&input_data)?);
-    
-    //println!("Creating efficiencies batch");
-    batches.insert("efficiencies".to_string(), processes_eff_fun_to_arrow(&input_data)?);
-    
-    //println!("Creating reserve_type batch");
-    batches.insert("reserve_type".to_string(), reserve_type_to_arrow(&input_data)?);
-    
-    //println!("Creating risk batch");
-    batches.insert("risk".to_string(), risk_to_arrow(&input_data)?);
-    
-    //println!("Creating cap_ts batch");
-    batches.insert("cap_ts".to_string(), processes_cap_to_arrow(&input_data)?);
-    
-    //println!("Creating gen_constraint batch");
-    batches.insert("gen_constraint".to_string(), gen_constraints_to_arrow(&input_data)?);
-    
-    //println!("Creating constraints batch");
-    batches.insert("constraints".to_string(), constraints_to_arrow(&input_data)?);
-    
-    //println!("Creating cf batch");
-    batches.insert("cf".to_string(), processes_cf_to_arrow(&input_data)?);
-    
-    //println!("Creating inflow batch");
-    batches.insert("inflow".to_string(), nodes_inflow_to_arrow(&input_data)?);
-    
-    //println!("Creating market_prices batch");
-    batches.insert("market_prices".to_string(), market_price_to_arrow(&input_data)?);
-    
-    //println!("Creating price batch");
-    batches.insert("price".to_string(), nodes_commodity_price_to_arrow(&input_data)?);
-    
-    //println!("Creating eff_ts batch");
-    batches.insert("eff_ts".to_string(), processes_eff_to_arrow(&input_data)?);
-    
-    //println!("Creating fixed_ts batch");
-    batches.insert("fixed_ts".to_string(), market_fixed_to_arrow(&input_data)?);
-    
-    //println!("Creating balance_prices batch");
-    batches.insert("balance_prices".to_string(), market_balance_price_to_arrow(&input_data)?);
+    batches.push(("setup".to_string(), inputdatasetup_to_arrow(&input_data)?));
+    batches.push(("nodes".to_string(), nodes_to_arrow(&input_data)?));
+    batches.push(("processes".to_string(), processes_to_arrow(&input_data)?));
+    batches.push(("groups".to_string(), groups_to_arrow(&input_data)?));
+    batches.push(("process_topology".to_string(), process_topos_to_arrow(&input_data)?));
+    batches.push(("node_diffusion".to_string(), node_diffusion_to_arrow(&input_data)?));
+    batches.push(("node_history".to_string(), node_histories_to_arrow(&input_data)?));
+    batches.push(("node_delay".to_string(), node_delays_to_arrow(&input_data)?));
+    batches.push(("inflow_blocks".to_string(), inflow_blocks_to_arrow(&input_data)?));
+    batches.push(("markets".to_string(), markets_to_arrow(&input_data)?));
+    batches.push(("reserve_realisation".to_string(), market_realisation_to_arrow(&input_data)?));
+    batches.push(("scenarios".to_string(), scenarios_to_arrow(&input_data)?));
+    batches.push(("efficiencies".to_string(), processes_eff_fun_to_arrow(&input_data)?));
+    batches.push(("reserve_type".to_string(), reserve_type_to_arrow(&input_data)?));
+    batches.push(("risk".to_string(), risk_to_arrow(&input_data)?));
+    batches.push(("cap_ts".to_string(), processes_cap_to_arrow(&input_data)?));
+    batches.push(("gen_constraint".to_string(), gen_constraints_to_arrow(&input_data)?));
+    batches.push(("constraints".to_string(), constraints_to_arrow(&input_data)?));
+    batches.push(("cf".to_string(), processes_cf_to_arrow(&input_data)?));
+    batches.push(("inflow".to_string(), nodes_inflow_to_arrow(&input_data)?));
+    batches.push(("market_prices".to_string(), market_price_to_arrow(&input_data)?));
+    batches.push(("price".to_string(), nodes_commodity_price_to_arrow(&input_data)?));
+    batches.push(("eff_ts".to_string(), processes_eff_to_arrow(&input_data)?));
+    batches.push(("fixed_ts".to_string(), market_fixed_to_arrow(&input_data)?));
+    batches.push(("balance_prices".to_string(), market_balance_price_to_arrow(&input_data)?));
 
     Ok(batches)
 }
@@ -1829,6 +1781,33 @@ mod tests {
                 // Log or handle the detailed parsing error message here
                 eprintln!("Failed to parse YAML content: {}", e);
                 Err(FileReadError::Parse(e))
+            }
+        }
+    }
+
+    #[test]
+    fn test_gen_constraints_to_arrow() {
+        // Define the path to the mock data file
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests/mocks/arrow_tests/full_data.yaml");
+        assert!(path.exists(), "Test file does not exist at the expected path");
+
+        // Read the mock input data from the YAML file
+        let input_data = read_yaml_file::<InputData>(path.to_str().unwrap()).expect("Should read the YAML file correctly");
+
+        // Call the function
+        let result = gen_constraints_to_arrow(&input_data);
+
+        // Check and print the result
+        match result {
+            Ok(record_batch) => {
+                println!("Schema: {:?}", record_batch.schema());
+                for column in record_batch.columns() {
+                    println!("{:?}", column);
+                }
+            }
+            Err(e) => {
+                eprintln!("Error creating Arrow table: {:?}", e);
             }
         }
     }
