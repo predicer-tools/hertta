@@ -1,5 +1,5 @@
 use arrow::array::{StringArray, Float64Array, Int32Array, Int64Array, BooleanArray, ArrayRef, Array};
-use arrow::{datatypes::{DataType, Field, Schema}, error::ArrowError, record_batch::RecordBatch};
+use arrow::{datatypes::{DataType, Field, Schema, SchemaRef}, error::ArrowError, record_batch::RecordBatch};
 use std::sync::Arc;
 use crate::input_data;
 use crate::errors;
@@ -1755,6 +1755,67 @@ pub fn check_timestamps_match(
         }
     }
     Ok(())
+}
+
+#[derive(Debug)]
+pub struct DataFrame {
+    schema: SchemaRef,
+    columns: HashMap<String, ArrayRef>,
+}
+
+impl DataFrame {
+    pub fn new(batch: &RecordBatch) -> Self {
+        let schema = batch.schema();
+        let mut columns = HashMap::new();
+        for i in 0..batch.num_columns() {
+            let field = schema.field(i);
+            columns.insert(field.name().clone(), batch.column(i).clone());
+        }
+        DataFrame {
+            schema,
+            columns,
+        }
+    }
+
+    pub fn print(&self) {
+        println!("Schema: {:?}", self.schema);
+        for (name, array) in &self.columns {
+            println!("Column: {}", name);
+            match array.data_type() {
+                arrow::datatypes::DataType::Float64 => {
+                    let arr = array.as_any().downcast_ref::<Float64Array>().unwrap();
+                    for i in 0..arr.len() {
+                        println!("  {}", arr.value(i));
+                    }
+                }
+                arrow::datatypes::DataType::Utf8 => {
+                    let arr = array.as_any().downcast_ref::<StringArray>().unwrap();
+                    for i in 0..arr.len() {
+                        println!("  {}", arr.value(i));
+                    }
+                }
+                arrow::datatypes::DataType::Int32 => {
+                    let arr = array.as_any().downcast_ref::<Int32Array>().unwrap();
+                    for i in 0..arr.len() {
+                        println!("  {}", arr.value(i));
+                    }
+                }
+                arrow::datatypes::DataType::Int64 => {
+                    let arr = array.as_any().downcast_ref::<Int64Array>().unwrap();
+                    for i in 0..arr.len() {
+                        println!("  {}", arr.value(i));
+                    }
+                }
+                arrow::datatypes::DataType::Boolean => {
+                    let arr = array.as_any().downcast_ref::<BooleanArray>().unwrap();
+                    for i in 0..arr.len() {
+                        println!("  {}", arr.value(i));
+                    }
+                }
+                _ => println!("Unsupported data type"),
+            }
+        }
+    }
 }
 
 #[cfg(test)]

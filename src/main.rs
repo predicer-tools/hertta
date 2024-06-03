@@ -24,6 +24,7 @@ use std::io::Read;
 use errors::FileReadError;
 
 use arrow::ipc::writer::StreamWriter;
+use arrow_ipc::reader::StreamReader;
 use arrow::record_batch::RecordBatch;
 use std::io::BufWriter;
 use zmq;
@@ -166,6 +167,25 @@ pub fn find_available_port() -> u16 {
     listener.local_addr().unwrap().port()
 }
 
+pub fn receive_data(endpoint: &str, zmq_context: &zmq::Context) {
+    let receiver = zmq_context.socket(zmq::PULL).unwrap();
+    assert!(receiver.connect(endpoint).is_ok());
+    let flags = 0;
+
+    let pull_result = receiver.recv_bytes(flags);
+    match pull_result {
+        Ok(bytes) => {
+            let reader = StreamReader::try_new(bytes.as_slice(), None).expect("Failed to construct Arrow reader");
+            for record_batch_result in reader {
+                let record_batch = record_batch_result.expect("Failed to read record batch");
+                let data_frame = arrow_input::DataFrame::new(&record_batch);
+                data_frame.print();
+            }
+        }
+        Err(e) => println!("Failed to pull data: {:?}", e),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
 
@@ -185,75 +205,80 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Create and serialize record batches
     let serialized_batches = arrow_input::create_and_serialize_record_batches(&input_data)?;
 
-     // Start the server in a separate thread
-     let thread_join_handle = thread::Builder::new()
-     .name("Predicer data server".to_string())
-     .spawn(move || {
-         // Setup ZMQ server
-         let zmq_context = zmq::Context::new();
-         let responder = zmq_context.socket(zmq::REP).unwrap();
-         assert!(responder.bind("tcp://*:5555").is_ok());
+   // Start the server in a separate thread
+   let thread_join_handle = thread::Builder::new()
+   .name("Predicer data server".to_string())
+   .spawn(move || {
+       // Setup ZMQ server
+       let zmq_context = zmq::Context::new();
+       let responder = zmq_context.socket(zmq::REP).unwrap();
+       assert!(responder.bind("tcp://*:5555").is_ok());
 
-         let mut is_running = true;
-         let receive_flags = 0;
-         let send_flags = 0;
+       let mut is_running = true;
+       let receive_flags = 0;
+       let send_flags = 0;
 
-         // Server loop to handle requests
-         while is_running {
-             let request_result = responder.recv_string(receive_flags);
-             match request_result {
-                 Ok(inner_result) => {
-                     match inner_result {
-                         Ok(command) => {
-                             if command == "Hello" {
-                                 println!("Received Hello");
+       // Server loop to handle requests
+       while is_running {
+           let request_result = responder.recv_string(receive_flags);
+           match request_result {
+               Ok(inner_result) => {
+                   match inner_result {
+                       Ok(command) => {
+                           if command == "Hello" {
+                               println!("Received Hello");
 
-                                 // Send all serialized batches
-                                 for (key, buffer) in &serialized_batches {
-                                     println!("Sending batch: {}", key);
-                                     if let Err(e) = responder.send(buffer, send_flags) {
-                                         eprintln!("Failed to send batch {}: {:?}", key, e);
-                                         is_running = false;
-                                         break;
-                                     }
+                               // Send all serialized batches
+                               for (key, buffer) in &serialized_batches {
+                                   println!("Sending batch: {}", key);
+                                   if let Err(e) = responder.send(buffer, send_flags) {
+                                       eprintln!("Failed to send batch {}: {:?}", key, e);
+                                       is_running = false;
+                                       break;
+                                   }
 
-                                     // Wait for acknowledgment from the client
-                                     let ack_result = responder.recv_string(receive_flags);
-                                     match ack_result {
-                                         Ok(ack) => {
-                                             println!("Received acknowledgment for batch: {}", key);
-                                         }
-                                         Err(e) => {
-                                             eprintln!("Failed to receive acknowledgment: {:?}", e);
-                                             is_running = false;
-                                             break;
-                                         }
-                                     }
-                                 }
+                                   // Wait for acknowledgment from the client
+                                   let ack_result = responder.recv_string(receive_flags);
+                                   match ack_result {
+                                       Ok(ack) => {
+                                           println!("Received acknowledgment for batch: {}", key);
+                                       }
+                                       Err(e) => {
+                                           eprintln!("Failed to receive acknowledgment: {:?}", e);
+                                           is_running = false;
+                                           break;
+                                       }
+                                   }
+                               }
 
-                                 // Send END signal after all batches are sent
-                                 println!("Sending END signal");
-                                 if let Err(e) = responder.send("END", send_flags) {
-                                     eprintln!("Failed to send END signal: {:?}", e);
-                                 }
-                             } else if command == "Quit" {
-                                 println!("Received request to quit");
-                                 is_running = false;
-                             } else {
-                                 println!("Received unknown command {}", command);
-                             }
-                         }
-                         Err(_) => println!("Received absolute gibberish"),
-                     }
-                 }
-                 Err(e) => {
-                     println!("Failed to receive data: {:?}", e);
-                     thread::sleep(time::Duration::from_secs(1));
-                 }
-             }
-         }
-     })
-     .expect("failed to start server thread");
+                               // Send END signal after all batches are sent
+                               println!("Sending END signal");
+                               if let Err(e) = responder.send("END", send_flags) {
+                                   eprintln!("Failed to send END signal: {:?}", e);
+                               }
+                           } else if command.starts_with("Take this!") {
+                               let endpoint = command.strip_prefix("Take this! ").expect("cannot decipher endpoint");
+                               responder.send("ready to receive", send_flags).expect("failed to confirm readiness for input");
+                               receive_data(endpoint, &zmq_context);
+                           } else if command == "Quit" {
+                               println!("Received request to quit");
+                               is_running = false;
+                           } else {
+                               println!("Received unknown command {}", command);
+                           }
+                       }
+                       Err(_) => println!("Received absolute gibberish"),
+                   }
+               }
+               Err(e) => {
+                   println!("Failed to receive data: {:?}", e);
+                   thread::sleep(time::Duration::from_secs(1));
+               }
+           }
+       }
+   })
+   .expect("failed to start server thread");
+
 
     // Start the Julia process
     match start_julia_local() {

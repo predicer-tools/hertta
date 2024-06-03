@@ -34,6 +34,24 @@ while true
     ZMQ.send(socket, "ACK")
 end
 
+# Send a random DataFrame back to Rust
+push_port = 5237
+endpoint = "tcp://localhost:$push_port"
+push_socket = Socket(zmq_context, PUSH)
+ZMQ.bind(push_socket, "tcp://*:$push_port")
+ZMQ.send(socket, "Take this! $(endpoint)")
+ready_confirmation = String(ZMQ.recv(socket))
+if ready_confirmation == "ready to receive"
+    out_data = DataFrame("customer age" => [15, 20, 25],
+                         "first name" => ["Rohit", "Rahul", "Akshat"])
+    buffer = IOBuffer(read=true, write=true)
+    Arrow.write(buffer, out_data)
+    ZMQ.send(push_socket, take!(buffer))
+else
+    println("receiver not ready to receive $ready_confirmation")
+end
+ZMQ.close(push_socket)
+
 # Send Quit command to the server
 ZMQ.send(socket, "Quit")
 
