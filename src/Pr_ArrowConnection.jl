@@ -12,6 +12,17 @@ using Arrow
 using DataFrames
 using ZMQ
 
+# Navigate to Predicer directory and activate the environment
+cd("C:\\users\\enessi\\Documents\\hertta\\Predicer")
+Pkg.activate(".")
+Pkg.instantiate()
+
+# Use the Predicer module
+using Predicer
+
+# Call the test function from Predicer
+Predicer.test_function()
+
 zmq_context = Context()
 
 println("Connecting to server...")
