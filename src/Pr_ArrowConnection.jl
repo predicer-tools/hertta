@@ -27,8 +27,9 @@ while true
         break
     end
     table = Arrow.Table(IOBuffer(data, read=true, write=false))
-    println("Received table:")
-    println(table)
+    df = DataFrame(table)  # Convert Arrow table to DataFrame
+    println("Received DataFrame:")
+    println(df)  # Print the DataFrame
     # Send acknowledgment
     ZMQ.send(socket, "ACK")
 end
