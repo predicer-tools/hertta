@@ -15,13 +15,13 @@ use serde_json;
 use std::num::NonZeroUsize;
 use tokio::task::JoinHandle;
 use reqwest::Client;
-use std::fs::File;
 use std::collections::HashMap;
 use std::error::Error;
 use std::process::Command;
 use std::net::TcpStream;
-use std::io::Read;
 use errors::FileReadError;
+use serde_json::error::Error as SerdeError;
+use regex::Regex;
 
 use arrow::ipc::writer::StreamWriter;
 use arrow_ipc::reader::StreamReader;
@@ -32,6 +32,10 @@ use std::thread;
 use std::env;
 use std::time;
 use std::process::ExitStatus;
+use serde_json::Value;
+use std::io::{self, Read, Write};
+use std::fs::File;
+use serde_json::from_str;
 
 //use std::time::{SystemTime, UNIX_EPOCH};
 //use tokio::join;
@@ -186,6 +190,15 @@ pub fn receive_data(endpoint: &str, zmq_context: &zmq::Context) {
     }
 }
 
+pub fn json_to_inputdata(json_file_path: &str) -> Result<input_data::InputData, Box<dyn Error>> {
+    let mut file = File::open(json_file_path)?;
+    let mut data = String::new();
+    file.read_to_string(&mut data)?;
+
+    let input_data: input_data::InputData = from_str(&data)?;
+    Ok(input_data)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
 
@@ -196,14 +209,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Print the current working directory
     println!("Current working directory: {:?}", current_dir);
 
-    // Path to the YAML file
-    let yaml_file_path = "src/hertta_data.yaml";
+    let json_file_path = "src/building.json";
+    
+    let input_data = json_to_inputdata(json_file_path)?;
 
-    // Read the YAML data into `InputData`
-    let input_data = read_yaml_file(yaml_file_path)?;
+    println!("Serializing batches started");
+
+    
 
     // Create and serialize record batches
     let serialized_batches = arrow_input::create_and_serialize_record_batches(&input_data)?;
+
+    
 
    // Start the server in a separate thread
    let thread_join_handle = thread::Builder::new()
@@ -212,7 +229,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
        // Setup ZMQ server
        let zmq_context = zmq::Context::new();
        let responder = zmq_context.socket(zmq::REP).unwrap();
-       assert!(responder.bind("tcp://*:5555").is_ok());
+       assert!(responder.bind(&format!("tcp://{}:5555", "*")).is_ok());
 
        let mut is_running = true;
        let receive_flags = 0;
@@ -294,6 +311,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Wait for the server thread to finish
     let _ = thread_join_handle.join().expect("failed to join with server thread");
+
+    
 
     Ok(())
     

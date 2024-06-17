@@ -2,6 +2,7 @@
 use std::collections::HashMap;
 use serde::{self, Serialize, Deserialize, Deserializer, Serializer};
 use chrono::{DateTime, Duration as ChronoDuration, Utc, FixedOffset};
+use std::collections::BTreeMap;
 //use tokio::sync::mpsc;
 //use std::fs::File;
 use std::error::Error;
@@ -24,6 +25,26 @@ pub struct TemporalsHours {
 
 }
 
+//NODE DELAY MUUTTUNUT, BID_SLOTS, node_diffusion to vec
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct InputData {
+    pub temporals: Temporals,
+    pub setup: InputDataSetup,
+    pub processes: HashMap<String, Process>,
+    pub nodes: HashMap<String, Node>,
+    pub node_diffusion: Vec<NodeDiffusion>,
+    pub node_delay: Vec<(String, String, f64, f64, f64)>,
+    pub node_histories: HashMap<String, NodeHistory>,
+    pub markets: HashMap<String, Market>,
+    pub groups: HashMap<String, Group>,
+    pub scenarios: BTreeMap<String, f64>,
+    pub reserve_type: HashMap<String, f64>,
+    pub risk: HashMap<String, f64>,
+    pub inflow_blocks: HashMap<String, InflowBlock>,
+    pub bid_slots: HashMap<String, BidSlot>,
+    pub gen_constraints: HashMap<String, GenConstraint>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Temporals {
     pub t: Vec<String>,
@@ -32,32 +53,6 @@ pub struct Temporals {
     pub variable_dt: Vec<(String, f64)>,
     pub ts_format: String, 
     
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct InputData {
-    pub temporals: Temporals,
-    pub setup: InputDataSetup,
-    pub processes: HashMap<String, Process>,
-    pub nodes: HashMap<String, Node>,
-    pub node_diffusion: HashMap<String, NodeDiffusion>,
-    pub node_delay: HashMap<String, NodeDelay>,
-    pub node_histories: HashMap<String, NodeHistory>,
-    pub markets: HashMap<String, Market>,
-    pub groups: HashMap<String, Group>,
-    pub scenarios: HashMap<String, f64>,
-    pub reserve_type: HashMap<String, f64>,
-    pub risk: HashMap<String, f64>,
-    pub inflow_blocks: HashMap<String, InflowBlock>,
-    pub gen_constraints: HashMap<String, GenConstraint>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct InflowBlock {
-    pub name: String,
-    pub node: String,
-    pub start_time: String,
-    pub data: TimeSeriesData,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -76,8 +71,11 @@ pub struct InputDataSetup {
     pub common_scenario_name: String,
     pub use_node_dummy_variables: bool,
     pub use_ramp_dummy_variables: bool,
+    pub node_dummy_variable_cost: f64,
+    pub ramp_dummy_variable_cost: f64,
 }
 
+//INITIAL_STATE MUUTTUNUT
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Process {
     pub name: String,
@@ -95,7 +93,7 @@ pub struct Process {
     pub min_offline: f64,
     pub max_online: f64,
     pub max_offline: f64,
-    pub initial_state: f64,
+    pub initial_state: bool,
     pub is_scenario_independent: bool,
     pub topos: Vec<Topology>,
     pub cf: TimeSeriesData,
@@ -104,42 +102,44 @@ pub struct Process {
     pub eff_fun: Vec<(f64,f64)>
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ProcessTopology {
-    pub name: String,
-    pub process: String,
-    pub source_sink: String,
-    pub node: String,
-    pub conversion_coeff: f64,
-    pub capacity: f64,
-    pub vom_cost: f64,
-    pub ramp_up: f64,
-    pub ramp_down: f64,
-    pub initial_load: f64,
-    pub initial_flow: f64,
-}
-
+//STATE MUUTTUNUT
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Node {
     pub name: String,
+    pub groups: Vec<String>,
     pub is_commodity: bool,
+    pub is_market: bool,
     pub is_state: bool,
     pub is_res: bool,
-    pub is_market: bool,
     pub is_inflow: bool,
-    pub state: State,
+    pub state: Option<State>,
     pub cost: TimeSeriesData,
     pub inflow: TimeSeriesData,
 }
 
+//MUUTTUNUT, NAME POISTUI, COEFFICIENT MUUTTUI
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct NodeDiffusion {
+    pub node1: String,
+    pub node2: String,
+    pub coefficient: TimeSeriesData,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct NodeHistory {
+    pub node: String,
+    pub steps: TimeSeriesData,
+}
+
+//MUUTTUNUT, LISÄTTY reserve_activation_price, realisation -> timeseriesdata
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Market {
     pub name: String,
-    pub m_type: String,
+    pub var_type: String,
     pub node: String, 
-    pub pgroup: String,
+    pub processgroup: String,
     pub direction: String,
-    pub realisation: HashMap<String, f64>,
+    pub realisation: TimeSeriesData,
     pub reserve_type: String,
     pub is_bid: bool,
     pub is_limited: bool,
@@ -149,33 +149,43 @@ pub struct Market {
     pub price: TimeSeriesData,
     pub up_price: TimeSeriesData,
     pub down_price: TimeSeriesData,
+    pub reserve_activation_price: TimeSeriesData,
     pub fixed: Vec<(String, f64)>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Group {
     pub name: String,
-    pub g_type: String,
+    pub var_type: String,
     pub members: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NodeDiffusion {
+pub struct InflowBlock {
     pub name: String,
-    pub node1: String,
-    pub node2: String,
-    pub diff_coeff: f64,
+    pub node: String,
+    pub start_time: String,
+    pub data: TimeSeriesData,
 }
 
+//UUSI
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BidSlot {
+    pub market: String,
+    pub time_steps: Vec<String>,
+    pub slots: Vec<String>,
+    pub prices: BTreeMap<(String, String), f64>,
+    pub market_price_allocation: BTreeMap<(String, String), (String, String)>,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NodeDelay {
+pub struct GenConstraint {
     pub name: String,
-    pub node1: String,
-    pub node2: String,
-    pub delay: f64,
-    pub min_flow: f64,
-    pub max_flow: f64,
+    pub var_type: String,
+    pub is_setpoint: bool,
+    pub penalty: f64,
+    pub factors: Vec<ConFactor>,
+    pub constant: TimeSeriesData,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -191,8 +201,7 @@ pub struct Topology {
     pub cap_ts: TimeSeriesData,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct State {
     pub in_max: f64,
     pub out_max: f64,
@@ -211,42 +220,26 @@ pub struct TimeSeriesData {
     pub ts_data: Vec<TimeSeries>,
 }
 
+//MUUTETTU, VEC->BTreeMap
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TimeSeries {
     pub scenario: String,
-    pub series: Vec<(String, f64)>,
+    pub series: BTreeMap<String, f64>,
 }
 
+// Implement a function to create the TimeSeries
 impl TimeSeries {
-    pub fn new(scenario: String) -> TimeSeries {
-        TimeSeries {
-            scenario,
-            series: Vec::new(),
-        }
+    fn new(scenario: String, series: BTreeMap<String, f64>) -> TimeSeries {
+        TimeSeries { scenario, series }
     }
 }
 
+//MUUTTUNUT, NIMI -> var_tuple
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConFactor {
     pub var_type: String,
-    pub flow: (String, String),
+    pub var_tuple: (String, String),
     pub data: TimeSeriesData,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NodeHistory {
-    pub node: String,
-    pub steps: TimeSeriesData,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GenConstraint {
-    pub name: String,
-    pub gc_type: String,
-    pub is_setpoint: bool,
-    pub penalty: f64,
-    pub factors: Vec<ConFactor>,
-    pub constant: TimeSeriesData,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

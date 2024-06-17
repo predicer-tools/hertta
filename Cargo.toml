@@ -53,6 +53,7 @@ engine = "0.0.0"
 arrow-ipc = "51.0"
 zmq = "0.10.0"
 polars = "0.40.0"
+regex = "1.10.4"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "rt", "time", "sync"]}

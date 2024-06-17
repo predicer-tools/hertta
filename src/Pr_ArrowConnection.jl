@@ -20,9 +20,6 @@ Pkg.instantiate()
 # Use the Predicer module
 using Predicer
 
-# Call the test function from Predicer
-Predicer.test_function()
-
 zmq_context = Context()
 
 println("Connecting to server...")
@@ -44,6 +41,16 @@ while true
     # Send acknowledgment
     ZMQ.send(socket, "ACK")
 end
+
+#HERE PREDICER FUNCTIONS AND THEN SEND RESULT DATA TO RUST
+
+# Call the test function from Predicer
+Predicer.test_function()
+
+#make the dataframe-lists HERE
+#generate model for dataframes
+#Predicer.solve_model(mc)
+#result_dataframes = Predicer.get_all_result_dataframes(mc, input_data)
 
 # Send a random DataFrame back to Rust
 push_port = 5237
