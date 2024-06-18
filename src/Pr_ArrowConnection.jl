@@ -33,6 +33,7 @@ received_tables = []
 
 # Keywords list
 keywords = [
+    "temps",
     "setup",
     "nodes",
     "processes",

@@ -93,6 +93,7 @@ pub fn create_record_batches(
 ) -> Result<Vec<(String, RecordBatch)>, Box<dyn Error>> {
     let mut batches = Vec::new();
     
+    batches.push(("temps".to_string(), temps_to_arrow(&input_data)?));
     batches.push(("setup".to_string(), inputdatasetup_to_arrow(&input_data)?));
     batches.push(("nodes".to_string(), nodes_to_arrow(&input_data)?));
     batches.push(("processes".to_string(), processes_to_arrow(&input_data)?));
@@ -135,6 +136,22 @@ pub fn serialize_batch_to_buffer(batch: &RecordBatch) -> Result<Vec<u8>, Box<dyn
         stream_writer.finish()?;
     } // `stream_writer` is dropped here
     Ok(buffer)
+}
+
+pub fn temps_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+    let temporals = &input_data.temporals;
+
+    // Define the schema for the RecordBatch
+    let fields = vec![Field::new("t", DataType::Utf8, false)];
+    let schema = Arc::new(Schema::new(fields));
+
+    // Create the StringArray from temporals.t
+    let t_values: Vec<&str> = temporals.t.iter().map(|s| s.as_str()).collect();
+    let t_array = StringArray::from(t_values);
+    let t_column: ArrayRef = Arc::new(t_array);
+
+    // Create the RecordBatch
+    RecordBatch::try_new(schema, vec![t_column])
 }
 
 pub fn inputdatasetup_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, DataConversionError> {
