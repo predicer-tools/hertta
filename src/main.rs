@@ -273,6 +273,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                if let Err(e) = responder.send("END", send_flags) {
                                    eprintln!("Failed to send END signal: {:?}", e);
                                }
+                               
                            } else if command.starts_with("Take this!") {
                                let endpoint = command.strip_prefix("Take this! ").expect("cannot decipher endpoint");
                                responder.send("ready to receive", send_flags).expect("failed to confirm readiness for input");

@@ -167,44 +167,64 @@ pub fn inputdatasetup_to_arrow(input_data: &input_data::InputData) -> Result<Rec
     let mut parameters = Vec::new();
     let mut values = Vec::new();
 
+    parameters.push("use_market_bids");
     if setup.contains_markets {
-        parameters.push("use_market_bids");
         values.push("1".to_string());
+    } else {
+        values.push("0".to_string());
     }
+
+    parameters.push("use_reserves");
     if setup.contains_reserves {
-        parameters.push("use_reserves");
         values.push("1".to_string());
+    } else {
+        values.push("0".to_string());
     }
+
+    parameters.push("use_reserve_realisation");
     if setup.reserve_realisation {
-        parameters.push("use_reserve_realisation");
         values.push("1".to_string());
+    } else {
+        values.push("0".to_string());
     }
+
+    parameters.push("use_node_dummy_variables");
     if setup.use_node_dummy_variables {
-        parameters.push("use_node_dummy_variables");
         values.push("1".to_string());
+    } else {
+        values.push("0".to_string());
     }
+
+    parameters.push("use_ramp_dummy_variables");
     if setup.use_ramp_dummy_variables {
-        parameters.push("use_ramp_dummy_variables");
         values.push("1".to_string());
+    } else {
+        values.push("0".to_string());
     }
+
+    parameters.push("node_dummy_variable_cost");
     if setup.node_dummy_variable_cost != 0.0 {
-        parameters.push("node_dummy_variable_cost");
         values.push(setup.node_dummy_variable_cost.to_string());
+    } else {
+        values.push("0.0".to_string());
     }
+
+    parameters.push("ramp_dummy_variable_cost");
     if setup.ramp_dummy_variable_cost != 0.0 {
-        parameters.push("ramp_dummy_variable_cost");
         values.push(setup.ramp_dummy_variable_cost.to_string());
+    } else {
+        values.push("0.0".to_string());
     }
 
     // Always include common_timesteps
     parameters.push("common_timesteps");
     values.push(setup.common_timesteps.to_string());
 
+    // Include common_scenario_name with a default value if it's empty
+    parameters.push("common_scenario_name");
     if setup.common_scenario_name.is_empty() {
-        parameters.push("common_scenario_name");
         values.push("missing".to_string());
     } else {
-        parameters.push("common_scenario_name");
         values.push(setup.common_scenario_name.clone());
     }
 
@@ -241,7 +261,7 @@ pub fn nodes_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch,
         Field::new("state_loss_proportional", DataType::Float64, false),
         Field::new("scenario_independent_state", DataType::Boolean, false),
         Field::new("is_temp", DataType::Boolean, false),
-        Field::new("t_e_conversion", DataType::Float64, false),
+        Field::new("T_E_conversion", DataType::Float64, false),
         Field::new("residual_value", DataType::Float64, false),
     ]);
 
@@ -599,25 +619,32 @@ pub fn node_diffusion_to_arrow(input_data: &input_data::InputData) -> Result<Rec
 
     // Add 't' column
     let t_column: Vec<String> = temporals_t.clone();
-    columns.push(Arc::new(StringArray::from(t_column)) as ArrayRef);
+    columns.push(Arc::new(StringArray::from(t_column.clone())) as ArrayRef);
 
     // Populate the columns from the NodeDiffusion Vec
     for node_diffusion in node_diffusions {
         for ts in &node_diffusion.coefficient.ts_data {
             let column_name = format!("{},{},{}", node_diffusion.node1, node_diffusion.node2, ts.scenario);
 
-            fields.push(Field::new(&column_name, DataType::Float64, false));
+            fields.push(Field::new(&column_name, DataType::Float64, true));
 
-            for (t, value) in &ts.series {
-                float_columns_data
-                    .entry(column_name.clone())
-                    .or_insert_with(Vec::new)
-                    .push(*value);
+            // Initialize column data with NaNs
+            let mut column_data = vec![f64::NAN; temporals_t.len()];
+
+            for (timestamp, value) in &ts.series {
+                if let Some(pos) = temporals_t.iter().position(|t| t == timestamp) {
+                    column_data[pos] = *value;
+                }
             }
 
-            // Check if the timestamps match
-            check_timestamps_match(temporals_t, &node_diffusion.coefficient.ts_data)?;
+            // Only add the column if it contains any non-NaN values
+            if column_data.iter().any(|&x| !x.is_nan()) {
+                float_columns_data.insert(column_name, column_data);
+            }
         }
+
+        // Check if the timestamps match
+        check_timestamps_match(temporals_t, &node_diffusion.coefficient.ts_data)?;
     }
 
     // Add the float columns to the RecordBatch
@@ -1617,7 +1644,7 @@ pub fn market_price_to_arrow(input_data: &input_data::InputData) -> Result<Recor
 
     // If there are no unique timestamps, return an empty RecordBatch
     if sorted_timestamps.is_empty() {
-        let schema = Arc::new(Schema::new(vec![Field::new("timestamp", DataType::Utf8, false)]));
+        let schema = Arc::new(Schema::new(vec![Field::new("t", DataType::Utf8, false)]));
         let timestamp_array: ArrayRef = Arc::new(StringArray::from(sorted_timestamps));
         let arrays = vec![timestamp_array];
         return RecordBatch::try_new(schema, arrays);
@@ -1652,7 +1679,7 @@ pub fn market_price_to_arrow(input_data: &input_data::InputData) -> Result<Recor
     });
 
     // Prepare the schema and arrays
-    let mut fields = vec![Field::new("timestamp", DataType::Utf8, false)];
+    let mut fields = vec![Field::new("t", DataType::Utf8, false)];
     let timestamp_array: ArrayRef = Arc::new(StringArray::from(sorted_timestamps));
     let mut arrays = vec![timestamp_array];
 
@@ -1700,7 +1727,7 @@ pub fn market_balance_price_to_arrow(input_data: &input_data::InputData) -> Resu
 
     // If there are no unique timestamps, return an empty RecordBatch
     if sorted_timestamps.is_empty() {
-        let schema = Arc::new(Schema::new(vec![Field::new("timestamp", DataType::Utf8, false)]));
+        let schema = Arc::new(Schema::new(vec![Field::new("t", DataType::Utf8, false)]));
         let timestamp_array: ArrayRef = Arc::new(StringArray::from(sorted_timestamps));
         let arrays = vec![timestamp_array];
         return RecordBatch::try_new(schema, arrays);
@@ -1736,7 +1763,7 @@ pub fn market_balance_price_to_arrow(input_data: &input_data::InputData) -> Resu
     });
 
     // Prepare the schema and arrays
-    let mut fields = vec![Field::new("timestamp", DataType::Utf8, false)];
+    let mut fields = vec![Field::new("t", DataType::Utf8, false)];
     let timestamp_array: ArrayRef = Arc::new(StringArray::from(sorted_timestamps));
     let mut arrays = vec![timestamp_array];
 
@@ -1751,6 +1778,7 @@ pub fn market_balance_price_to_arrow(input_data: &input_data::InputData) -> Resu
     let record_batch = RecordBatch::try_new(schema, arrays)?;
     Ok(record_batch)
 }
+
 
 // This function converts a HashMap<String, Node> of inflow TimeSeriesData to an Arrow RecordBatch
 pub fn nodes_inflow_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
@@ -2221,7 +2249,7 @@ mod tests {
             Field::new("state_loss_proportional", DataType::Float64, false),
             Field::new("scenario_independent_state", DataType::Boolean, false),
             Field::new("is_temp", DataType::Boolean, false),
-            Field::new("t_e_conversion", DataType::Float64, false),
+            Field::new("T_E_conversion", DataType::Float64, false),
             Field::new("residual_value", DataType::Float64, false),
         ]);
 
