@@ -26,6 +26,30 @@ using Predicer
 
 zmq_context = Context()
 
+function send_dataframe(df::DataFrame, df_type::String, port::Int)
+    zmq_context = Context()
+    push_socket = Socket(zmq_context, PUSH)
+    endpoint = "tcp://localhost:$port"
+    ZMQ.bind(push_socket, "tcp://*:$port")
+
+    buffer = IOBuffer()
+    Arrow.write(buffer, df)
+
+    socket = Socket(zmq_context, REQ)
+    ZMQ.connect(socket, "tcp://localhost:5555")
+    ZMQ.send(socket, "Take this! $df_type $endpoint")
+    
+    ready_confirmation = String(ZMQ.recv(socket))
+    if ready_confirmation == "ready to receive"
+        ZMQ.send(push_socket, take!(buffer))
+    else
+        println("Receiver not ready to receive $ready_confirmation")
+    end
+
+    ZMQ.close(push_socket)
+    ZMQ.close(socket)
+end
+
 function main()
     println("Connecting to server...")
     socket = Socket(zmq_context, REQ)
@@ -173,27 +197,36 @@ function main()
     mc, input_data = Predicer.generate_model(input_data)
     Predicer.solve_model(mc)
     result_dataframes = Predicer.get_all_result_dataframes(mc, input_data)
-    v_flow_df = result_dataframes["v_flow"]
-    show(v_flow_df, allcols=true, allrows=true)
 
+    # Define a base port number for the push sockets
+    base_port = 5237
 
-    # Send a random DataFrame back to Rust
-    push_port = 5237
-    endpoint = "tcp://localhost:$push_port"
-    push_socket = Socket(zmq_context, PUSH)
-    ZMQ.bind(push_socket, "tcp://*:$push_port")
-    ZMQ.send(socket, "Take this! $(endpoint)")
-    ready_confirmation = String(ZMQ.recv(socket))
-    if ready_confirmation == "ready to receive"
-        out_data = DataFrame("customer age" => [15, 20, 25],
-                             "first name" => ["Rohit", "Rahul", "Akshat"])
-        buffer = IOBuffer(read=true, write=true)
-        Arrow.write(buffer, out_data)
-        ZMQ.send(push_socket, take!(buffer))
-    else
-        println("receiver not ready to receive $ready_confirmation")
+    for (i, type) in enumerate(keys(result_dataframes))
+        df = result_dataframes[type]
+        
+        # Print dataframe for inspection
+        println("DataFrame for type $type:")
+        
+        # Serialize dataframe to Arrow buffer
+        buffer = IOBuffer()
+        Arrow.write(buffer, df)
+
+        # Send serialized Arrow buffer over ZeroMQ
+        push_port = base_port + i
+        endpoint = "tcp://localhost:$push_port"
+        push_socket = Socket(zmq_context, PUSH)
+        ZMQ.bind(push_socket, "tcp://*:$push_port")
+        ZMQ.send(socket, "Take this! $(endpoint)")
+        
+        ready_confirmation = String(ZMQ.recv(socket))
+        if ready_confirmation == "ready to receive"
+            ZMQ.send(push_socket, take!(buffer))
+        else
+            println("Receiver not ready to receive $ready_confirmation")
+        end
+        
+        ZMQ.close(push_socket)
     end
-    ZMQ.close(push_socket)
 
     # Send Quit command to the server
     ZMQ.send(socket, "Quit")
