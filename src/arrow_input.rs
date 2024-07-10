@@ -1,38 +1,32 @@
+use crate::errors::FileReadError;
+use crate::input_data;
+use crate::errors;
 use arrow::array::{StringArray, Float64Array, Int32Array, Int64Array, BooleanArray, ArrayRef, Array};
 use arrow::{datatypes::{DataType, Field, Schema, SchemaRef}, error::ArrowError, record_batch::RecordBatch};
 use std::sync::Arc;
-use crate::input_data;
-use crate::errors;
 use std::collections::{HashMap, BTreeMap};
 use std::error::Error;
-//use base64::encode;
 use std::collections::HashSet;
 use errors::{DataConversionError};
 use prettytable::{Table, Row, Cell};
 use arrow_ipc::writer::StreamWriter;
-use crate::errors::FileReadError;
 
 pub fn print_record_batches(batches: &HashMap<String, RecordBatch>) -> Result<(), Box<dyn Error>> {
     for (name, batch) in batches {
         println!("Batch: {}", name);
 
-        // Create a PrettyTable table
         let mut table = Table::new();
         
-        // Add the header
         let header: Vec<Cell> = batch.schema().fields().iter()
             .map(|field| Cell::new(&field.name()))
             .collect();
         table.add_row(Row::new(header));
 
-        // Determine the number of rows in the batch
         let num_rows = batch.num_rows();
 
-        // Iterate over each row
         for row_idx in 0..num_rows {
             let mut row = Vec::new();
             
-            // Iterate over each column
             for col_idx in 0..batch.num_columns() {
                 let column = batch.column(col_idx);
                 
@@ -128,7 +122,7 @@ pub fn create_record_batches(
 // Function to serialize the batch to a buffer
 pub fn serialize_batch_to_buffer(batch: &RecordBatch) -> Result<Vec<u8>, Box<dyn Error>> {
     let schema = batch.schema();
-    let schema_ref: &Schema = schema.as_ref(); // Dereference the Arc<Schema>
+    let schema_ref: &Schema = schema.as_ref();
     let mut buffer: Vec<u8> = Vec::new();
     {
         let mut stream_writer = StreamWriter::try_new(&mut buffer, schema_ref)?;
@@ -141,7 +135,6 @@ pub fn serialize_batch_to_buffer(batch: &RecordBatch) -> Result<Vec<u8>, Box<dyn
 pub fn temps_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
     let temporals = &input_data.temporals;
 
-    // Define the schema for the RecordBatch
     let fields = vec![Field::new("t", DataType::Utf8, false)];
     let schema = Arc::new(Schema::new(fields));
 
@@ -150,20 +143,17 @@ pub fn temps_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch,
     let t_array = StringArray::from(t_values);
     let t_column: ArrayRef = Arc::new(t_array);
 
-    // Create the RecordBatch
     RecordBatch::try_new(schema, vec![t_column])
 }
 
 pub fn inputdatasetup_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, DataConversionError> {
     let setup = &input_data.setup;
 
-    // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
         Field::new("parameter", DataType::Utf8, false),
         Field::new("value", DataType::Utf8, true),
     ]);
 
-    // Prepare data
     let mut parameters = Vec::new();
     let mut values = Vec::new();
 
@@ -473,14 +463,12 @@ pub fn processes_to_arrow(input_data: &input_data::InputData) -> Result<RecordBa
 pub fn groups_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
     let groups = &input_data.groups;
 
-    // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
         Field::new("type", DataType::Utf8, false),
         Field::new("entity", DataType::Utf8, false),
         Field::new("group", DataType::Utf8, false),
     ]);
 
-    // Initialize vectors to hold group data
     let mut types: Vec<String> = Vec::new();
     let mut entities: Vec<String> = Vec::new();
     let mut group_names: Vec<String> = Vec::new();
@@ -494,12 +482,10 @@ pub fn groups_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch
         }
     }
 
-    // Create arrays from the vectors
     let types_array = Arc::new(StringArray::from(types)) as ArrayRef;
     let entities_array = Arc::new(StringArray::from(entities)) as ArrayRef;
     let group_names_array = Arc::new(StringArray::from(group_names)) as ArrayRef;
 
-    // Create the RecordBatch using these arrays
     let record_batch = RecordBatch::try_new(
         Arc::new(schema),
         vec![
@@ -516,7 +502,6 @@ pub fn groups_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch
 pub fn process_topos_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
     let process_topologys = &input_data.processes;
 
-    // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
         Field::new("process", DataType::Utf8, false),
         Field::new("source_sink", DataType::Utf8, false),
@@ -530,7 +515,6 @@ pub fn process_topos_to_arrow(input_data: &input_data::InputData) -> Result<Reco
         Field::new("initial_flow", DataType::Float64, false),
     ]);
 
-    // Initialize vectors to hold process data
     let mut processes: Vec<String> = Vec::new();
     let mut source_sinks: Vec<String> = Vec::new();
     let mut nodes: Vec<String> = Vec::new();

@@ -1,4 +1,4 @@
-/*
+
 use tokio::time::{self, Duration};
 //use serde_json::json;
 use tokio::sync::{mpsc};
@@ -7,14 +7,12 @@ use crate::input_data;
 use std::error::Error;
 use crate::input_data::{OptimizationData};
 use serde_yaml;
-use jlrs::prelude::*;
 use tokio::sync::Mutex;
 use std::sync::Arc;
-
+use std::collections::BTreeMap;
 
 pub async fn event_loop(
-    julia: Arc<Mutex<AsyncJulia<Tokio>>>,
-    predicer_dir: String,
+    predicer_dir: String
 ) {
     let (_tx_model, _rx_model) = mpsc::channel::<OptimizationData>(32);
     let (tx_time, rx_time) = mpsc::channel::<OptimizationData>(32);
@@ -51,11 +49,8 @@ pub async fn event_loop(
     });
 
     // Spawn the optimization task
-    let _julia_clone_for_optimization = Arc::clone(&julia);
-    let _predicer_dir_clone_for_optimization = predicer_dir.clone();
-    tokio::spawn(async move {
-        //optimization_task_logic(rx_optimization, julia_clone_for_optimization, predicer_dir_clone_for_optimization).await;
-    });
+
+
 
     let mut interval = time::interval(Duration::from_secs(180));
 
@@ -76,21 +71,14 @@ pub async fn event_loop(
 // Define a function for the optimization logic
 async fn optimization_task_logic(
     mut rx_optimization: mpsc::Receiver<OptimizationData>,
-    julia_clone: Arc<Mutex<AsyncJulia<Tokio>>>,
     predicer_dir_clone: String,
 ) {
     println!("Optimization task started and waiting for data...");
     while let Some(optimization_data) = rx_optimization.recv().await {
 
         if let Some(model_data) = optimization_data.model_data {
-            match run_predicer(julia_clone.clone(), model_data.input_data.clone(), predicer_dir_clone.clone()).await {
-                Ok(device_control_values) => {
-                    println!("Optimization successful. Control values: {:?}", device_control_values);
-                },
-                Err(e) => {
-                    println!("Optimization failed: {:?}", e);
-                }
-            }
+
+
         } else {
             println!("Optimization data is missing model_data. Skipping...");
         }
@@ -118,167 +106,12 @@ async fn optimization_task_logic(
 /// 
 
 async fn run_predicer(
-    julia: Arc<Mutex<AsyncJulia<Tokio>>>,
     data: input_data::InputData,
     predicer_dir: String,
-) -> Result<HashMap<String, predicer::ControlValues>, errors::JuliaError> {
-
-    // Acquire a lock on the Julia runtime.
-    let julia_guard = julia.lock().await;
-
-    // Attempt to execute the task using the Julia runtime.
-    match execute_task(&*julia_guard).await {
-        Ok(()) => println!("Task executed successfully"),
-        Err(e) => eprintln!("Task execution failed: {}", e),
-    }
-
-    // Create a one-shot channel for task result communication.
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-
-    // Send the prediction task to the runtime, handling any errors.
-    if let Err(e) = send_task_to_runtime(&*julia_guard, data, predicer_dir, sender).await {
-        eprintln!("Failed to send task to runtime: {}", e);
-        return Err(e);
-    }
-
-    // Wait for and handle the task result.
-    let result = match receive_task_result(receiver).await {
-        Ok(value) => {
-            value // value is of type Vec<(String, f64)>
-        },
-        Err(e) => {
-            eprintln!("Error receiving task result: {}", e);
-            return Err(errors::JuliaError(format!("Error receiving task result: {:?}", e))); // Updated error handling
-        }
-    };
-
-    // Return the successful result.
-    Ok(result)
+) {
 
 }
 
-
-/// Executes a specific task using the Julia runtime.
-///
-/// This asynchronous function sends a task to the Julia runtime for execution and awaits its result.
-/// The task communication is managed through a one-shot channel.
-///
-/// # Parameters
-/// - `julia`: Reference to the initialized AsyncJulia runtime.
-///
-/// # Returns
-/// Returns `Ok(())` if the task is successfully executed, or `JuliaError` in case of any failure
-/// during task dispatch or execution.
-///
-/// # Errors
-/// - Returns `JuliaError` if there is an issue with the channel communication or if the Julia task execution fails.
-
-
-async fn execute_task(julia: &AsyncJulia<Tokio>) -> Result<(), errors::JuliaError> {
-    // Create a one-shot channel for task communication. `sender` is used to send the task result,
-    // and `receiver` is used to await this result.
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-
-    // Register and dispatch a task to the Julia runtime. The specific task type and parameters are
-    // determined by `RunPredicer`. An error here would typically indicate issues in task registration or dispatch.
-    julia
-        .register_task::<RunPredicer, _>(sender)
-        .dispatch_any()
-        .await;
-
-    // Await the task result from the receiver. If the receiver encounters a channel error,
-    // it is converted to `JuliaError`.
-    let task_result = receiver.await.map_err(|e| errors::JuliaError(format!("Channel error in executing Julia task: {:?}", e)))?;
-    
-    // If the task was received but resulted in an execution error, convert this error to `JuliaError`.
-    // This typically indicates a failure within the task's logic or processing.
-    task_result.map_err(|e| errors::JuliaError(format!("Task execution error: {:?}", e)))
-}
-
-/// Asynchronously sends a task to the Julia runtime for execution.
-///
-/// This function prepares a task with the provided input data and Predicer directory, then dispatches it
-/// to the Julia runtime. The result of the task execution is communicated back through a one-shot channel.
-///
-/// # Parameters
-/// - `julia`: Reference to the initialized AsyncJulia runtime.
-/// - `data`: The input data for the task.
-/// - `predicer_dir`: Predicer directory. 
-/// - `sender`: A one-shot channel sender used to send the result of the task execution back.
-///
-/// # Returns
-/// Returns `Ok(())` if the task is successfully dispatched to the runtime.
-/// Returns `JuliaError` if the task fails to be dispatched.
-///
-/// # Errors
-/// Returns `JuliaError` with a message indicating failure in dispatching the task to the runtime.
-
-async fn send_task_to_runtime(
-    julia: &AsyncJulia<Tokio>,
-    data: input_data::InputData, 
-    predicer_dir: String, 
-    sender: tokio::sync::oneshot::Sender<Result<HashMap<String, predicer::ControlValues>, Box<JlrsError>>>,
-) -> Result<(), errors::JuliaError> {
-
-    // Dispatch a task with the provided data and directory to the Julia runtime.
-    // Runs task "RunPredicer"
-    let dispatch_result = julia
-        .task(
-            RunPredicer {
-                data,
-                predicer_dir,
-            },
-            sender,
-        )
-        .try_dispatch_any();
-    
-    // Handle the result of the dispatch attempt.
-    match dispatch_result {
-        Ok(()) => Ok(()), // Indicates successful dispatch of the task.
-        Err(_dispatcher) => {
-            // This branch handles the case where the task could not be dispatched.
-            // An appropriate error message is returned wrapped in `JuliaError`.
-            Err(errors::JuliaError("Failed to dispatch task in sending task to runtime".to_string()))
-        }
-    }
-}
-
-/// Asynchronously receives the result of a Julia task execution.
-///
-/// This function waits for the result of a task sent to the Julia runtime, which is received via a one-shot channel.
-/// It handles both successful and erroneous results, converting them into appropriate Rust Result types.
-///
-/// # Parameters
-/// - `receiver`: A one-shot channel receiver that awaits the result of the Julia task.
-///
-/// # Returns
-/// - On success, returns a vector of tuples containing the task results.
-/// - On failure, returns a `JuliaError` indicating the nature of the failure.
-///
-/// # Errors
-/// - If the task execution itself fails, a `JuliaError` with the execution error message is returned.
-/// - If there is an error in receiving the task result from the channel, a `JuliaError` indicating this failure is returned.
-///
-/// 
-
-async fn receive_task_result(
-    receiver: tokio::sync::oneshot::Receiver<Result<HashMap<String, predicer::ControlValues>, Box<JlrsError>>>,
-) -> Result<HashMap<String, predicer::ControlValues>, errors::JuliaError> {
-    match receiver.await {
-        Ok(result) => match result {
-            // The task result is successfully received from the channel.
-            Ok(value) => 
-            // The task executed successfully and returned a value.
-            Ok(value),
-            Err(e) => 
-            // The task executed but resulted in an error. This error is converted to a `JuliaError`.
-            Err(errors::JuliaError(format!("Task execution error: {:?}", e))),
-        },
-        Err(e) => 
-        // An error occurred in receiving the result from the channel, which is converted to a `JuliaError`.
-        Err(errors::JuliaError(format!("Failed to receive task result from channel in julia task: {:?}", e))),
-    }
-}
 
 async fn update_model_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
     while let Some(mut optimization_data) = rx.recv().await {
@@ -328,7 +161,7 @@ fn update_timeseries(optimization_data: &mut OptimizationData) -> Result<(), &'s
     }
 }
 
-
+/* 
 fn update_gen_constraints(optimization_data: &mut OptimizationData)  -> Result<(), &'static str> {
 
     if let Some(time_data) = &optimization_data.time_data {
@@ -342,9 +175,10 @@ fn update_gen_constraints(optimization_data: &mut OptimizationData)  -> Result<(
 
 
 }
+    */
 
 
-fn update_interior_air_initial_state(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
+pub fn update_interior_air_initial_state(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
     // Check if sensor_data is Some
     if let Some(sensor_data) = &optimization_data.sensor_data {
         // Ensure model_data is available
@@ -355,8 +189,12 @@ fn update_interior_air_initial_state(optimization_data: &mut OptimizationData) -
         if let Some(interior_air_sensor) = sensor_data.iter().find(|s| s.sensor_name == "interiorair") {
             // Update the interiorair initial_state with the sensor temp
             if let Some(node) = nodes.get_mut("interiorair") {
-                node.state.initial_state = interior_air_sensor.temp; // Correctly update the initial_state
-                return Ok(());
+                if let Some(ref mut state) = node.state {
+                    state.initial_state = interior_air_sensor.temp; // Correctly update the initial_state
+                    return Ok(());
+                } else {
+                    return Err("InteriorAir node state is not available.");
+                }
             } else {
                 // "interiorair" node not found
                 return Err("InteriorAir node not found in nodes.");
@@ -370,6 +208,7 @@ fn update_interior_air_initial_state(optimization_data: &mut OptimizationData) -
         return Err("Sensor data is not available.");
     }
 }
+
 
 fn update_npe_market_prices(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
     // Check if ElectricityPriceData is Some
@@ -446,7 +285,7 @@ async fn _fetch_model_data_task(tx: mpsc::Sender<OptimizationData>) {
     }
 }
 
-
+/* 
 async fn update_token_in_optimization_data(optimization_data: &mut OptimizationData) -> Result<(), io::Error> {
     let token = fs::read_to_string("config/token.txt")?;
 
@@ -465,6 +304,7 @@ async fn update_token_in_optimization_data(optimization_data: &mut OptimizationD
 
     Ok(())
 }
+    */
 
 
 async fn create_time_data_task(
@@ -606,7 +446,7 @@ pub fn create_and_update_weather_data(optimization_data: &mut OptimizationData, 
 }
 
 // Function to create TimeSeriesData with scenarios "s1" and "s2" using paired series
-fn create_time_series_data_with_scenarios(paired_series: Vec<(String, f64)>) -> input_data::TimeSeriesData {
+fn create_time_series_data_with_scenarios(paired_series: BTreeMap<String, f64>) -> input_data::TimeSeriesData {
     // Create TimeSeries instances for scenarios "s1" and "s2" with the same series data
     let time_series_s1 = input_data::TimeSeries {
         scenario: "s1".to_string(),
@@ -624,7 +464,7 @@ fn create_time_series_data_with_scenarios(paired_series: Vec<(String, f64)>) -> 
     }
 }
 
-pub fn pair_timeseries_with_values(series: &[String], values: &[f64]) -> Vec<(String, f64)> {
+pub fn pair_timeseries_with_values(series: &[String], values: &[f64]) -> BTreeMap<String, f64> {
     series.iter().zip(values.iter())
         .map(|(timestamp, &value)| (timestamp.clone(), value))
         .collect()
@@ -721,14 +561,16 @@ pub fn create_and_update_elec_price_data(optimization_data: &mut OptimizationDat
     }
 }
 
-fn create_modified_price_series_data(
-    original_series: &Vec<(String, f64)>,
+pub fn create_modified_price_series_data(
+    original_series: &BTreeMap<String, f64>,
     multiplier: f64,
 ) -> input_data::TimeSeriesData {
-    let modified_series = original_series.iter()
+    // Create a modified series by multiplying each price by the multiplier
+    let modified_series: BTreeMap<String, f64> = original_series.iter()
         .map(|(timestamp, price)| (timestamp.clone(), price * multiplier))
-        .collect::<Vec<(String, f64)>>();
+        .collect();
 
+    // Create TimeSeries instances for scenarios "s1" and "s2" with the modified series
     let time_series_s1 = input_data::TimeSeries {
         scenario: "s1".to_string(),
         series: modified_series.clone(), // Clone for s1
@@ -739,12 +581,13 @@ fn create_modified_price_series_data(
         series: modified_series, // Re-use for s2
     };
 
+    // Bundle the two TimeSeries into TimeSeriesData
     input_data::TimeSeriesData {
         ts_data: vec![time_series_s1, time_series_s2],
     }
 }
 
-
+/* 
 async fn fetch_entsoe_electricity_prices(
     start_time: String,
     end_time: String,
@@ -778,6 +621,7 @@ async fn fetch_entsoe_electricity_prices(
 
     Ok(electricity_price_data)
 }
+    */
 
 
 
@@ -848,53 +692,6 @@ pub async fn _fetch_model_data() -> Result<input_data::OptimizationData, errors:
     Ok(optimization_data)
 }
 
-
-
-async fn run_bd_test_with_mock_data(mock_file_path: &str) -> Result<(), String> {
-    let (tx, rx) = broadcast::channel(1);
-
-    // Run the task with the mock function
-    tokio::spawn(async move {
-        fetch_building_data_task(tx, || mock_fetch_building_data(mock_file_path)).await;
-    });
-
-    // Check if data is received
-    match rx.recv().await {
-        Ok(_) => Ok(()),
-        Err(e) => Err(format!("Test failed: {:?}", e)),
-    }
-}
-
-async fn mock_fetch_building_data(file_path: &str) -> Result<input_data::ModelData, Box<dyn Error + Send>> {
-    match fs::read_to_string(file_path) {
-        Ok(json_str) => match serde_json::from_str(&json_str) {
-            Ok(building_data) => Ok(building_data),
-            Err(e) => Err(Box::new(e)),
-        },
-        Err(e) => Err(Box::new(e)),
-    }
-}
-
-#[tokio::test]
-async fn test_scenario_success() {
-    let mock_file_path = "tests/mocks/bd_success.json";
-    if let Err(e) = run_bd_test_with_mock_data(mock_file_path).await {
-        panic!("{}", e);
-    }
-}
-
-#[tokio::test]
-async fn test_scenario_failure() {
-    let mock_file_path = "tests/mocks/bd_no_contains_reserves.json";
-    if let Err(e) = run_bd_test_with_mock_data(mock_file_path).await {
-        panic!("{}", e);
-    }
-}
-
-
-
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -921,6 +718,7 @@ mod tests {
         Ok(optimization_data)
     }
 
+    /* 
     #[test]
     fn test_update_interior_air_initial_state_success() {
         let mut optimization_data = load_test_optimization_data_from_yaml("update_interior_air_test_success.yaml")
@@ -953,6 +751,7 @@ mod tests {
             panic!("InteriorAir node not found in nodes after update.");
         }
     }
+    */
 
     #[test]
     fn test_update_outside_node_inflow_success() {
@@ -1077,6 +876,6 @@ mod tests {
 
 }
 
-*/
+
 
 

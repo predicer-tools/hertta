@@ -357,7 +357,7 @@ pub struct PriceData {
     pub price: f64,
 }
 
-pub fn _calculate_time_range(timezone_str: &str, temporals: &Option<TemporalsHours>) -> Result<(DateTime<FixedOffset>, DateTime<FixedOffset>), errors::TimeDataParseError> {
+pub fn calculate_time_range(timezone_str: &str, temporals: &Option<TemporalsHours>) -> Result<(DateTime<FixedOffset>, DateTime<FixedOffset>), errors::TimeDataParseError> {
     let timezone: Tz = timezone_str.parse().map_err(|_| errors::TimeDataParseError::new("Invalid timezone string"))?;
 
     let now_utc = Utc::now();
@@ -373,7 +373,7 @@ pub fn _calculate_time_range(timezone_str: &str, temporals: &Option<TemporalsHou
     Ok((start_time, end_time))
 }
 
-pub async fn _generate_hourly_timestamps(start_time: DateTime<FixedOffset>, end_time: DateTime<FixedOffset>) -> Result<Vec<String>, Box<dyn Error + Send>> {
+pub async fn generate_hourly_timestamps(start_time: DateTime<FixedOffset>, end_time: DateTime<FixedOffset>) -> Result<Vec<String>, Box<dyn Error + Send>> {
     let mut current = start_time;
     let mut timestamps = Vec::new();
 
