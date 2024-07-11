@@ -34,6 +34,8 @@ use serde_json::Value;
 use std::io::{self, Read, Write};
 use std::fs::File;
 use serde_json::from_str;
+use arrow::array::{Array, StringArray, Float64Array, Int32Array, ArrayRef};
+use std::sync::{Arc, Mutex};
 
 //use std::time::{SystemTime, UNIX_EPOCH};
 //use tokio::join;
@@ -139,6 +141,19 @@ pub fn read_yaml_file(file_path: &str) -> Result<input_data::InputData, FileRead
     Ok(input_data)
 }
 
+pub fn find_available_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("Failed to bind to address");
+    listener.local_addr().unwrap().port()
+}
+
+pub fn json_to_inputdata(json_file_path: &str) -> Result<input_data::InputData, Box<dyn Error>> {
+    let mut file = File::open(json_file_path)?;
+    let mut data = String::new();
+    file.read_to_string(&mut data)?;
+
+    let input_data: input_data::InputData = from_str(&data)?;
+    Ok(input_data)
+}
 
 // Function to send serialized batches
 pub fn send_serialized_batches(serialized_batches: &HashMap<String, Vec<u8>>, zmq_context: &zmq::Context) -> Result<(), Box<dyn Error>> {
@@ -159,17 +174,12 @@ pub fn start_julia_local() -> Result<ExitStatus, std::io::Error> {
     std::env::set_var("PUSH_PORT", push_port.to_string());
 
     let mut julia_command = Command::new("C:\\Users\\enessi\\AppData\\Local\\Microsoft\\WindowsApps\\julia.exe");
-    julia_command.arg("--project=C:\\users\\enessi\\Documents\\hertta");
-    julia_command.arg("C:\\users\\enessi\\Documents\\hertta\\src\\Pr_ArrowConnection.jl");
+    julia_command.arg("--project=C:\\users\\enessi\\Documents\\hertta-kaikki\\hertta-addon\\hertta");
+    julia_command.arg("C:\\users\\enessi\\Documents\\hertta-kaikki\\hertta-addon\\hertta\\src\\Pr_ArrowConnection.jl");
     julia_command.status()  // Ensure this line returns the status
 }
 
-pub fn find_available_port() -> u16 {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("Failed to bind to address");
-    listener.local_addr().unwrap().port()
-}
-
-pub fn receive_data(endpoint: &str, zmq_context: &zmq::Context) {
+pub fn receive_data_old(endpoint: &str, zmq_context: &zmq::Context) {
     let receiver = zmq_context.socket(zmq::PULL).unwrap();
     assert!(receiver.connect(endpoint).is_ok());
     let flags = 0;
@@ -181,6 +191,7 @@ pub fn receive_data(endpoint: &str, zmq_context: &zmq::Context) {
             for record_batch_result in reader {
                 let record_batch = record_batch_result.expect("Failed to read record batch");
                 let data_frame = arrow_input::DataFrame::new(&record_batch);
+                println!("RUST PRINT");
                 data_frame.print();
             }
         }
@@ -188,13 +199,99 @@ pub fn receive_data(endpoint: &str, zmq_context: &zmq::Context) {
     }
 }
 
-pub fn json_to_inputdata(json_file_path: &str) -> Result<input_data::InputData, Box<dyn Error>> {
-    let mut file = File::open(json_file_path)?;
-    let mut data = String::new();
-    file.read_to_string(&mut data)?;
+pub fn receive_data(endpoint: &str, zmq_context: &zmq::Context, data_store: &Arc<Mutex<Vec<DataTable>>>) -> Result<(), Box<dyn Error>> {
+    let receiver = zmq_context.socket(zmq::PULL)?;
+    receiver.connect(endpoint)?;
+    let flags = 0;
 
-    let input_data: input_data::InputData = from_str(&data)?;
-    Ok(input_data)
+    let pull_result = receiver.recv_bytes(flags)?;
+    let reader = StreamReader::try_new(pull_result.as_slice(), None).expect("Failed to construct Arrow reader");
+
+    for record_batch_result in reader {
+        let record_batch = record_batch_result.expect("Failed to read record batch");
+        let data_table = DataTable::from_record_batch(&record_batch);
+        
+        let mut data_store = data_store.lock().unwrap();
+        data_store.push(data_table);
+    }
+
+    Ok(())
+}
+
+pub fn print_data_table(data_table: &DataTable) {
+    // Print the column headers
+    for column in &data_table.columns {
+        print!("{:<20}", column);
+    }
+    println!();
+
+    // Print a line separator
+    for _ in &data_table.columns {
+        print!("{:<20}", "--------------------");
+    }
+    println!();
+
+    // Print the rows
+    for row in &data_table.data {
+        for cell in row {
+            print!("{:<20}", cell);
+        }
+        println!();
+    }
+}
+
+
+#[derive(Debug)]
+pub struct DataTable {
+    pub columns: Vec<String>,
+    pub data: Vec<Vec<String>>,
+}
+
+impl DataTable {
+    pub fn from_record_batch(batch: &RecordBatch) -> Self {
+        let columns = batch
+            .schema()
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect::<Vec<_>>();
+
+        let mut data = Vec::new();
+
+        for row_index in 0..batch.num_rows() {
+            let mut row = Vec::new();
+            for column in batch.columns() {
+                let value = column_value_to_string(column, row_index);
+                row.push(value);
+            }
+            data.push(row);
+        }
+
+        DataTable { columns, data }
+    }
+}
+
+
+pub fn column_value_to_string(column: &ArrayRef, row_index: usize) -> String {
+    if column.is_null(row_index) {
+        return "NULL".to_string();
+    }
+
+    match column.data_type() {
+        arrow::datatypes::DataType::Utf8 => {
+            let array = column.as_any().downcast_ref::<StringArray>().unwrap();
+            array.value(row_index).to_string()
+        }
+        arrow::datatypes::DataType::Float64 => {
+            let array = column.as_any().downcast_ref::<Float64Array>().unwrap();
+            array.value(row_index).to_string()
+        }
+        arrow::datatypes::DataType::Int32 => {
+            let array = column.as_any().downcast_ref::<Int32Array>().unwrap();
+            array.value(row_index).to_string()
+        }
+        _ => "Unsupported type".to_string(),
+    }
 }
 
 #[tokio::main]
@@ -213,12 +310,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     println!("Serializing batches started");
 
-    
+    // Initialize the data store
+    let data_store: Arc<Mutex<Vec<DataTable>>> = Arc::new(Mutex::new(Vec::new()));
+
+    // Clone the data store for the server thread
+    let data_store_clone = Arc::clone(&data_store);
 
     // Create and serialize record batches
     let serialized_batches = arrow_input::create_and_serialize_record_batches(&input_data)?;
-
-    
 
    // Start the server in a separate thread
    let thread_join_handle = thread::Builder::new()
@@ -275,7 +374,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                            } else if command.starts_with("Take this!") {
                                let endpoint = command.strip_prefix("Take this! ").expect("cannot decipher endpoint");
                                responder.send("ready to receive", send_flags).expect("failed to confirm readiness for input");
-                               receive_data(endpoint, &zmq_context);
+                               //receive_data(endpoint, &zmq_context);
+                               if let Err(e) = receive_data(endpoint, &zmq_context, &data_store_clone) {
+                                eprintln!("Failed to receive data: {:?}", e);
+                                }
                            } else if command == "Quit" {
                                println!("Received request to quit");
                                is_running = false;
@@ -311,7 +413,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Wait for the server thread to finish
     let _ = thread_join_handle.join().expect("failed to join with server thread");
 
-    
+    // Lock the data store to access it
+    let data_store = data_store.lock().unwrap();
+
+    // Print the stored data tables using the print_data_table function
+    for data_table in data_store.iter() {
+        print_data_table(data_table);
+    }
 
     Ok(())
     

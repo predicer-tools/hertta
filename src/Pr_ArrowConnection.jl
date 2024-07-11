@@ -6,6 +6,9 @@ Pkg.activate("C:\\users\\enessi\\Documents\\hertta")
 # Instantiate all dependencies
 Pkg.instantiate()
 
+Pkg.add("Arrow")
+Pkg.add("ZMQ")
+
 println("Running Julia script with all dependencies activated and instantiated.")
 
 using Arrow
@@ -16,7 +19,7 @@ using TimeZones
 using Dates
 
 # Navigate to Predicer directory and activate the environment
-cd("C:\\users\\enessi\\Documents\\hertta\\Predicer")
+cd("C:\\users\\enessi\\Documents\\hertta-kaikki\\hertta-addon\\hertta\\Predicer")
 
 Pkg.activate(".")
 Pkg.instantiate()
