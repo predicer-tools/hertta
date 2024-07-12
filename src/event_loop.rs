@@ -26,9 +26,26 @@ pub struct Person {
 }
 
 pub async fn event_loop(mut rx: mpsc::Receiver<input_data::OptimizationData>) {
+
+    let (tx_weather, rx_weather) = mpsc::channel::<OptimizationData>(32);
+    let (tx_elec, rx_elec) = mpsc::channel::<OptimizationData>(32);
+    let (tx_update, rx_update) = mpsc::channel::<OptimizationData>(32);
+    let (tx_optimization, rx_optimization) = mpsc::channel::<OptimizationData>(32);
+    let (_tx_final, mut _rx_final) = mpsc::channel::<OptimizationData>(32);
+
+    // Spawn the weather data task to process and pass the data to the electricity price data task
+    tokio::spawn(async move {
+        println!("weather task");
+        fetch_weather_data_task(rx_weather, tx_elec).await; // Output sent to fetch_elec_price_task
+    });
+
     tokio::spawn(async move {
         while let Some(data) = rx.recv().await {
             println!("Received: {:?}", data);
+            if tx_weather.send(data).await.is_err() {
+                eprintln!("Failed to send data to weather task");
+            }
+
             // Simulate some work with a delay
             sleep(Duration::from_secs(1)).await;
         }
