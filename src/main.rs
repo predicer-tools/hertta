@@ -5,7 +5,6 @@ mod input_data;
 mod errors;
 mod event_loop;
 mod arrow_input;
-mod julia_process;
 
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, AUTHORIZATION};
 use serde_json::json;
@@ -31,11 +30,17 @@ use std::env;
 use std::time;
 use std::process::ExitStatus;
 use serde_json::Value;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Write, BufRead, BufReader};
 use std::fs::File;
 use serde_json::from_str;
 use arrow::array::{Array, StringArray, Float64Array, Int32Array, ArrayRef};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::sync::mpsc;
+use warp::Filter;
+use tokio::io::{AsyncBufReadExt, BufReader as AsyncBufReader};
+use std::time::Duration;
+use tokio::time::sleep;
 
 //use std::time::{SystemTime, UNIX_EPOCH};
 //use tokio::join;
@@ -294,19 +299,47 @@ pub fn column_value_to_string(column: &ArrayRef, row_index: usize) -> String {
     }
 }
 
+fn assert_send_sync<T: Send + Sync>() {}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
 
+    assert_send_sync::<input_data::OptimizationData>();
 
-    // Get the current working directory
-    let current_dir = env::current_dir()?;
+    let (tx, rx) = mpsc::channel::<input_data::OptimizationData>(32);
 
-    // Print the current working directory
-    println!("Current working directory: {:?}", current_dir);
+    event_loop::event_loop(rx).await;
 
-    let json_file_path = "src/building.json";
-    
-    let input_data = json_to_inputdata(json_file_path)?;
+    let input_data = json_to_inputdata("src/building.json")?;
+    //println!("Loaded input data for OPT command: {:?}", input_data);
+
+    let optimization_data = input_data::OptimizationData {
+        country: None,
+        location: None,
+        timezone: None,
+        elec_price_source: None,
+        temporals: None,
+        time_data: None,
+        weather_data: None,
+        model_data: Some(input_data),
+        elec_price_data: None,
+        control_results: None,
+    };
+
+    let people = vec![
+        optimization_data,
+    ];
+
+    for person in people {
+        tx.send(person).await.expect("Failed to send person");
+    }
+
+    //println!("Created OptimizationData for OPT command: {:?}", optimization_data);
+
+    // Let the worker thread finish its work
+    sleep(Duration::from_secs(50)).await;
+
+    /*
 
     println!("Serializing batches started");
 
@@ -420,6 +453,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     for data_table in data_store.iter() {
         print_data_table(data_table);
     }
+
+    */
 
     Ok(())
     

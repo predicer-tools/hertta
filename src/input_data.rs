@@ -12,6 +12,64 @@ use chrono::prelude::*;
 //use std::io;
 use crate::errors;
 //use std::fmt::{self, Display, Formatter};
+use arrow::record_batch::RecordBatch;
+use arrow::array::{Array, StringArray, Float64Array, Int32Array, ArrayRef};
+use std::sync::Arc;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DataTable {
+    pub columns: Vec<String>,
+    pub data: Vec<Vec<String>>,
+}
+
+unsafe impl Send for DataTable {}
+unsafe impl Sync for DataTable {}
+
+impl DataTable {
+    pub fn from_record_batch(batch: Arc<RecordBatch>) -> Self {
+        let columns = batch
+            .schema()
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect::<Vec<_>>();
+
+        let mut data = Vec::new();
+
+        for row_index in 0..batch.num_rows() {
+            let mut row = Vec::new();
+            for column in batch.columns() {
+                let value = column_value_to_string(column, row_index);
+                row.push(value);
+            }
+            data.push(row);
+        }
+
+        DataTable { columns, data }
+    }
+}
+
+pub fn column_value_to_string(column: &ArrayRef, row_index: usize) -> String {
+    if column.is_null(row_index) {
+        return "NULL".to_string();
+    }
+
+    match column.data_type() {
+        arrow::datatypes::DataType::Utf8 => {
+            let array = column.as_any().downcast_ref::<StringArray>().unwrap();
+            array.value(row_index).to_string()
+        }
+        arrow::datatypes::DataType::Float64 => {
+            let array = column.as_any().downcast_ref::<Float64Array>().unwrap();
+            array.value(row_index).to_string()
+        }
+        arrow::datatypes::DataType::Int32 => {
+            let array = column.as_any().downcast_ref::<Int32Array>().unwrap();
+            array.value(row_index).to_string()
+        }
+        _ => "Unsupported type".to_string(),
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PricePoint {
@@ -25,7 +83,6 @@ pub struct TemporalsHours {
 
 }
 
-//NODE DELAY MUUTTUNUT, BID_SLOTS, node_diffusion to vec
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InputData {
     pub temporals: Temporals,
@@ -254,11 +311,6 @@ pub struct WeatherDataResponse {
     pub weather_values: Vec<f64>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ModelData {
-    pub input_data: InputData,
-}
-
 
 // Serialization function for DateTime<FixedOffset>
 fn serialize<S>(date: &DateTime<FixedOffset>, serializer: S) -> Result<S::Ok, S::Error>
@@ -333,10 +385,9 @@ pub struct OptimizationData {
     pub temporals: Option<TemporalsHours>,
     pub time_data: Option<TimeData>,
     pub weather_data: Option<WeatherData>,
-    pub model_data: Option<ModelData>,
+    pub model_data: Option<InputData>,
     pub elec_price_data: Option<ElectricityPriceData>,
-    pub sensor_data: Option<Vec<SensorData>>,
-    pub control_results: Option<Vec<ControlData>>,
+    pub control_results: Option<Vec<DataTable>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

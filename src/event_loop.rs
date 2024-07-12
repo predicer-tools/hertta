@@ -10,28 +10,39 @@ use serde_yaml;
 use tokio::sync::Mutex;
 use std::sync::Arc;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
+use crate::arrow_input;
+use arrow::ipc::reader::StreamReader;
+use arrow::record_batch::RecordBatch;
+use std::sync::atomic::{AtomicBool, Ordering};
+use reqwest::Client;
+use tokio::time::sleep;
+use zmq::Context;
 
-pub async fn event_loop(
-    predicer_dir: String
-) {
-    let (_tx_model, _rx_model) = mpsc::channel::<OptimizationData>(32);
-    let (tx_time, rx_time) = mpsc::channel::<OptimizationData>(32);
+#[derive(Debug)]
+pub struct Person {
+    pub name: String,
+    pub age: u32,
+}
+
+pub async fn event_loop(mut rx: mpsc::Receiver<input_data::OptimizationData>) {
+    tokio::spawn(async move {
+        while let Some(data) = rx.recv().await {
+            println!("Received: {:?}", data);
+            // Simulate some work with a delay
+            sleep(Duration::from_secs(1)).await;
+        }
+    });
+}
+
+pub async fn event_loop_old(mut rx_o: mpsc::Receiver<OptimizationData>) {
     let (tx_weather, rx_weather) = mpsc::channel::<OptimizationData>(32);
     let (tx_elec, rx_elec) = mpsc::channel::<OptimizationData>(32);
     let (tx_update, rx_update) = mpsc::channel::<OptimizationData>(32);
-    let (tx_optimization, _rx_optimization) = mpsc::channel::<OptimizationData>(32);
+    let (tx_optimization, rx_optimization) = mpsc::channel::<OptimizationData>(32);
     let (_tx_final, mut _rx_final) = mpsc::channel::<OptimizationData>(32);
 
-
-    // Spawn the model data task
-    tokio::spawn(async move {
-        _fetch_model_data_task(tx_time).await; // Pass to next task
-    });
-
-    // Spawn the create_time_data_task
-    tokio::spawn(async move {
-        create_time_data_task(rx_time, tx_weather).await; // Output passed to fetch_weather_data_task
-    });
+    println!("Event loop started.");
 
     // Spawn the weather data task to process and pass the data to the electricity price data task
     tokio::spawn(async move {
@@ -40,7 +51,7 @@ pub async fn event_loop(
 
     // Spawn the electricity price data task to process and potentially finalize the data
     tokio::spawn(async move {
-        fetch_elec_price_task(rx_elec, tx_update).await; // Final output sent to _tx_final
+        fetch_elec_price_task(rx_elec, tx_update).await; // Final output sent to update_model_data_task
     });
 
     tokio::spawn(async move {
@@ -49,67 +60,128 @@ pub async fn event_loop(
     });
 
     // Spawn the optimization task
-
-
-
-    let mut interval = time::interval(Duration::from_secs(180));
+    tokio::spawn(async move {
+        optimization_task(rx_optimization, _tx_final).await;
+    });
 
     loop {
-        interval.tick().await; // Wait for the next interval tick
+        // Wait for a trigger with OptimizationData
+        println!("Loop started.");
 
-        // Check if there's data to process
+        tokio::select! {
+            Some(optimization_data) = rx_o.recv() => {
+                // Send the received OptimizationData to the next task in the pipeline
+                println!("Received OptimizationData trigger.");
+                if tx_weather.send(optimization_data).await.is_ok() {
+                    println!("OptimizationData sent to weather data task.");
+                } else {
+                    eprintln!("Failed to send OptimizationData to tx_weather.");
+                }
+            }
+            _ = time::sleep(Duration::from_secs(1)) => {
+                // This is a small delay to check the stop signal periodically
+            }
+        }
+
+        // Process final data
         while let Some(final_data) = _rx_final.recv().await {
             // Correctly call send_to_server_task with the received data
-            if let Err(e) = send_to_server_task(final_data).await {
-                eprintln!("Error while sending final optimization data to server: {}", e);
+            println!("jee");
+        }
+    }
+    println!("Event loop terminated.");
+}
+
+
+async fn send_serialized_batches(serialized_batches: &[(String, Vec<u8>)], zmq_context: &zmq::Context) -> Result<(), Box<dyn Error>> {
+    let push_socket = zmq_context.socket(zmq::PUSH)?;
+    push_socket.connect("tcp://127.0.0.1:5555")?;
+
+    for (key, batch) in serialized_batches {
+        println!("Sending batch: {}", key); // Debug print
+        push_socket.send(batch, 0)?;
+    }
+
+    Ok(())
+}
+
+pub async fn receive_data(
+    endpoint: &str,
+    zmq_context: &Context,
+    data_store: &Arc<Mutex<Vec<input_data::DataTable>>>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let receiver = zmq_context.socket(zmq::PULL)?;
+    receiver.connect(endpoint)?;
+    let flags = zmq::DONTWAIT;
+
+    loop {
+        match receiver.recv_bytes(flags) {
+            Ok(pull_result) => {
+                let reader = StreamReader::try_new(pull_result.as_slice(), None).expect("Failed to construct Arrow reader");
+                for record_batch_result in reader {
+                    let record_batch = Arc::new(record_batch_result.expect("Failed to read record batch"));
+                    let data_table = input_data::DataTable::from_record_batch(Arc::clone(&record_batch));
+
+                    let mut data_store = data_store.lock().await;
+                    data_store.push(data_table);
+                }
+                break;
+            },
+            Err(e) => {
+                if e.to_string().contains("Resource temporarily unavailable") {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                } else {
+                    return Err(Box::new(e));
+                }
             }
         }
     }
+
+    Ok(())
 }
 
 
-// Define a function for the optimization logic
-async fn optimization_task_logic(
-    mut rx_optimization: mpsc::Receiver<OptimizationData>,
-    predicer_dir_clone: String,
-) {
-    println!("Optimization task started and waiting for data...");
-    while let Some(optimization_data) = rx_optimization.recv().await {
+async fn optimization_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
+    let zmq_context = zmq::Context::new();
+    let data_store: Arc<tokio::sync::Mutex<Vec<input_data::DataTable>>> = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let endpoint = "tcp://127.0.0.1:5556"; // Assuming results are sent to this port
 
-        if let Some(model_data) = optimization_data.model_data {
+    while let Some(mut optimization_data) = rx.recv().await {
+        // Create and serialize record batches
+        if let Some(model_data) = &optimization_data.model_data {
+            match arrow_input::create_and_serialize_record_batches(model_data) {
+                Ok(serialized_batches) => {
+                    // Send serialized batches to server
+                    if let Err(e) = send_serialized_batches(&serialized_batches, &zmq_context).await {
+                        eprintln!("Failed to send serialized batches: {}", e);
+                        continue;
+                    }
 
+                    // Receive results from server
+                    if let Err(e) = receive_data(endpoint, &zmq_context, &data_store).await {
+                        eprintln!("Failed to receive results: {}", e);
+                        continue;
+                    }
 
+                    // Update control_results in optimization_data
+                    let data_store = data_store.lock().await;
+                    optimization_data.control_results = Some(data_store.clone());
+                }
+                Err(e) => {
+                    eprintln!("Failed to serialize model data: {}", e);
+                    continue;
+                }
+            }
+        }
+
+        // Send the updated OptimizationData downstream
+        if tx.send(optimization_data).await.is_err() {
+            eprintln!("Failed to send updated OptimizationData");
         } else {
-            println!("Optimization data is missing model_data. Skipping...");
+            println!("OptimizationData updated and sent successfully.");
         }
     }
-}
-
-/// Executes Run Predicer task using a Julia runtime.
-///
-/// This function handles the execution of optimization task by interfacing with a Julia runtime.
-/// It involves sending Predicer task to the runtime, waiting for its completion, and retrieving the results.
-///
-/// # Parameters
-/// - `julia`: An `Arc<Mutex<AsyncJulia<Tokio>>>` providing shared, thread-safe access to the Julia runtime.
-/// - `data`: The input data required for the prediction task.
-/// - `predicer_dir`: The directory path to optimization tool
-///
-/// # Returns
-/// Returns a `Result` with a vector of tuples (String, f64) representing the prediction results,
-/// or a `JuliaError` if any part of the process fails.
-///
-/// # Errors
-/// - Errors can occur during task execution, sending the task to runtime, or receiving the task results.
-/// - All errors are converted to `JuliaError` for a consistent error handling experience.
-///
-/// 
-
-async fn run_predicer(
-    data: input_data::InputData,
-    predicer_dir: String,
-) {
-
 }
 
 
@@ -121,13 +193,13 @@ async fn update_model_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mp
             eprintln!("Failed to update timeseries: {}", e);
             // Optionally, continue to attempt other updates even if one fails.
         }
-        
+        /* 
         // Update indoor temperature
         if let Err(e) = update_interior_air_initial_state(&mut optimization_data) {
             eprintln!("Failed to update indoor air initial state: {}", e);
             // Optionally, continue to attempt other updates even if one fails.
         }
-
+        */
         // Update outdoor temp flow
         if let Err(e) = update_outside_node_inflow(&mut optimization_data) {
             eprintln!("Failed to update outside node inflow: {}", e);
@@ -154,7 +226,7 @@ fn update_timeseries(optimization_data: &mut OptimizationData) -> Result<(), &'s
     
     // Check if model_data is available and update timeseries
     if let Some(model_data) = &mut optimization_data.model_data {
-        model_data.input_data.temporals.t = time_data.series.clone();
+        model_data.temporals.t = time_data.series.clone();
         Ok(())
     } else {
         Err("Model data is not available.")
@@ -177,13 +249,13 @@ fn update_gen_constraints(optimization_data: &mut OptimizationData)  -> Result<(
 }
     */
 
-
+/* 
 pub fn update_interior_air_initial_state(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
     // Check if sensor_data is Some
     if let Some(sensor_data) = &optimization_data.sensor_data {
         // Ensure model_data is available
         let model_data = optimization_data.model_data.as_mut().ok_or("Model data is not available.")?;
-        let nodes = &mut model_data.input_data.nodes;
+        let nodes = &mut model_data.nodes;
 
         // Find the sensor data for "interiorair"
         if let Some(interior_air_sensor) = sensor_data.iter().find(|s| s.sensor_name == "interiorair") {
@@ -208,6 +280,7 @@ pub fn update_interior_air_initial_state(optimization_data: &mut OptimizationDat
         return Err("Sensor data is not available.");
     }
 }
+*/
 
 
 fn update_npe_market_prices(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
@@ -215,7 +288,7 @@ fn update_npe_market_prices(optimization_data: &mut OptimizationData) -> Result<
     if let Some(electricity_price_data) = &optimization_data.elec_price_data {
         // Ensure model_data is available and contains the "npe" market
         let model_data = optimization_data.model_data.as_mut().ok_or("Model data is not available.")?;
-        let markets = &mut model_data.input_data.markets;
+        let markets = &mut model_data.markets;
 
         // Find the market named "npe"
         if let Some(npe_market) = markets.get_mut("npe") {
@@ -232,56 +305,6 @@ fn update_npe_market_prices(optimization_data: &mut OptimizationData) -> Result<
     } else {
         // ElectricityPriceData is None
         return Err("Electricity price data is not available.");
-    }
-}
-
-
-async fn send_to_server_task(final_data: OptimizationData) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let client = reqwest::Client::new();
-    let url = "http://127.0.0.1:8000/from_hertta/optimization_results"; // Your server URL
-
-    match client.post(url)
-        .json(&final_data)
-        .send()
-        .await {
-            Ok(response) => {
-                if response.status().is_success() {
-                    //println!("Successfully sent final optimization data.");
-                } else {
-                    eprintln!("Failed to send final optimization data. Status: {}", response.status());
-                }
-            },
-            Err(e) => eprintln!("Error sending request: {:?}", e),
-    }
-
-    Ok(())
-}
-
-
-async fn _fetch_model_data_task(tx: mpsc::Sender<OptimizationData>) {
-    let mut interval = time::interval(Duration::from_secs(10));
-
-    loop {
-        interval.tick().await;
-
-        match _fetch_model_data().await {
-            Ok(optimization_data) => {
-                // Update the token in the optimization data
-                /* 
-                if let Err(e) = update_token_in_optimization_data(&mut optimization_data).await {
-                    eprintln!("Failed to update token in OptimizationData: {}", e);
-                    // Optionally, handle the error, such as skipping this iteration, logging, etc.
-                    continue;
-                }
-                */
-
-                // Send the updated OptimizationData downstream
-                if tx.send(optimization_data).await.is_err() {
-                    eprintln!("Failed to send OptimizationData.");
-                }
-            },
-            Err(e) => eprintln!("Failed to fetch or construct OptimizationData: {}", e),
-        }
     }
 }
 
@@ -304,9 +327,9 @@ async fn update_token_in_optimization_data(optimization_data: &mut OptimizationD
 
     Ok(())
 }
-    */
+*/
 
-
+/* 
 async fn create_time_data_task(
     mut rx: mpsc::Receiver<OptimizationData>,
     tx: mpsc::Sender<OptimizationData>,
@@ -348,11 +371,10 @@ async fn create_time_data_task(
         }
     }
 }
+    */
 
 
 async fn fetch_weather_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
-
     loop {
         tokio::select! {
             Some(mut optimization_data) = rx.recv() => {
@@ -363,17 +385,10 @@ async fn fetch_weather_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: m
                     let start_time_formatted = time_data.start_time.format("%Y-%m-%dT%H:00:00Z").to_string();
                     let end_time_formatted = time_data.end_time.format("%Y-%m-%dT%H:00:00Z").to_string();
 
-                    // Log the formatted times for debugging
-                    //println!("Formatted start_time: {}", start_time_formatted);
-                    //println!("Formatted end_time: {}", end_time_formatted);
-
-                    // Pass formatted times as strings to fetch_weather_data
+                    // Fetch weather data using the formatted times
                     match fetch_weather_data(start_time_formatted, end_time_formatted, location).await {
                         Ok(weather_values) => {
-                            //println!("Fetched weather data: {:?}", weather_values);
-
-                            // Now that we have fetched weather values, create and update WeatherData
-                            // Note: You must define the function create_and_update_weather_data if not already defined
+                            // Create and update WeatherData
                             create_and_update_weather_data(&mut optimization_data, &weather_values);
                         },
                         Err(e) => eprintln!("fetch_weather_data_task: Failed to fetch weather data: {}", e),
@@ -387,18 +402,18 @@ async fn fetch_weather_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: m
                     println!("fetch_weather_data_task: Time data is missing.");
                 }
             },
-            _ = interval.tick() => println!("Interval ticked, but no new optimization data received."),
             else => break,
         }
     }
 }
+
 
 pub fn update_outside_node_inflow(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
     // Check if weather_data is Some
     if let Some(weather_data) = &optimization_data.weather_data {
         // Ensure model_data is available and contains the "outside" node
         let model_data = optimization_data.model_data.as_mut().ok_or("Model data is not available.")?;
-        let nodes = &mut model_data.input_data.nodes;
+        let nodes = &mut model_data.nodes;
 
         // Find the node named "outside"
         if let Some(outside_node) = nodes.get_mut("outside") {
@@ -468,10 +483,6 @@ pub fn pair_timeseries_with_values(series: &[String], values: &[f64]) -> BTreeMa
     series.iter().zip(values.iter())
         .map(|(timestamp, &value)| (timestamp.clone(), value))
         .collect()
-}
-
-pub fn _create_gen_constraints_timeseries(_optimization_data: &mut OptimizationData) {
-
 }
 
 
@@ -662,34 +673,6 @@ async fn fetch_elec_price_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mps
             break;
         }
     }
-}
-
-pub async fn _fetch_model_data() -> Result<input_data::OptimizationData, errors::ModelDataError> {
-    let url = "http://localhost:8000/to_hertta/model_data"; // Replace with the actual URL
-    let client = reqwest::Client::new();
-    
-    let response = client.get(url)
-        .send()
-        .await
-        .map_err(|e| {
-            println!("Network request failed: {}", e);
-            errors::ModelDataError::from(e) // Convert reqwest::Error to errors::ModelDataError
-        })?;
-    
-    let text = response.text()
-        .await
-        .map_err(|e| {
-            println!("Failed to get text from response: {}", e);
-            errors::ModelDataError::from(e) // Convert reqwest::Error to errors::ModelDataError
-        })?;
-    
-    let optimization_data = serde_yaml::from_str::<input_data::OptimizationData>(&text)
-    .map_err(|e| {
-        println!("Failed to parse YAML response: {}", e);
-        errors::ModelDataError::from(e) // Convert serde_yaml::Error to errors::ModelDataError
-    })?;
-
-    Ok(optimization_data)
 }
 
 #[cfg(test)]

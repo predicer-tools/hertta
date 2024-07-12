@@ -69,7 +69,7 @@ pub fn print_record_batches(batches: &HashMap<String, RecordBatch>) -> Result<()
 // Function to create and serialize multiple RecordBatches
 pub fn create_and_serialize_record_batches(
     input_data: &input_data::InputData,
-) -> Result<Vec<(String, Vec<u8>)>, Box<dyn Error>> {
+) -> Result<Vec<(String, Vec<u8>)>, Box<dyn std::error::Error + Send + Sync>> {
     let batches = create_record_batches(input_data)?;
     let mut serialized_batches = Vec::new();
 
@@ -84,7 +84,7 @@ pub fn create_and_serialize_record_batches(
 // Function to create RecordBatches (implement your Arrow conversion functions)
 pub fn create_record_batches(
     input_data: &input_data::InputData,
-) -> Result<Vec<(String, RecordBatch)>, Box<dyn Error>> {
+) -> Result<Vec<(String, RecordBatch)>, Box<dyn std::error::Error + Send + Sync>> {
     let mut batches = Vec::new();
     
     batches.push(("temps".to_string(), temps_to_arrow(&input_data)?));
@@ -120,7 +120,7 @@ pub fn create_record_batches(
 }
 
 // Function to serialize the batch to a buffer
-pub fn serialize_batch_to_buffer(batch: &RecordBatch) -> Result<Vec<u8>, Box<dyn Error>> {
+pub fn serialize_batch_to_buffer(batch: &RecordBatch) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let schema = batch.schema();
     let schema_ref: &Schema = schema.as_ref();
     let mut buffer: Vec<u8> = Vec::new();
@@ -1050,7 +1050,7 @@ pub fn market_reserve_activation_price_to_arrow(input_data: &input_data::InputDa
 
     // Handle the case where there are no reserve_activation_price data
     let has_reserve_activation_price_data = markets.values().any(|market| !market.reserve_activation_price.ts_data.is_empty());
-    if (!has_reserve_activation_price_data) {
+    if !has_reserve_activation_price_data {
         timestamps = temporals.t.clone();
         // Initialize scenario values with None
         for scenario in &scenario_names {
@@ -2129,7 +2129,7 @@ mod tests {
         assert!(path.exists(), "Test file does not exist at the expected path");
 
         // Read the mock input data from the YAML file
-        let input_data = read_yaml_file::<InputData>(path.to_str().unwrap()).expect("Should read the YAML file correctly");
+        let input_data = read_yaml_file::<input_data::InputData>(path.to_str().unwrap()).expect("Should read the YAML file correctly");
 
         // Call the function
         let result = gen_constraints_to_arrow(&input_data);
