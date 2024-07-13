@@ -39,6 +39,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use warp::Filter;
 use tokio::io::{AsyncBufReadExt, BufReader as AsyncBufReader};
+use chrono::{DateTime, FixedOffset, Utc, Duration as ChronoDuration};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -299,29 +300,45 @@ pub fn column_value_to_string(column: &ArrayRef, row_index: usize) -> String {
     }
 }
 
-fn assert_send_sync<T: Send + Sync>() {}
+pub fn create_time_data() -> input_data::TimeData {
+    let start_time = Utc::now().with_timezone(&FixedOffset::east(0));
+    let end_time = start_time + ChronoDuration::hours(12);
+
+    let mut series = Vec::new();
+    let mut current_time = start_time;
+    while current_time <= end_time {
+        series.push(current_time.format("%Y-%m-%dT%H:%M:%S").to_string());
+        current_time = current_time + ChronoDuration::minutes(15); // Adjust this duration as needed
+    }
+
+    input_data::TimeData {
+        start_time,
+        end_time,
+        series,
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
 
-    assert_send_sync::<input_data::OptimizationData>();
 
     let (tx, rx) = mpsc::channel::<input_data::OptimizationData>(32);
 
     event_loop::event_loop(rx).await;
 
     let input_data = json_to_inputdata("src/building.json")?;
-    //println!("Loaded input data for OPT command: {:?}", input_data);
+
+    let time_data = create_time_data();
 
     let optimization_data = input_data::OptimizationData {
-        country: None,
-        location: None,
+        country: Some("Finland".to_string()),
+        location: Some("Hervanta".to_string()),
         timezone: None,
         elec_price_source: None,
         temporals: None,
-        time_data: None,
+        time_data: Some(time_data.clone()),
         weather_data: None,
-        model_data: Some(input_data),
+        model_data: Some(input_data.clone()),
         elec_price_data: None,
         control_results: None,
     };

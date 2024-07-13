@@ -39,6 +39,11 @@ pub async fn event_loop(mut rx: mpsc::Receiver<input_data::OptimizationData>) {
         fetch_weather_data_task(rx_weather, tx_elec).await; // Output sent to fetch_elec_price_task
     });
 
+    // Spawn the electricity price data task to process and potentially finalize the data
+    tokio::spawn(async move {
+        fetch_elec_price_task(rx_elec, tx_update).await; // Final output sent to update_model_data_task
+    });
+
     tokio::spawn(async move {
         while let Some(data) = rx.recv().await {
             println!("Received: {:?}", data);
@@ -413,7 +418,7 @@ async fn fetch_weather_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: m
 
                     // Attempt to send the updated optimization data back
                     if tx.send(optimization_data).await.is_err() {
-                        eprintln!("Failed to send updated optimization data");
+                        eprintln!("Failed to send updated optimization data from weather task");
                     }
                 } else {
                     println!("fetch_weather_data_task: Time data is missing.");
