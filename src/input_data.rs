@@ -14,7 +14,133 @@ use crate::errors;
 //use std::fmt::{self, Display, Formatter};
 use arrow::record_batch::RecordBatch;
 use arrow::array::{Array, StringArray, Float64Array, Int32Array, ArrayRef};
-use std::sync::Arc;
+use std::sync::{Arc};
+use tokio::sync::Mutex;
+
+pub async fn update_all_ts_data(optimization_data: Arc<Mutex<OptimizationData>>) {
+    let mut data = optimization_data.lock().await;
+    if let Some(ref mut model_data) = data.model_data {
+        let temporals_t = &model_data.temporals.t;
+        let default_ts_data = TimeSeriesData::from_temporals(temporals_t, "default_scenario".to_string());
+        println!("Default TS Data: {:?}", default_ts_data);
+
+        for process in model_data.processes.values_mut() {
+            process.cf = default_ts_data.clone();
+            process.eff_ts = default_ts_data.clone();
+            for topo in process.topos.iter_mut() {
+                topo.cap_ts = default_ts_data.clone();
+            }
+            println!("Updated Process: {:?}", process);
+        }
+
+        for node in model_data.nodes.values_mut() {
+            node.cost = default_ts_data.clone();
+            node.inflow = default_ts_data.clone();
+            println!("Updated Node: {:?}", node);
+        }
+
+        for node_diffusion in model_data.node_diffusion.iter_mut() {
+            node_diffusion.coefficient = default_ts_data.clone();
+            println!("Updated Node Diffusion: {:?}", node_diffusion);
+        }
+
+        for node_history in model_data.node_histories.values_mut() {
+            node_history.steps = default_ts_data.clone();
+            println!("Updated Node History: {:?}", node_history);
+        }
+
+        for market in model_data.markets.values_mut() {
+            market.realisation = default_ts_data.clone();
+            market.price = default_ts_data.clone();
+            market.up_price = default_ts_data.clone();
+            market.down_price = default_ts_data.clone();
+            market.reserve_activation_price = default_ts_data.clone();
+            println!("Updated Market: {:?}", market);
+        }
+
+        for inflow_block in model_data.inflow_blocks.values_mut() {
+            inflow_block.data = default_ts_data.clone();
+            println!("Updated Inflow Block: {:?}", inflow_block);
+        }
+
+        for bid_slot in model_data.bid_slots.values_mut() {
+            bid_slot.time_steps = temporals_t.clone();
+            println!("Updated Bid Slot: {:?}", bid_slot);
+        }
+
+        for gen_constraint in model_data.gen_constraints.values_mut() {
+            gen_constraint.constant = default_ts_data.clone();
+            for factor in gen_constraint.factors.iter_mut() {
+                factor.data = default_ts_data.clone();
+            }
+            println!("Updated Gen Constraint: {:?}", gen_constraint);
+        }
+    }
+}
+
+pub async fn check_ts_data_against_temporals(optimization_data: Arc<Mutex<OptimizationData>>) {
+    let data = optimization_data.lock().await;
+    if let Some(model_data) = &data.model_data {
+        let temporals_t = &model_data.temporals.t;
+
+        for (process_name, process) in &model_data.processes {
+            for ts_data in &process.cf.ts_data {
+                check_series(&ts_data, temporals_t, process_name);
+            }
+            for ts_data in &process.eff_ts.ts_data {
+                check_series(&ts_data, temporals_t, process_name);
+            }
+            for topology in &process.topos {
+                for ts_data in &topology.cap_ts.ts_data {
+                    check_series(&ts_data, temporals_t, process_name);
+                }
+            }
+        }
+
+        for (node_name, node) in &model_data.nodes {
+            for ts_data in &node.cost.ts_data {
+                check_series(&ts_data, temporals_t, node_name);
+            }
+            for ts_data in &node.inflow.ts_data {
+                check_series(&ts_data, temporals_t, node_name);
+            }
+        }
+
+        for node_diffusion in &model_data.node_diffusion {
+            for ts_data in &node_diffusion.coefficient.ts_data {
+                check_series(&ts_data, temporals_t, &format!("diffusion {}-{}", node_diffusion.node1, node_diffusion.node2));
+            }
+        }
+
+        for (market_name, market) in &model_data.markets {
+            for ts_data in &market.realisation.ts_data {
+                check_series(&ts_data, temporals_t, market_name);
+            }
+            for ts_data in &market.price.ts_data {
+                check_series(&ts_data, temporals_t, market_name);
+            }
+            for ts_data in &market.up_price.ts_data {
+                check_series(&ts_data, temporals_t, market_name);
+            }
+            for ts_data in &market.down_price.ts_data {
+                check_series(&ts_data, temporals_t, market_name);
+            }
+            for ts_data in &market.reserve_activation_price.ts_data {
+                check_series(&ts_data, temporals_t, market_name);
+            }
+        }
+    }
+}
+
+pub fn check_series(ts_data: &TimeSeries, temporals_t: &[String], context: &str) {
+    let series_keys: Vec<String> = ts_data.series.keys().cloned().collect();
+    if series_keys != *temporals_t {
+        println!("Mismatch in {}: {:?}", context, ts_data.scenario);
+        println!("Expected: {:?}", temporals_t);
+        println!("Found: {:?}", series_keys);
+    }
+}
+
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DataTable {
@@ -284,6 +410,23 @@ pub struct TimeSeries {
     pub series: BTreeMap<String, f64>,
 }
 
+impl TimeSeriesData {
+    pub fn from_temporals(temporals_t: &[String], scenario: String) -> Self {
+        let mut series = BTreeMap::new();
+        for time in temporals_t {
+            series.insert(time.clone(), 1.0);
+        }
+        let time_series = TimeSeries {
+            scenario,
+            series,
+        };
+        TimeSeriesData {
+            ts_data: vec![time_series],
+        }
+    }
+}
+
+
 // Implement a function to create the TimeSeries
 impl TimeSeries {
     fn new(scenario: String, series: BTreeMap<String, f64>) -> TimeSeries {
@@ -382,12 +525,12 @@ pub struct OptimizationData {
     pub location: Option<String>,
     pub timezone: Option<String>,
     pub elec_price_source: Option<ElecPriceSource>,
-    pub temporals: Option<TemporalsHours>,
     pub time_data: Option<TimeData>,
     pub weather_data: Option<WeatherData>,
     pub model_data: Option<InputData>,
     pub elec_price_data: Option<ElectricityPriceData>,
     pub control_results: Option<Vec<DataTable>>,
+    pub input_data_batch: Option<Vec<(String, Vec<u8>)>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

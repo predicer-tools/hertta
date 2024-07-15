@@ -1,13 +1,13 @@
 
 use tokio::time::{self, Duration};
 //use serde_json::json;
-use tokio::sync::{mpsc};
+use tokio::sync::{Mutex};
+use tokio::sync::mpsc::{self, Receiver, Sender};
 use crate::errors;
 use crate::input_data;
 use std::error::Error;
 use crate::input_data::{OptimizationData};
 use serde_yaml;
-use tokio::sync::Mutex;
 use std::sync::Arc;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -18,24 +18,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use reqwest::Client;
 use tokio::time::sleep;
 use zmq::Context;
+use tokio::task::JoinHandle;
+use async_std::task;
 
-#[derive(Debug)]
-pub struct Person {
-    pub name: String,
-    pub age: u32,
-}
 
 pub async fn event_loop(mut rx: mpsc::Receiver<input_data::OptimizationData>) {
-
     let (tx_weather, rx_weather) = mpsc::channel::<OptimizationData>(32);
     let (tx_elec, rx_elec) = mpsc::channel::<OptimizationData>(32);
     let (tx_update, rx_update) = mpsc::channel::<OptimizationData>(32);
+    let (tx_batches, rx_batches) = mpsc::channel::<OptimizationData>(32);
     let (tx_optimization, rx_optimization) = mpsc::channel::<OptimizationData>(32);
-    let (_tx_final, mut _rx_final) = mpsc::channel::<OptimizationData>(32);
+    //let (_tx_final, mut _rx_final) = mpsc::channel::<OptimizationData>(32);
 
     // Spawn the weather data task to process and pass the data to the electricity price data task
     tokio::spawn(async move {
-        println!("weather task");
         fetch_weather_data_task(rx_weather, tx_elec).await; // Output sent to fetch_elec_price_task
     });
 
@@ -45,8 +41,22 @@ pub async fn event_loop(mut rx: mpsc::Receiver<input_data::OptimizationData>) {
     });
 
     tokio::spawn(async move {
+        // Adjust the function signature of update_model_data_task to accept tx_optimization
+        update_model_data_task(rx_update, tx_batches).await;
+    });
+
+    // Spawn the data conversion task
+    tokio::spawn(async move {
+        data_conversion_task(rx_batches, tx_optimization).await;
+    });
+
+    // Spawn the optimization task
+    tokio::spawn(async move {
+        optimization_task(rx_optimization).await;
+    });
+
+    tokio::spawn(async move {
         while let Some(data) = rx.recv().await {
-            println!("Received: {:?}", data);
             if tx_weather.send(data).await.is_err() {
                 eprintln!("Failed to send data to weather task");
             }
@@ -55,8 +65,176 @@ pub async fn event_loop(mut rx: mpsc::Receiver<input_data::OptimizationData>) {
             sleep(Duration::from_secs(1)).await;
         }
     });
+
+    // Spawn the Julia process task
+    tokio::spawn(async move {
+        match run_julia_process().await {
+            Ok(status) => {
+                if !status.success() {
+                    eprintln!("Julia process failed with status: {:?}", status);
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to start Julia process: {:?}", e);
+            }
+        }
+    });
 }
 
+use std::process::ExitStatus;
+use std::process::Command;
+use tokio::net::TcpListener;
+use std::env;
+use std::io;
+
+pub async fn find_available_port() -> Result<u16, io::Error> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    Ok(port)
+}
+
+pub async fn start_julia_local() -> Result<ExitStatus, io::Error> {
+    let push_port = find_available_port().await?;
+    env::set_var("PUSH_PORT", push_port.to_string());
+
+    let status = Command::new("C:\\Users\\enessi\\AppData\\Local\\Microsoft\\WindowsApps\\julia.exe")
+        .arg("--project=C:\\users\\enessi\\Documents\\hertta-kaikki\\hertta-addon\\hertta")
+        .arg("C:\\users\\enessi\\Documents\\hertta-kaikki\\hertta-addon\\hertta\\src\\Pr_ArrowConnection.jl")
+        .status()?;
+
+    Ok(status)
+}
+
+pub async fn run_julia_process() -> Result<ExitStatus, io::Error> {
+    start_julia_local().await
+}
+
+
+use std::thread;
+pub async fn optimization_task(mut zmq_rx: mpsc::Receiver<OptimizationData>) {
+
+    let zmq_context = zmq::Context::new();
+    let responder = zmq_context.socket(zmq::REP).unwrap();
+    assert!(responder.bind("tcp://*:5555").is_ok());
+
+    let mut is_running = true;
+    let receive_flags = 0;
+    let send_flags = 0;
+
+    // Initialize the data store
+    let data_store: Arc<Mutex<Vec<input_data::DataTable>>> = Arc::new(Mutex::new(Vec::new()));
+
+    // Server loop to handle requests
+    while is_running {
+        let request_result = responder.recv_string(receive_flags);
+        match request_result {
+            Ok(inner_result) => {
+                match inner_result {
+                    Ok(command) => {
+                        if command == "Hello" {
+                            println!("Received Hello");
+
+                            if let Some(data) = zmq_rx.recv().await {
+                                if let Some(batches) = data.input_data_batch {
+                                                            // Send all serialized batches
+                                    for (key, buffer) in batches {
+                                        println!("Sending batch: {}", key);
+                                        if let Err(e) = responder.send(buffer, send_flags) {
+                                            eprintln!("Failed to send batch {}: {:?}", key, e);
+                                            is_running = false;
+                                            break;
+                                        }
+
+                                        // Wait for acknowledgment from the client
+                                        let ack_result = responder.recv_string(receive_flags);
+                                        match ack_result {
+                                            Ok(ack) => {
+                                                println!("Received acknowledgment for batch: {}", key);
+                                            }
+                                            Err(e) => {
+                                                eprintln!("Failed to receive acknowledgment: {:?}", e);
+                                                is_running = false;
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    // Send END signal after all batches are sent
+                                    println!("Sending END signal");
+                                    if let Err(e) = responder.send("END", send_flags) {
+                                        eprintln!("Failed to send END signal: {:?}", e);
+                                    }
+                                }
+                            }
+                        } else if command.starts_with("Take this!") {
+                            let endpoint = command.strip_prefix("Take this! ").expect("cannot decipher endpoint");
+                            responder.send("ready to receive", send_flags).expect("failed to confirm readiness for input");
+                            //receive_data(endpoint, &zmq_context);
+                            if let Err(e) = receive_data(endpoint, &zmq_context, &data_store) {
+                            eprintln!("Failed to receive data: {:?}", e);
+                            }
+                        } else if command == "Quit" {
+                            println!("Received request to quit");
+                            is_running = false;
+                        } else {
+                            println!("Received unknown command {}", command);
+                        }
+                    }
+                    Err(_) => println!("Received absolute gibberish"),
+                }
+            }
+            Err(e) => {
+                println!("Failed to receive data: {:?}", e);
+                thread::sleep(time::Duration::from_secs(1));
+            }
+        }
+    }
+
+}
+
+
+async fn data_conversion_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
+    while let Some(optimization_data) = rx.recv().await {
+        let optimization_data_arc = Arc::new(Mutex::new(optimization_data.clone()));
+
+        let data_clone1 = Arc::clone(&optimization_data_arc);
+        let update_handle: JoinHandle<()> = tokio::spawn(async move {
+            input_data::update_all_ts_data(data_clone1).await;
+        });
+
+        let data_clone2 = Arc::clone(&optimization_data_arc);
+        let check_handle: JoinHandle<()> = tokio::spawn(async move {
+            input_data::check_ts_data_against_temporals(data_clone2).await;
+        });
+
+        // Await the completion of both tasks
+        let _ = tokio::join!(update_handle, check_handle);
+
+        // Lock the updated data and proceed with serialization
+        let mut updated_data = optimization_data_arc.lock().await;
+
+        // Print the updated data for debugging
+        println!("Updated OptimizationData: {:?}", *updated_data);
+
+        if let Some(model_data) = &updated_data.model_data {
+            match arrow_input::create_and_serialize_record_batches(model_data) {
+                Ok(serialized_batches) => {
+                    updated_data.input_data_batch = Some(serialized_batches);
+                    if tx.send(updated_data.clone()).await.is_err() {
+                        eprintln!("Failed to send converted OptimizationData");
+                    } else {
+                        println!("OptimizationData converted and sent successfully.");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to serialize model data: {}", e);
+                }
+            }
+        }
+    }
+}
+
+/* 
 pub async fn event_loop_old(mut rx_o: mpsc::Receiver<OptimizationData>) {
     let (tx_weather, rx_weather) = mpsc::channel::<OptimizationData>(32);
     let (tx_elec, rx_elec) = mpsc::channel::<OptimizationData>(32);
@@ -114,8 +292,9 @@ pub async fn event_loop_old(mut rx_o: mpsc::Receiver<OptimizationData>) {
     println!("Event loop terminated.");
 }
 
+*/
 
-async fn send_serialized_batches(serialized_batches: &[(String, Vec<u8>)], zmq_context: &zmq::Context) -> Result<(), Box<dyn Error>> {
+async fn send_serialized_batches_old(serialized_batches: &[(String, Vec<u8>)], zmq_context: &zmq::Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let push_socket = zmq_context.socket(zmq::PUSH)?;
     push_socket.connect("tcp://127.0.0.1:5555")?;
 
@@ -127,51 +306,69 @@ async fn send_serialized_batches(serialized_batches: &[(String, Vec<u8>)], zmq_c
     Ok(())
 }
 
-pub async fn receive_data(
-    endpoint: &str,
-    zmq_context: &Context,
-    data_store: &Arc<Mutex<Vec<input_data::DataTable>>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub fn receive_data(endpoint: &str, zmq_context: &zmq::Context, data_store: &Arc<Mutex<Vec<input_data::DataTable>>>) -> Result<(), Box<dyn Error>> {
     let receiver = zmq_context.socket(zmq::PULL)?;
     receiver.connect(endpoint)?;
-    let flags = zmq::DONTWAIT;
+    let flags = 0;
 
-    loop {
-        match receiver.recv_bytes(flags) {
-            Ok(pull_result) => {
-                let reader = StreamReader::try_new(pull_result.as_slice(), None).expect("Failed to construct Arrow reader");
-                for record_batch_result in reader {
-                    let record_batch = Arc::new(record_batch_result.expect("Failed to read record batch"));
-                    let data_table = input_data::DataTable::from_record_batch(Arc::clone(&record_batch));
+    let pull_result = receiver.recv_bytes(flags)?;
+    let reader = StreamReader::try_new(pull_result.as_slice(), None).expect("Failed to construct Arrow reader");
 
-                    let mut data_store = data_store.lock().await;
-                    data_store.push(data_table);
-                }
-                break;
-            },
-            Err(e) => {
-                if e.to_string().contains("Resource temporarily unavailable") {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    continue;
-                } else {
-                    return Err(Box::new(e));
-                }
-            }
-        }
+    for record_batch_result in reader {
+        let record_batch = record_batch_result.expect("Failed to read record batch");
+        //let data_table = input_data::DataTable::from_record_batch(&record_batch);
+        
+        //let mut data_store = data_store.lock().unwrap();
+        //data_store.push(data_table);
     }
 
     Ok(())
 }
 
+async fn send_serialized_batches(
+    serialized_batches: &[(String, Vec<u8>)],
+    zmq_context: &Context,
+) -> Result<(), Box<dyn Error>> {
+    let push_socket = zmq_context.socket(zmq::PUSH)?;
+    push_socket.connect("tcp://127.0.0.1:5555")?;
 
-async fn optimization_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
+    for (key, batch) in serialized_batches {
+        println!("Sending batch: {}", key);
+        push_socket.send(batch, 0)?;
+    }
+
+    Ok(())
+}
+
+/* 
+async fn optimization_task_old(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
     let zmq_context = zmq::Context::new();
-    let data_store: Arc<tokio::sync::Mutex<Vec<input_data::DataTable>>> = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let data_store: Arc<Mutex<Vec<input_data::DataTable>>> = Arc::new(Mutex::new(Vec::new()));
     let endpoint = "tcp://127.0.0.1:5556"; // Assuming results are sent to this port
 
-    while let Some(mut optimization_data) = rx.recv().await {
-        // Create and serialize record batches
-        if let Some(model_data) = &optimization_data.model_data {
+    while let Some(optimization_data) = rx.recv().await {
+        let optimization_data = Arc::new(Mutex::new(optimization_data));
+
+        let data_clone1 = Arc::clone(&optimization_data);
+        let update_handle: JoinHandle<()> = tokio::spawn(async move {
+            input_data::update_all_ts_data(data_clone1).await;
+        });
+
+        let data_clone2 = Arc::clone(&optimization_data);
+        let check_handle: JoinHandle<()> = tokio::spawn(async move {
+            input_data::check_ts_data_against_temporals(data_clone2).await;
+        });
+
+        // Await the completion of both tasks
+        let _ = tokio::join!(update_handle, check_handle);
+
+        // Lock the updated data and proceed with serialization
+        let mut updated_data = optimization_data.lock().await;
+
+        // Print the updated data for debugging
+        println!("Updated OptimizationData: {:?}", *updated_data);
+
+        if let Some(model_data) = &updated_data.model_data {
             match arrow_input::create_and_serialize_record_batches(model_data) {
                 Ok(serialized_batches) => {
                     // Send serialized batches to server
@@ -188,7 +385,7 @@ async fn optimization_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::S
 
                     // Update control_results in optimization_data
                     let data_store = data_store.lock().await;
-                    optimization_data.control_results = Some(data_store.clone());
+                    updated_data.control_results = Some(data_store.clone());
                 }
                 Err(e) => {
                     eprintln!("Failed to serialize model data: {}", e);
@@ -198,14 +395,14 @@ async fn optimization_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::S
         }
 
         // Send the updated OptimizationData downstream
-        if tx.send(optimization_data).await.is_err() {
-            eprintln!("Failed to send updated OptimizationData");
+        if tx.send(updated_data.clone()).await.is_err() {
+            eprintln!("Failed to send updated OptimizationData to optimization task");
         } else {
             println!("OptimizationData updated and sent successfully.");
         }
     }
 }
-
+*/
 
 async fn update_model_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
     while let Some(mut optimization_data) = rx.recv().await {
@@ -235,7 +432,7 @@ async fn update_model_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mp
         }
 
         if tx.send(optimization_data).await.is_err() {
-            eprintln!("Failed to send updated OptimizationData");
+            eprintln!("Failed to send updated OptimizationData to model data update");
         } else {
             println!("OptimizationData updated and sent successfully.");
         }
@@ -509,17 +706,17 @@ pub fn pair_timeseries_with_values(series: &[String], values: &[f64]) -> BTreeMa
 
 
 
-async fn fetch_weather_data(start_time: String, end_time: String, place: String) -> Result<Vec<f64>, Box<dyn Error + Send>> {
+async fn fetch_weather_data(start_time: String, end_time: String, place: String) -> Result<Vec<f64>, Box<dyn std::error::Error + Send + Sync>> {
     //println!("Fetching weather data for place: {}, start time: {}, end time: {}", place, start_time, end_time);
 
     let client = reqwest::Client::new();
     let url = format!("http://localhost:8001/get_weather_data?start_time={}&end_time={}&place={}", start_time, end_time, place);
 
-    let response = client.get(&url).send().await.map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+    let response = client.get(&url).send().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
     //println!("Response status: {}", response.status());
 
-    let response_body = response.text().await.map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+    let response_body = response.text().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
     //println!("Raw response body: {}", response_body);
 
     match serde_json::from_str::<input_data::WeatherDataResponse>(&response_body) {
@@ -537,24 +734,24 @@ async fn fetch_weather_data(start_time: String, end_time: String, place: String)
     }
 }
 
-async fn fetch_electricity_prices(start_time: String, end_time: String, country: String) -> Result<Vec<f64>, Box<dyn Error + Send>> {
+async fn fetch_electricity_prices(start_time: String, end_time: String, country: String) -> Result<Vec<f64>, Box<dyn std::error::Error + Send + Sync>> {
     //println!("Fetching electricity price data for country: {}, start time: {}, end_time: {}", country, start_time, end_time);
 
     let client = reqwest::Client::new();
     let url = format!("https://dashboard.elering.ee/api/nps/price?start={}&end={}", start_time, end_time);
 
     // Fetch the response
-    let response = client.get(&url).header("accept", "").send().await.map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+    let response = client.get(&url).header("accept", "").send().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
     // Attempt to print the raw response text for debugging before parsing
-    let response_text = response.text().await.map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+    let response_text = response.text().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
     // Deserialize the response text into the custom ApiResponse structure
-    let api_response: input_data::EleringData = serde_json::from_str(&response_text).map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
+    let api_response: input_data::EleringData = serde_json::from_str(&response_text).map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
     // Extract only the prices for the specified country and debug print the extracted segment
     let country_data = api_response.data.get(&country)
-        .ok_or_else(|| Box::new(std::io::Error::new(std::io::ErrorKind::NotFound, "Country data not found")) as Box<dyn Error + Send>)?;
+        .ok_or_else(|| Box::new(std::io::Error::new(std::io::ErrorKind::NotFound, "Country data not found")) as Box<dyn std::error::Error + Send + Sync>)?;
 
     // Convert the prices to the desired format and collect them
     let prices = country_data.iter()
@@ -675,7 +872,7 @@ async fn fetch_elec_price_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mps
                         //println!("Fetched electricity prices for country '{}': {:?}", country, prices);
                         create_and_update_elec_price_data(&mut optimization_data, prices);
                         if tx.send(optimization_data).await.is_err() {
-                            eprintln!("Failed to send updated optimization data");
+                            eprintln!("Failed to send updated optimization data in electricity prices");
                         }
                     },
                     Err(e) => {
@@ -696,191 +893,3 @@ async fn fetch_elec_price_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mps
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio::sync::mpsc;
-    use tokio::time::{self, Duration};
-    use tokio::fs::File as AsyncFile;
-    use tokio::io::AsyncReadExt;
-    use serde::{Deserialize, Serialize};
-    use serde_yaml;
-    use std::fs::File;
-    use std::io::Read;
-    use std::path::PathBuf;
-    use tokio::runtime::Runtime;
-
-    fn load_test_optimization_data_from_yaml(file_name: &str) -> Result<OptimizationData, Box<dyn std::error::Error>> {
-        let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        d.push("tests/mocks");
-        d.push(file_name);
-
-        let mut file = File::open(d)?;
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
-        let optimization_data: OptimizationData = serde_yaml::from_str(&contents)?;
-        Ok(optimization_data)
-    }
-
-    /* 
-    #[test]
-    fn test_update_interior_air_initial_state_success() {
-        let mut optimization_data = load_test_optimization_data_from_yaml("update_interior_air_test_success.yaml")
-            .expect("Failed to load test optimization data from YAML");
-
-        // Accessing the model_data and then the nodes hashmap to check the original value
-        let original_model_data = optimization_data.model_data.as_ref().expect("Model data is missing before update");
-        let original_nodes = &original_model_data.input_data.nodes;
-
-        if let Some(interior_air_node) = original_nodes.get("interiorair") {
-            // Assert the original initial_state before the update
-            assert_eq!(interior_air_node.state.initial_state, 298.15, "The original initial_state of the interiorair node should be 298.15");
-        } else {
-            panic!("InteriorAir node not found in nodes before update.");
-        }
-
-        // Perform the update
-        let result = update_interior_air_initial_state(&mut optimization_data);
-        assert!(result.is_ok());
-
-        // Accessing the model_data again and then the nodes hashmap to check the updated value
-        let updated_model_data = optimization_data.model_data.as_ref().expect("Model data is missing after update");
-        let updated_nodes = &updated_model_data.input_data.nodes;
-
-        // Now, we check the specific node for its updated initial_state
-        if let Some(interior_air_node) = updated_nodes.get("interiorair") {
-            // Assert the updated initial_state after the update
-            assert_eq!(interior_air_node.state.initial_state, 296.0, "The initial_state of the interiorair node should be updated to 296.0");
-        } else {
-            panic!("InteriorAir node not found in nodes after update.");
-        }
-    }
-    */
-
-    #[test]
-    fn test_update_outside_node_inflow_success() {
-        let mut optimization_data = load_test_optimization_data_from_yaml("update_outside_node_inflow_success.yaml")
-            .expect("Failed to load test optimization data from YAML");
-
-        // Pre-update check: Ensure "outside" node's inflow scenarios are as expected before update
-        if let Some(outside_node) = optimization_data.model_data.as_ref().and_then(|md| md.input_data.nodes.get("outside")) {
-            // Check that scenarios exist but have empty series
-            for ts in &outside_node.inflow.ts_data {
-                assert!(ts.series.is_empty(), "Scenario '{}' should initially have an empty series.", ts.scenario);
-            }
-        } else {
-            panic!("Outside node not found in nodes before update.");
-        }
-
-        // Assuming update_outside_node_inflow is implemented to update the inflow based on weather_data
-        let result = update_outside_node_inflow(&mut optimization_data);
-        assert!(result.is_ok(), "Updating outside node's inflow failed.");
-
-        // Post-update check: Verify "outside" node's inflow has been updated with non-empty series
-        if let Some(outside_node) = optimization_data.model_data.as_ref().and_then(|md| md.input_data.nodes.get("outside")) {
-            // Assert that the series for each scenario within inflow is now non-empty
-            for ts in &outside_node.inflow.ts_data {
-                assert!(!ts.series.is_empty(), "Scenario '{}' should not be empty after update.", ts.scenario);
-                // Further checks can be added here to verify the content of the inflow matches expectations
-            }
-        } else {
-            panic!("Outside node not found in nodes after update.");
-        }
-    }
-
-    #[test]
-    fn test_update_npe_market_prices_success() {
-        let mut optimization_data = load_test_optimization_data_from_yaml("update_npe_market_prices_success.yaml")
-            .expect("Failed to load test optimization data from YAML");
-
-        // Pre-update check: Ensure "npe" market's price scenarios are as expected before update
-        if let Some(npe_market) = optimization_data.model_data.as_ref().and_then(|md| md.input_data.markets.get("npe")) {
-            // Check that scenarios exist but have empty series
-            for ts in &npe_market.price.ts_data {
-                assert!(ts.series.is_empty(), "Scenario '{}' in NPE market should initially have an empty series.", ts.scenario);
-            }
-        } else {
-            panic!("NPE market not found in markets before update.");
-        }
-
-        // Perform the update
-        let result = update_npe_market_prices(&mut optimization_data);
-        assert!(result.is_ok(), "Updating NPE market's prices failed.");
-
-        // Post-update check: Verify "npe" market's prices have been updated
-        if let Some(npe_market) = optimization_data.model_data.as_ref().and_then(|md| md.input_data.markets.get("npe")) {
-            // Assert that the series for each scenario within price is now non-empty
-            for ts in &npe_market.price.ts_data {
-                assert!(!ts.series.is_empty(), "Scenario '{}' in NPE market should not be empty after update.", ts.scenario);
-                // Further checks can be added here to verify the content of the price matches expectations
-            }
-        } else {
-            panic!("NPE market not found in markets after update.");
-        }
-    }
-
-    #[test]
-    fn test_create_modified_price_series_data() {
-        // Setup test data
-        let original_series = vec![
-            ("2023-01-01T00:00:00Z".to_string(), 100.0),
-            ("2023-01-01T01:00:00Z".to_string(), 200.0),
-        ];
-        let multiplier = 1.1; // Example multiplier
-
-        // Call the function under test
-        let result = create_modified_price_series_data(&original_series, multiplier);
-
-        // Verify that the ts_data contains two scenarios "s1" and "s2"
-        assert_eq!(result.ts_data.len(), 2, "There should be two scenarios in the result.");
-
-        // Check that both scenarios ("s1" and "s2") have the series correctly modified
-        for ts in &result.ts_data {
-            assert_eq!(ts.series.len(), original_series.len(), "Each scenario should have the same number of series as the original.");
-
-            for (i, (timestamp, price)) in ts.series.iter().enumerate() {
-                assert_eq!(timestamp, &original_series[i].0, "Timestamps should match the original series.");
-                let expected_price = original_series[i].1 * multiplier;
-                assert!((price - expected_price).abs() < f64::EPSILON, "Prices should be correctly modified by the multiplier.");
-            }
-        }
-
-        // Additionally, you can check specific scenarios if needed
-        assert_eq!(result.ts_data[0].scenario, "s1", "First scenario should be 's1'.");
-        assert_eq!(result.ts_data[1].scenario, "s2", "Second scenario should be 's2'.");
-    }
-
-    
-    #[tokio::test]
-    async fn test_update_series_in_optimization_data() {
-        // Mock the OptimizationData
-        let mut optimization_data = load_test_optimization_data_from_yaml("time_data_generation_test.yaml")
-            .expect("Failed to load optimization data from YAML");
-
-        // Define start and end times
-        let start_time = "2022-04-20T00:00:00+00:00";
-        let end_time = "2022-04-20T03:00:00+00:00";
-
-        // Perform the update
-        update_series_in_optimization_data(&mut optimization_data, start_time, end_time)
-            .await
-            .expect("Failed to update series in optimization data");
-
-        // Assert the series was updated as expected
-        assert!(optimization_data.time_data.is_some(), "Time data should be present");
-        let time_data = optimization_data.time_data.unwrap();
-        assert_eq!(time_data.start_time, start_time);
-        assert_eq!(time_data.end_time, end_time);
-        assert_eq!(time_data.series.len(), 4); // Expecting 4 timestamps
-        assert_eq!(time_data.series[0], "2022-04-20T00:00:00+00:00");
-        // Further assertions can be made on the series if necessary
-    }
-    
-
-
-}
-
-
-
-

@@ -39,7 +39,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use warp::Filter;
 use tokio::io::{AsyncBufReadExt, BufReader as AsyncBufReader};
-use chrono::{DateTime, FixedOffset, Utc, Duration as ChronoDuration};
+use chrono::{Timelike, FixedOffset, Utc, Duration as ChronoDuration};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -147,11 +147,6 @@ pub fn read_yaml_file(file_path: &str) -> Result<input_data::InputData, FileRead
     Ok(input_data)
 }
 
-pub fn find_available_port() -> u16 {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("Failed to bind to address");
-    listener.local_addr().unwrap().port()
-}
-
 pub fn json_to_inputdata(json_file_path: &str) -> Result<input_data::InputData, Box<dyn Error>> {
     let mut file = File::open(json_file_path)?;
     let mut data = String::new();
@@ -174,6 +169,11 @@ pub fn send_serialized_batches(serialized_batches: &HashMap<String, Vec<u8>>, zm
     Ok(())
 }
 
+pub fn find_available_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("Failed to bind to address");
+    listener.local_addr().unwrap().port()
+}
+
 // Function to start the Julia process locally
 pub fn start_julia_local() -> Result<ExitStatus, std::io::Error> {
     let push_port = find_available_port();
@@ -183,26 +183,6 @@ pub fn start_julia_local() -> Result<ExitStatus, std::io::Error> {
     julia_command.arg("--project=C:\\users\\enessi\\Documents\\hertta-kaikki\\hertta-addon\\hertta");
     julia_command.arg("C:\\users\\enessi\\Documents\\hertta-kaikki\\hertta-addon\\hertta\\src\\Pr_ArrowConnection.jl");
     julia_command.status()  // Ensure this line returns the status
-}
-
-pub fn receive_data_old(endpoint: &str, zmq_context: &zmq::Context) {
-    let receiver = zmq_context.socket(zmq::PULL).unwrap();
-    assert!(receiver.connect(endpoint).is_ok());
-    let flags = 0;
-
-    let pull_result = receiver.recv_bytes(flags);
-    match pull_result {
-        Ok(bytes) => {
-            let reader = StreamReader::try_new(bytes.as_slice(), None).expect("Failed to construct Arrow reader");
-            for record_batch_result in reader {
-                let record_batch = record_batch_result.expect("Failed to read record batch");
-                let data_frame = arrow_input::DataFrame::new(&record_batch);
-                println!("RUST PRINT");
-                data_frame.print();
-            }
-        }
-        Err(e) => println!("Failed to pull data: {:?}", e),
-    }
 }
 
 pub fn receive_data(endpoint: &str, zmq_context: &zmq::Context, data_store: &Arc<Mutex<Vec<DataTable>>>) -> Result<(), Box<dyn Error>> {
@@ -301,14 +281,19 @@ pub fn column_value_to_string(column: &ArrayRef, row_index: usize) -> String {
 }
 
 pub fn create_time_data() -> input_data::TimeData {
-    let start_time = Utc::now().with_timezone(&FixedOffset::east(0));
+    // Get the current time and round it to the latest hour
+    let start_time = Utc::now().with_timezone(&FixedOffset::east_opt(0).unwrap())
+                                .with_minute(0).unwrap()
+                                .with_second(0).unwrap()
+                                .with_nanosecond(0).unwrap();
     let end_time = start_time + ChronoDuration::hours(12);
 
+    // Generate a series of timestamps every 60 minutes
     let mut series = Vec::new();
     let mut current_time = start_time;
     while current_time <= end_time {
         series.push(current_time.format("%Y-%m-%dT%H:%M:%S").to_string());
-        current_time = current_time + ChronoDuration::minutes(15); // Adjust this duration as needed
+        current_time = current_time + ChronoDuration::hours(1); // Adjust this duration to 60 minutes
     }
 
     input_data::TimeData {
@@ -326,29 +311,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     event_loop::event_loop(rx).await;
 
-    let input_data = json_to_inputdata("src/building.json")?;
+    let input_data = json_to_inputdata("src/building_e.json")?;
 
     let time_data = create_time_data();
 
     let optimization_data = input_data::OptimizationData {
-        country: Some("Finland".to_string()),
+        country: Some("fi".to_string()),
         location: Some("Hervanta".to_string()),
         timezone: None,
         elec_price_source: None,
-        temporals: None,
         time_data: Some(time_data.clone()),
         weather_data: None,
         model_data: Some(input_data.clone()),
         elec_price_data: None,
         control_results: None,
+        input_data_batch: None,
     };
 
-    let people = vec![
+    let data_instances = vec![
         optimization_data,
     ];
 
-    for person in people {
-        tx.send(person).await.expect("Failed to send person");
+    for data in data_instances {
+        tx.send(data).await.expect("Failed to send person");
     }
 
     //println!("Created OptimizationData for OPT command: {:?}", optimization_data);
@@ -356,7 +341,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Let the worker thread finish its work
     sleep(Duration::from_secs(50)).await;
 
-    /*
+    /* 
 
     println!("Serializing batches started");
 
@@ -367,7 +352,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let data_store_clone = Arc::clone(&data_store);
 
     // Create and serialize record batches
-    let serialized_batches = arrow_input::create_and_serialize_record_batches(&input_data)?;
+    let serialized_batches = arrow_input::create_and_serialize_record_batches(&input_data);
 
    // Start the server in a separate thread
    let thread_join_handle = thread::Builder::new()
