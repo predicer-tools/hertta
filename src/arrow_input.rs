@@ -1,4 +1,5 @@
-use crate::errors::FileReadError;
+use crate::arrow_errors;
+use arrow_errors::{DataConversionError, FileReadError};
 use crate::input_data;
 use crate::errors;
 use arrow::array::{StringArray, Float64Array, Int32Array, Int64Array, BooleanArray, ArrayRef, Array};
@@ -7,9 +8,9 @@ use std::sync::Arc;
 use std::collections::{HashMap, BTreeMap};
 use std::error::Error;
 use std::collections::HashSet;
-use errors::{DataConversionError};
 use prettytable::{Table, Row, Cell};
 use arrow_ipc::writer::StreamWriter;
+use log::info;
 
 pub fn print_record_batches(batches: &HashMap<String, RecordBatch>) -> Result<(), Box<dyn Error>> {
     for (name, batch) in batches {
@@ -481,7 +482,7 @@ pub fn groups_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch
     // Process each group
     for (_, group) in groups.iter() {
         for member in &group.members {
-            types.push(group.var_type.clone());
+            types.push(group.g_type.clone());
             entities.push(member.clone());
             group_names.push(group.name.clone());
         }
@@ -654,26 +655,43 @@ pub fn node_diffusion_to_arrow(input_data: &input_data::InputData) -> Result<Rec
 pub fn node_histories_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
     println!("histories");
     let node_histories = &input_data.node_histories;
-    let temporals_t = &input_data.temporals.t;
-
-    // Check if the timestamps match
-    for (_, node_history) in node_histories {
-        check_timestamps_match(temporals_t, &node_history.steps.ts_data)?;
-    }
 
     // Define the schema for the Arrow RecordBatch dynamically
-    let mut fields = vec![Field::new("t", DataType::Utf8, false)];
+    let mut fields = vec![Field::new("t", DataType::Int32, false)];
     let mut columns: Vec<ArrayRef> = Vec::new();
 
     // Placeholder to hold time series data
+    let mut running_number = Vec::new();
     let mut string_columns_data: HashMap<String, Vec<String>> = HashMap::new();
     let mut float_columns_data: HashMap<String, Vec<f64>> = HashMap::new();
 
-    // Populate the columns from the NodeHistory HashMap
-    for (node_name, node_history) in node_histories {
+    // Determine the expected length of TimeSeries data
+    let mut expected_length = None;
+
+    for node_history in node_histories.values() {
         for ts in &node_history.steps.ts_data {
-            let column_name_string = format!("{},t,{}", node_name, ts.scenario);
-            let column_name_float = format!("{},{}", node_name, ts.scenario);
+            match expected_length {
+                Some(length) => {
+                    if ts.series.len() != length {
+                        return Err(ArrowError::InvalidArgumentError(
+                            "Inconsistent number of timestamps or values across scenarios".to_string(),
+                        ));
+                    }
+                }
+                None => {
+                    expected_length = Some(ts.series.len());
+                }
+            }
+        }
+    }
+
+    let max_length = expected_length.unwrap_or(0);
+
+    // Populate the columns from the NodeHistory HashMap
+    for node_history in node_histories.values() {
+        for ts in &node_history.steps.ts_data {
+            let column_name_string = format!("{},t,{}", node_history.node, ts.scenario);
+            let column_name_float = format!("{},{}", node_history.node, ts.scenario);
 
             fields.push(Field::new(&column_name_string, DataType::Utf8, false));
             fields.push(Field::new(&column_name_float, DataType::Float64, false));
@@ -688,52 +706,29 @@ pub fn node_histories_to_arrow(input_data: &input_data::InputData) -> Result<Rec
                     .or_insert_with(Vec::new)
                     .push(*value);
             }
-
-            // If ts_data is empty, use temporals_t
-            if ts.series.is_empty() {
-                for t in temporals_t {
-                    string_columns_data
-                        .entry(column_name_string.clone())
-                        .or_insert_with(Vec::new)
-                        .push(t.clone());
-                }
-            }
         }
     }
 
-    // If node_histories is empty, create a column from temporals_t
-    if node_histories.is_empty() {
-        for t in temporals_t {
-            string_columns_data
-                .entry("t".to_string())
-                .or_insert_with(Vec::new)
-                .push(t.clone());
-        }
+    // Fill running number column
+    for i in 0..max_length {
+        running_number.push(i as i32 + 1);
     }
 
-    // Add 't' column
-    if let Some(t_values) = string_columns_data.get("t") {
-        columns.push(Arc::new(StringArray::from(t_values.clone())) as ArrayRef);
-    } else {
-        // If 't' column doesn't exist in string_columns_data, create it from temporals_t
-        columns.push(Arc::new(StringArray::from(temporals_t.clone())) as ArrayRef);
-    }
+    // Add running number column
+    println!("Running number length: {}", running_number.len());
+    columns.push(Arc::new(Int32Array::from(running_number)) as ArrayRef);
 
     // Add the string and float columns to the RecordBatch
-    for (key, val) in string_columns_data {
-        if key != "t" {
-            columns.push(Arc::new(StringArray::from(val.clone())) as ArrayRef);
-        }
+    for (key, val) in string_columns_data.iter() {
+        println!("String column '{}' length: {}", key, val.len());
+        columns.push(Arc::new(StringArray::from(val.clone())) as ArrayRef);
     }
-    for val in float_columns_data.values() {
+    for (key, val) in float_columns_data.iter() {
+        println!("Float column '{}' length: {}", key, val.len());
         columns.push(Arc::new(Float64Array::from(val.clone())) as ArrayRef);
     }
 
     // Update the schema to match the columns
-    if node_histories.is_empty() {
-        fields = vec![Field::new("t", DataType::Utf8, false)];
-    }
-
     let schema = Arc::new(Schema::new(fields));
 
     // Create the RecordBatch using these arrays and the schema
@@ -802,7 +797,6 @@ pub fn node_delays_to_arrow(input_data: &input_data::InputData) -> Result<Record
     )
 }
 
-
 pub fn inflow_blocks_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
     println!("inflow_blocks");
     // Extract inflow_blocks and temporals from input_data
@@ -814,7 +808,7 @@ pub fn inflow_blocks_to_arrow(input_data: &input_data::InputData) -> Result<Reco
         let schema = Arc::new(Schema::new(vec![Field::new("t", DataType::Int32, false)]));
 
         // Create a vector with values from 1 to 10
-        let t_values: Vec<i32> = (1..=10).collect();
+        let t_values: Vec<i32> = (1..=10).collect::<Vec<usize>>().into_iter().map(|x| x as i32).collect();
 
         // Create an Arrow array from the vector
         let t_array: ArrayRef = Arc::new(Int32Array::from(t_values));
@@ -836,21 +830,25 @@ pub fn inflow_blocks_to_arrow(input_data: &input_data::InputData) -> Result<Reco
     let scenario_names: Vec<String> = scenario_names.into_keys().collect();
 
     // Define the schema dynamically based on the scenario names
-    let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
+    let mut fields: Vec<Field> = vec![Field::new("t", DataType::Int32, false)];
     for block in inflow_blocks.values() {
-        fields.push(Field::new(&format!("{}, {}", block.name, block.node), DataType::Utf8, false));
+        fields.push(Field::new(&format!("{},{}", block.name, block.node), DataType::Utf8, false));
         for scenario in &scenario_names {
-            fields.push(Field::new(&format!("{}, {}", block.name, scenario), DataType::Float64, false));
+            fields.push(Field::new(&format!("{},{}", block.name, scenario), DataType::Float64, false));
         }
     }
 
     // Initialize data structures for each column
-    let t_values: Vec<String> = temporals.t.clone();
+    let t_values: Vec<i32> = (1..=temporals.t.len()).map(|x| x as i32).collect();
     let mut start_times: HashMap<String, Vec<String>> = HashMap::new();
-    let mut scenario_values: HashMap<String, Vec<Vec<f64>>> = HashMap::new();
+    let mut scenario_values: HashMap<String, HashMap<String, Vec<f64>>> = HashMap::new();
     for block in inflow_blocks.values() {
         start_times.insert(block.name.clone(), vec![]);
-        scenario_values.insert(block.name.clone(), vec![vec![]; scenario_names.len()]);
+        let mut scenario_map = HashMap::new();
+        for scenario in &scenario_names {
+            scenario_map.insert(scenario.clone(), vec![]);
+        }
+        scenario_values.insert(block.name.clone(), scenario_map);
     }
 
     // Populate the vectors from the HashMap
@@ -862,28 +860,39 @@ pub fn inflow_blocks_to_arrow(input_data: &input_data::InputData) -> Result<Reco
         }
 
         let start_time_vec = start_times.get_mut(&block.name).unwrap();
-        let scenario_vecs = scenario_values.get_mut(&block.name).unwrap();
+        let scenario_map = scenario_values.get_mut(&block.name).unwrap();
         for t in &temporals.t {
             start_time_vec.push(block.start_time.clone());
 
-            for (j, ts) in block.data.ts_data.iter().enumerate() {
+            for ts in &block.data.ts_data {
                 if !ts.series.contains_key(t) {
                     return Err(ArrowError::ComputeError("Timeseries mismatch in temporal data".to_string()));
                 }
-                scenario_vecs[j].push(ts.series[t]);
+                scenario_map.get_mut(&ts.scenario).unwrap().push(ts.series[t]);
             }
         }
     }
 
+    // Ensure all columns have the same length
+    let start_times_len = start_times.values().next().unwrap().len();
+    assert_eq!(t_values.len(), start_times_len, "t_values and start_times lengths do not match");
+
+    for scenario_map in scenario_values.values() {
+        for values in scenario_map.values() {
+            assert_eq!(values.len(), start_times_len, "Scenario values length does not match start_times length");
+        }
+    }
+
     // Create Arrow arrays from the vectors
-    let t_array: ArrayRef = Arc::new(StringArray::from(t_values));
+    let t_array: ArrayRef = Arc::new(Int32Array::from(t_values));
     let mut columns: Vec<ArrayRef> = vec![t_array];
 
     for block in inflow_blocks.values() {
         let start_times_array: ArrayRef = Arc::new(StringArray::from(start_times.remove(&block.name).unwrap_or_else(Vec::new)));
         columns.push(start_times_array);
 
-        for values in scenario_values.remove(&block.name).unwrap_or_else(Vec::new) {
+        for scenario in &scenario_names {
+            let values = scenario_values.get(&block.name).unwrap().get(scenario).unwrap().clone();
             columns.push(Arc::new(Float64Array::from(values)) as ArrayRef);
         }
     }
@@ -931,7 +940,7 @@ pub fn markets_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatc
 
     for market in markets.values() {
         markets_vec.push(market.name.clone());
-        m_types.push(market.var_type.clone());
+        m_types.push(market.m_type.clone());
         nodes.push(market.node.clone());
         processgroups.push(market.processgroup.clone());
         directions.push(market.direction.clone());
@@ -1479,7 +1488,7 @@ pub fn constraints_to_arrow(input_data: &input_data::InputData) -> Result<Record
     // Populate the vectors from the HashMap
     for (_key, gen_constraint) in gen_constraints.iter() {
         names.push(gen_constraint.name.clone());
-        types.push(gen_constraint.var_type.clone());
+        types.push(gen_constraint.gc_type.clone());
         is_setpoints.push(gen_constraint.is_setpoint);
         penalties.push(gen_constraint.penalty);
     }
@@ -1741,7 +1750,7 @@ pub fn market_balance_price_to_arrow(input_data: &input_data::InputData) -> Resu
     }
 
     // Check if the timestamps in market price data match temporals_t
-    for market in input_data.markets.values().filter(|m| m.var_type == "energy") {
+    for market in input_data.markets.values().filter(|m| m.m_type == "energy") {
         check_timestamps_match(temporals_t, &market.up_price.ts_data)?;
         check_timestamps_match(temporals_t, &market.down_price.ts_data)?;
     }
@@ -1750,7 +1759,7 @@ pub fn market_balance_price_to_arrow(input_data: &input_data::InputData) -> Resu
     let mut columns: HashMap<String, Vec<f64>> = HashMap::new();
     let mut unique_timestamps: HashSet<String> = HashSet::new();
 
-    for market in input_data.markets.values().filter(|m| m.var_type == "energy") {
+    for market in input_data.markets.values().filter(|m| m.m_type == "energy") {
         for data in [&market.up_price, &market.down_price].iter() {
             for ts_data in &data.ts_data {
                 for (timestamp, _) in &ts_data.series {
@@ -1771,7 +1780,7 @@ pub fn market_balance_price_to_arrow(input_data: &input_data::InputData) -> Resu
     }
 
     // Initialize column data for up and down prices
-    for market in input_data.markets.values().filter(|m| m.var_type == "energy") {
+    for market in input_data.markets.values().filter(|m| m.m_type == "energy") {
         for (label, price_data) in [("up", &market.up_price), ("dw", &market.down_price)].iter() {
             for data in &price_data.ts_data {
                 let column_name = format!("{},{},{}", market.name, label, data.scenario);
@@ -2080,221 +2089,164 @@ impl DataFrame {
 }
 
 #[cfg(test)]
+mod test_logger {
+    use std::sync::Once;
+    use env_logger;
+
+    static INIT: Once = Once::new();
+
+    pub fn init() {
+        INIT.call_once(|| {
+            env_logger::builder().is_test(true).try_init().ok();
+        });
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use serde_yaml;
-    use std::fs::File;
-    use std::io::Read;
-    use std::path::PathBuf;
-    use std::env;
-    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::array::{Array, Int32Array, StringArray, Float64Array};
     use arrow::record_batch::RecordBatch;
-    use std::sync::Arc;
-    use arrow::array::{StringArray, ArrayRef};
+    use serde_json::from_reader;
+    use std::fs::File;
+    use std::io::BufReader;
+    use std::path::PathBuf;
 
-    pub fn read_yaml_file(file_path: &str) -> Result<input_data::InputData, FileReadError> {
-        let mut file = File::open(file_path).map_err(FileReadError::open_error)?;
-        let mut contents = String::new();
-        file.read_to_string(&mut contents).map_err(FileReadError::read_error)?;
-    
-        match serde_yaml::from_str(&contents) {
-            Ok(data) => Ok(data),
-            Err(e) => {
-                // Log or handle the detailed parsing error message here
-                eprintln!("Failed to parse YAML content: {}", e);
-                Err(FileReadError::Parse(e))
-            }
-        }
+    fn load_test_data() -> input_data::InputData {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("predicer_all.json");
+        let file = File::open(path).expect("Failed to open test file");
+        let reader = BufReader::new(file);
+        serde_json::from_reader(reader).expect("Failed to parse JSON")
     }
 
-    #[test]
-    fn test_gen_constraints_to_arrow() {
-        // Define the path to the mock data file
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("tests/mocks/arrow_tests/full_data.yaml");
-        assert!(path.exists(), "Test file does not exist at the expected path");
-
-        // Read the mock input data from the YAML file
-        let input_data = read_yaml_file::<input_data::InputData>(path.to_str().unwrap()).expect("Should read the YAML file correctly");
-
-        // Call the function
-        let result = gen_constraints_to_arrow(&input_data);
-
-        // Check and print the result
-        match result {
-            Ok(record_batch) => {
-                println!("Schema: {:?}", record_batch.schema());
-                for column in record_batch.columns() {
-                    println!("{:?}", column);
+    fn print_batches(batches: &[RecordBatch]) {
+        for batch in batches {
+            let schema = batch.schema();
+            // Print header
+            for field in schema.fields() {
+                print!("{:<20}\t", field.name());
+            }
+            println!();
+            
+            // Print rows
+            for row in 0..batch.num_rows() {
+                for column in batch.columns() {
+                    let value = if let Some(array) = column.as_any().downcast_ref::<StringArray>() {
+                        array.value(row).to_string()
+                    } else if let Some(array) = column.as_any().downcast_ref::<Int32Array>() {
+                        array.value(row).to_string()
+                    } else if let Some(array) = column.as_any().downcast_ref::<Float64Array>() {
+                        array.value(row).to_string()
+                    } else {
+                        "N/A".to_string()
+                    };
+                    print!("{:<20}\t", value);
                 }
-            }
-            Err(e) => {
-                eprintln!("Error creating Arrow table: {:?}", e);
+                println!();
             }
         }
     }
 
     #[test]
-    fn test_input_datasetup_to_arrow() {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("tests/mocks/arrow_tests/full_data.yaml");
-        assert!(path.exists(), "Test file does not exist at the expected path");
+    fn test_inputdatasetup_to_arrow() {
+        let input_data = load_test_data();
+        let record_batch = inputdatasetup_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
-        let input_data = read_yaml_file(path.to_str().unwrap()).expect("Should read the YAML file correctly");
-
-        // Dynamic Schema Construction
-        let schema = Schema::new(vec![
-            Field::new("parameter", DataType::Utf8, false),
-            Field::new("value", DataType::Utf8, true),
-        ]);
-
-        // Include all fields and check for non-empty 'common_scenario_name' to include it
-        let mut parameters = vec![
-            "contains_reserves", "contains_online", "contains_states", "contains_piecewise_eff",
-            "contains_risk", "contains_diffusion", "contains_delay", "contains_markets",
-            "reserve_realisation", "use_market_bids", "common_timesteps",
-            "use_node_dummy_variables", "use_ramp_dummy_variables", "common_scenario_name"
+        // Expected result DataFrame
+        let expected_parameters = vec![
+            "use_market_bids",
+            "use_reserves",
+            "use_reserve_realisation",
+            "use_node_dummy_variables",
+            "use_ramp_dummy_variables",
+            "node_dummy_variable_cost",
+            "ramp_dummy_variable_cost",
+            "common_timesteps",
+            "common_scenario_name",
         ];
 
-        let mut values = vec![
-            input_data.setup.contains_reserves.to_string(), input_data.setup.contains_online.to_string(),
-            input_data.setup.contains_states.to_string(), input_data.setup.contains_piecewise_eff.to_string(),
-            input_data.setup.contains_risk.to_string(), input_data.setup.contains_diffusion.to_string(),
-            input_data.setup.contains_delay.to_string(), input_data.setup.contains_markets.to_string(),
-            input_data.setup.reserve_realisation.to_string(), input_data.setup.use_market_bids.to_string(),
-            input_data.setup.common_timesteps.to_string(), input_data.setup.use_node_dummy_variables.to_string(),
-            input_data.setup.use_ramp_dummy_variables.to_string(), input_data.setup.common_scenario_name.clone()
+        let expected_values = vec![
+            "1", "1", "1", "1", "1", "10000", "10000", "2", "s_all",
         ];
 
-        let parameter_array = Arc::new(StringArray::from(parameters)) as ArrayRef;
-        let value_array = Arc::new(StringArray::from(values)) as ArrayRef;
-        let expected_record_batch = RecordBatch::try_new(
-            Arc::new(schema),
-            vec![parameter_array, value_array]
-        ).unwrap();
+        // Print the RecordBatch for debugging
+        let batches = vec![record_batch];
+        print_batches(&batches);
 
-        // Test the function
-        let result = inputdatasetup_to_arrow(&input_data).expect("Conversion should succeed");
+        // Assert parameter values
+        let parameter_array = batches[0].column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        for (i, expected) in expected_parameters.iter().enumerate() {
+            assert_eq!(parameter_array.value(i), *expected);
+        }
 
-        // Validate the output
-        assert_eq!(result.num_columns(), expected_record_batch.num_columns());
-        assert_eq!(result.num_rows(), expected_record_batch.num_rows());
-
-        for (i, column) in result.columns().iter().enumerate() {
-            let expected_column = expected_record_batch.column(i).as_any().downcast_ref::<StringArray>().unwrap();
-            let result_column = column.as_any().downcast_ref::<StringArray>().unwrap();
-            assert_eq!(result_column, expected_column, "Column data does not match");
+        // Assert value values
+        let value_array = batches[0].column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        for (i, expected) in expected_values.iter().enumerate() {
+            assert_eq!(value_array.value(i), *expected);
         }
     }
 
     #[test]
-    fn test_nodes_to_arrow() {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("tests/mocks/arrow_tests/full_data.yaml");
-        assert!(path.exists(), "Test file does not exist at the expected path");
+    fn test_node_histories_to_arrow() {
+        // Load the JSON data from the file
+        let input_data = load_test_data();
 
-        let input_data = read_yaml_file(path.to_str().unwrap()).expect("Should read the YAML file correctly");
+        // Convert to Arrow RecordBatch
+        let record_batch = node_histories_to_arrow(&input_data).expect("Failed to convert to Arrow");
 
-        let batch = nodes_to_arrow(&input_data).expect("Conversion to arrow should succeed");
-
-        // Define expected schema and order of the fields
+        // Check the schema
+        let schema = record_batch.schema();
         let expected_fields = vec![
-            "node", "is_commodity", "is_state", "is_res", "is_market", "is_inflow",
-            "state_max", "state_min", "in_max", "out_max", "initial_state",
-            "state_loss_proportional", "scenario_independent_state", "is_temp", "T_E_conversion", "residual_value"
+            Field::new("t", DataType::Int32, false),
+            Field::new("dh_source,t,s1", DataType::Utf8, false),
+            Field::new("dh_source,s1", DataType::Float64, false),
+            Field::new("dh_source,t,s2", DataType::Utf8, false),
+            Field::new("dh_source,s2", DataType::Float64, false),
+            Field::new("dh_source,t,s3", DataType::Utf8, false),
+            Field::new("dh_source,s3", DataType::Float64, false),
         ];
 
-        let expected_schema = Schema::new(vec![
-            Field::new("node", DataType::Utf8, false),
-            Field::new("is_commodity", DataType::Boolean, false),
-            Field::new("is_state", DataType::Boolean, false),
-            Field::new("is_res", DataType::Boolean, false),
-            Field::new("is_market", DataType::Boolean, false),
-            Field::new("is_inflow", DataType::Boolean, false),
-            Field::new("state_max", DataType::Float64, false),
-            Field::new("state_min", DataType::Float64, false),
-            Field::new("in_max", DataType::Float64, false),
-            Field::new("out_max", DataType::Float64, false),
-            Field::new("initial_state", DataType::Float64, false),
-            Field::new("state_loss_proportional", DataType::Float64, false),
-            Field::new("scenario_independent_state", DataType::Boolean, false),
-            Field::new("is_temp", DataType::Boolean, false),
-            Field::new("T_E_conversion", DataType::Float64, false),
-            Field::new("residual_value", DataType::Float64, false),
-        ]);
-
-        // Verify schema and order of fields
-        assert_eq!(batch.schema().fields().len(), expected_fields.len(), "Number of fields does not match");
-        for (i, field) in batch.schema().fields().iter().enumerate() {
-            assert_eq!(field.name(), expected_fields[i], "Field name or order does not match expected");
+        for (i, field) in schema.fields().iter().enumerate() {
+            assert_eq!(**field, expected_fields[i]);
         }
 
-        // Verify the content of the first node 'interiorair'
-        let names_array = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-        let is_commodity_array = batch.column(1).as_any().downcast_ref::<BooleanArray>().unwrap();
-        let is_state_array = batch.column(2).as_any().downcast_ref::<BooleanArray>().unwrap();
+        // Check the data
+        let running_numbers = record_batch.column(0).as_any().downcast_ref::<Int32Array>().expect("Failed to cast column");
+        let timestamps_s1 = record_batch.column(1).as_any().downcast_ref::<StringArray>().expect("Failed to cast column");
+        let values_s1 = record_batch.column(2).as_any().downcast_ref::<Float64Array>().expect("Failed to cast column");
+        let timestamps_s2 = record_batch.column(3).as_any().downcast_ref::<StringArray>().expect("Failed to cast column");
+        let values_s2 = record_batch.column(4).as_any().downcast_ref::<Float64Array>().expect("Failed to cast column");
+        let timestamps_s3 = record_batch.column(5).as_any().downcast_ref::<StringArray>().expect("Failed to cast column");
+        let values_s3 = record_batch.column(6).as_any().downcast_ref::<Float64Array>().expect("Failed to cast column");
 
-        // More fields as needed
-        let initial_state_array = batch.column(10).as_any().downcast_ref::<Float64Array>().unwrap();
-        let t_e_conversion_array = batch.column(14).as_any().downcast_ref::<Float64Array>().unwrap();
+        // Expected data
+        let expected_running_numbers = vec![1, 2];
+        let expected_timestamps = vec!["2022-04-20T00:00:00+00:00", "2022-04-20T01:00:00+00:00"];
+        let expected_values = vec![1.0, 1.0];
 
-        // Check values specifically for 'interiorair'
-        assert_eq!(names_array.value(0), "interiorair", "Node name mismatch");
-        assert_eq!(is_commodity_array.value(0), false, "is_commodity mismatch for interiorair");
-        assert_eq!(is_state_array.value(0), true, "is_state mismatch for interiorair");
-        assert_eq!(initial_state_array.value(0), 296.15, "initial_state mismatch for interiorair");
-        assert_eq!(t_e_conversion_array.value(0), 0.5, "t_e_conversion mismatch for interiorair");
-    } 
+        assert_eq!(running_numbers.len(), 2);
+        assert_eq!(timestamps_s1.len(), 2);
+        assert_eq!(values_s1.len(), 2);
+        assert_eq!(timestamps_s2.len(), 2);
+        assert_eq!(values_s2.len(), 2);
+        assert_eq!(timestamps_s3.len(), 2);
+        assert_eq!(values_s3.len(), 2);
 
-    #[test]
-    fn test_read_yaml_file_with_empty_data() {
-        // Construct the path to the empty YAML file
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("tests/mocks/arrow_tests/empty_input_data.yaml"); // Adjust the path as necessary
-
-        // Check if the file actually exists to avoid false negatives
-        assert!(path.exists(), "Test file does not exist at the expected path");
-
-        // Attempt to read and parse the empty YAML file
-        let result = read_yaml_file(path.to_str().unwrap());
-
-        // Check that the result is an error
-        assert!(result.is_err(), "Expected an error for empty input data, but got Ok");
-        
-        // Optionally, to assert specific error types or messages:
-        if let Err(e) = result {
-            match e {
-                FileReadError::Parse(parse_error) => {
-                    println!("Received expected parsing error: {}", parse_error);
-                },
-                _ => panic!("Expected a parsing error, but got a different error"),
-            }
-        }
-    }
-
-    #[test]
-    fn test_read_yaml_file_with_wrong_format() {
-        // Construct the path to the YAML file with incorrect format
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("tests/mocks/arrow_tests/wrong_input_data.yaml"); // Adjust the path as necessary
-
-        // Check if the file actually exists to avoid false negatives
-        assert!(path.exists(), "Test file does not exist at the expected path");
-
-        // Attempt to read and parse the YAML file with wrong format
-        let result = read_yaml_file(path.to_str().unwrap());
-
-        // Check that the result is an error
-        assert!(result.is_err(), "Expected an error for wrongly formatted input data, but got Ok");
-        
-        // Optionally, to assert specific error types or messages:
-        if let Err(e) = result {
-            match e {
-                FileReadError::Parse(parse_error) => {
-                    println!("Received expected parsing error due to format issue: {}", parse_error);
-                },
-                _ => panic!("Expected a parsing error due to wrong format, but got a different type of error"),
-            }
+        for i in 0..2 {
+            assert_eq!(running_numbers.value(i), expected_running_numbers[i]);
+            assert_eq!(timestamps_s1.value(i), expected_timestamps[i]);
+            assert_eq!(values_s1.value(i), expected_values[i]);
+            assert_eq!(timestamps_s2.value(i), expected_timestamps[i]);
+            assert_eq!(values_s2.value(i), expected_values[i]);
+            assert_eq!(timestamps_s3.value(i), expected_timestamps[i]);
+            assert_eq!(values_s3.value(i), expected_values[i]);
         }
     }
 }

@@ -131,12 +131,22 @@ function main()
     # Function to convert 't' column to DateTime in a DataFrame
     function convert_t_to_datetime!(df::DataFrame)
         if hasproperty(df, :t)
+            println("Found 't' column with values: ", df.t)
             if eltype(df.t) == String
-                df.t = DateTime.(df.t, "yyyy-mm-ddTHH:MM:SS.s")  # Adjust format if necessary
+                try
+                    df.t = DateTime.(df.t, "yyyy-mm-ddTHH:MM:SS.s")  # Adjust format if necessary
+                    println("Converted 't' column to DateTime successfully.")
+                catch e
+                    println("Error converting 't' column: ", e)
+                end
             elseif eltype(df.t) == Union{Missing, String}
-                df.t = coalesce.(DateTime.(df.t, "yyyy-mm-ddTHH:MM:SS.s"), missing)  # Convert missing values if present
+                try
+                    df.t = coalesce.(DateTime.(df.t, "yyyy-mm-ddTHH:MM:SS.s"), missing)  # Convert missing values if present
+                    println("Converted 't' column to DateTime successfully with missing values.")
+                catch e
+                    println("Error converting 't' column with missing values: ", e)
+                end
             end
-            println("Converted 't' column in DataFrame to DateTime.")
         else
             println("No 't' column found in DataFrame.")
         end
@@ -146,16 +156,13 @@ function main()
     global temporals = String[]
     global system_data = OrderedDict()
     global timeseries_data = OrderedDict()
-    timeseries_data["scenarios"] = OrderedDict()
+    global timeseries_data["scenarios"] = OrderedDict()
 
     # Iterate over data_dict and populate system_data and timeseries_data
     for (key, df) in data_dict
         if key == "temps"
             println("Converting temps DataFrame to temporals vector.")
             temporals = collect(df.t)
-            # Add +00:00 to each timestamp in temporals
-            temporals = [t * "+00:00" for t in temporals]
-            println("Converted temporals data to String with +00:00: ", temporals)
         elseif key in sheetnames_system
             system_data[key] = df
             println("Added to system_data: ", key)
@@ -174,27 +181,6 @@ function main()
     end
 
     println("All DataFrames received and paired with keywords.")
-
-    # Print system_data
-    println("system_data:")
-    for (key, df) in system_data
-        println("DataFrame for sheet: $key")
-        println(df)
-        println()
-    end
-
-    # Print timeseries_data
-    println("timeseries_data:")
-    for (key, df) in timeseries_data
-        println("DataFrame for sheet: $key")
-        println(df)
-        println()
-    end
-
-    # Print temps
-    println("temps:")
-    println(temporals)
-    println()
 
     input_data = Predicer.compile_input_data(system_data, timeseries_data, temporals)
     mc, input_data = Predicer.generate_model(input_data)

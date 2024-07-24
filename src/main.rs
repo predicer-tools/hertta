@@ -5,6 +5,7 @@ mod input_data;
 mod errors;
 mod event_loop;
 mod arrow_input;
+mod arrow_errors;
 
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, AUTHORIZATION};
 use serde_json::json;
@@ -16,7 +17,6 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::process::Command;
 use std::net::TcpStream;
-use errors::FileReadError;
 use serde_json::error::Error as SerdeError;
 use regex::Regex;
 
@@ -34,9 +34,9 @@ use std::io::{self, Read, Write, BufRead, BufReader};
 use std::fs::File;
 use serde_json::from_str;
 use arrow::array::{Array, StringArray, Float64Array, Int32Array, ArrayRef};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use warp::Filter;
 use tokio::io::{AsyncBufReadExt, BufReader as AsyncBufReader};
 use chrono::{Timelike, FixedOffset, Utc, Duration as ChronoDuration};
@@ -131,22 +131,6 @@ pub fn start_weather_forecast_server() {
 
 }
 
-pub fn read_yaml_file(file_path: &str) -> Result<input_data::InputData, FileReadError> {
-    // Attempt to open the file and handle errors specifically related to file opening
-    let mut file = File::open(file_path).map_err(FileReadError::open_error)?;
-
-    // Read the contents of the file into a string, handling errors related to reading
-    let mut contents = String::new();
-    file.read_to_string(&mut contents).map_err(FileReadError::read_error)?;
-
-    // Attempt to parse the YAML content into the expected data structure
-    let input_data: input_data::InputData = serde_yaml::from_str(&contents)
-        .map_err(FileReadError::Parse)?;
-
-    // If all steps are successful, return the data
-    Ok(input_data)
-}
-
 pub fn json_to_inputdata(json_file_path: &str) -> Result<input_data::InputData, Box<dyn Error>> {
     let mut file = File::open(json_file_path)?;
     let mut data = String::new();
@@ -184,7 +168,7 @@ pub fn start_julia_local() -> Result<ExitStatus, std::io::Error> {
     julia_command.arg("C:\\users\\enessi\\Documents\\hertta-kaikki\\hertta-addon\\hertta\\src\\Pr_ArrowConnection.jl");
     julia_command.status()  // Ensure this line returns the status
 }
-
+/* 
 pub fn receive_data(endpoint: &str, zmq_context: &zmq::Context, data_store: &Arc<Mutex<Vec<DataTable>>>) -> Result<(), Box<dyn Error>> {
     let receiver = zmq_context.socket(zmq::PULL)?;
     receiver.connect(endpoint)?;
@@ -203,6 +187,7 @@ pub fn receive_data(endpoint: &str, zmq_context: &zmq::Context, data_store: &Arc
 
     Ok(())
 }
+*/
 
 pub fn print_data_table(data_table: &DataTable) {
     // Print the column headers
@@ -303,10 +288,99 @@ pub fn create_time_data() -> input_data::TimeData {
     }
 }
 
+
+pub fn run_python_script() -> io::Result<()> {
+    let status = Command::new("python")
+        .arg("input_data.py")
+        .status()?;
+
+    if status.success() {
+        println!("Python script executed successfully.");
+    } else {
+        println!("Python script failed to execute.");
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    // Define a route with query parameters for optimization
+    let optimize_route = warp::path("optimize")
+        .and(warp::post())
+        .and(warp::query::<HashMap<String, String>>())
+        .and(warp::body::json())
+        .and_then(|params: HashMap<String, String>, input_data: input_data::InputData| async move {
+            let fetch_time_data = params.get("fetch_time_data").map_or(false, |v| v == "true");
+            let fetch_weather_data = params.get("fetch_weather_data").map_or(false, |v| v == "true");
+            let fetch_elec_data = params.get("fetch_elec_data").map_or(false, |v| v == "elering" || v == "entsoe");
+            let elec_price_source = params.get("fetch_elec_data").cloned();
+            let country = params.get("country").cloned();
+            let location = params.get("location").cloned();
 
+            println!("Received optimization request with options:");
+            println!("Fetch time data: {}", fetch_time_data);
+            println!("Fetch weather data: {}", fetch_weather_data);
+            println!("Fetch electricity data: {}", fetch_elec_data);
+            println!("Electricity price source: {:?}", elec_price_source);
+            println!("Country: {:?}", country);
+            println!("Location: {:?}", location);
 
+            // Create OptimizationData instance
+            let optimization_data = input_data::OptimizationData {
+                fetch_weather_data,
+                fetch_elec_data,
+                fetch_time_data,
+                country,
+                location,
+                timezone: None,
+                elec_price_source: None,
+                model_data: Some(input_data),
+                time_data: None,
+                weather_data: None,
+                elec_price_data: None,
+                control_results: None,
+                input_data_batch: None,
+            };
+
+            println!("Created OptimizationData: {:?}", optimization_data);
+
+            let (tx, rx) = mpsc::channel::<input_data::OptimizationData>(32);
+            let tx = Arc::new(Mutex::new(tx));
+
+            tokio::spawn(async move {
+                event_loop::event_loop(rx).await;
+            });
+
+            let tx_clone = Arc::clone(&tx);
+            tokio::spawn(async move {
+                let optimization_data = optimization_data.clone(); // Cloning the data to avoid ownership issues
+                let mut tx = tx_clone.lock().await;
+                if tx.send(optimization_data).await.is_err() {
+                    eprintln!("Failed to send optimization data");
+                }
+            });
+
+            // Return a response
+            Ok::<_, warp::Rejection>(warp::reply::json(&"Optimization started"))
+        });
+
+    // Combine the routes
+    let routes = warp::path("api").and(optimize_route);
+
+    // Start the server
+    warp::serve(routes)
+        .run(([127, 0, 0, 1], 3030))
+        .await;
+
+    match run_python_script() {
+        Ok(_) => println!("Python script finished."),
+        Err(e) => println!("Failed to run Python script: {}", e),
+    }
+
+    Ok(())
+
+    /* 
     let (tx, rx) = mpsc::channel::<input_data::OptimizationData>(32);
 
     event_loop::event_loop(rx).await;
@@ -316,6 +390,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let time_data = create_time_data();
 
     let optimization_data = input_data::OptimizationData {
+        fetch_weather_data: true,
+        fetch_elec_data: true,
+        fetch_time_data: true,
         country: Some("fi".to_string()),
         location: Some("Hervanta".to_string()),
         timezone: None,
@@ -340,6 +417,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Let the worker thread finish its work
     sleep(Duration::from_secs(50)).await;
+
+    */
 
     /* 
 
@@ -457,8 +536,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     */
-
-    Ok(())
     
 }
 

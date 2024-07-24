@@ -1,10 +1,12 @@
 
-use tokio::time::{self, Duration};
-//use serde_json::json;
-use tokio::sync::{Mutex};
-use tokio::sync::mpsc::{self, Receiver, Sender};
 use crate::errors;
 use crate::input_data;
+use crate::utilities;
+
+
+use tokio::time::{self, Duration};
+use tokio::sync::{Mutex};
+use tokio::sync::mpsc::{self, Receiver, Sender};
 use std::error::Error;
 use crate::input_data::{OptimizationData};
 use serde_yaml;
@@ -20,6 +22,7 @@ use tokio::time::sleep;
 use zmq::Context;
 use tokio::task::JoinHandle;
 use async_std::task;
+use chrono::{DateTime, Utc};
 
 
 pub async fn event_loop(mut rx: mpsc::Receiver<input_data::OptimizationData>) {
@@ -193,22 +196,20 @@ pub async fn optimization_task(mut zmq_rx: mpsc::Receiver<OptimizationData>) {
 }
 
 
-async fn data_conversion_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
+pub async fn data_conversion_task(
+    mut rx: mpsc::Receiver<OptimizationData>,
+    tx: mpsc::Sender<OptimizationData>
+) {
     while let Some(optimization_data) = rx.recv().await {
         let optimization_data_arc = Arc::new(Mutex::new(optimization_data.clone()));
 
-        let data_clone1 = Arc::clone(&optimization_data_arc);
-        let update_handle: JoinHandle<()> = tokio::spawn(async move {
-            input_data::update_all_ts_data(data_clone1).await;
-        });
-
-        let data_clone2 = Arc::clone(&optimization_data_arc);
+        let data_clone = Arc::clone(&optimization_data_arc);
         let check_handle: JoinHandle<()> = tokio::spawn(async move {
-            input_data::check_ts_data_against_temporals(data_clone2).await;
+            utilities::check_ts_data_against_temporals(data_clone).await;
         });
 
-        // Await the completion of both tasks
-        let _ = tokio::join!(update_handle, check_handle);
+        // Await the completion of the check task
+        let _ = check_handle.await;
 
         // Lock the updated data and proceed with serialization
         let mut updated_data = optimization_data_arc.lock().await;
@@ -233,66 +234,6 @@ async fn data_conversion_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc
         }
     }
 }
-
-/* 
-pub async fn event_loop_old(mut rx_o: mpsc::Receiver<OptimizationData>) {
-    let (tx_weather, rx_weather) = mpsc::channel::<OptimizationData>(32);
-    let (tx_elec, rx_elec) = mpsc::channel::<OptimizationData>(32);
-    let (tx_update, rx_update) = mpsc::channel::<OptimizationData>(32);
-    let (tx_optimization, rx_optimization) = mpsc::channel::<OptimizationData>(32);
-    let (_tx_final, mut _rx_final) = mpsc::channel::<OptimizationData>(32);
-
-    println!("Event loop started.");
-
-    // Spawn the weather data task to process and pass the data to the electricity price data task
-    tokio::spawn(async move {
-        fetch_weather_data_task(rx_weather, tx_elec).await; // Output sent to fetch_elec_price_task
-    });
-
-    // Spawn the electricity price data task to process and potentially finalize the data
-    tokio::spawn(async move {
-        fetch_elec_price_task(rx_elec, tx_update).await; // Final output sent to update_model_data_task
-    });
-
-    tokio::spawn(async move {
-        // Adjust the function signature of update_model_data_task to accept tx_optimization
-        update_model_data_task(rx_update, tx_optimization).await;
-    });
-
-    // Spawn the optimization task
-    tokio::spawn(async move {
-        optimization_task(rx_optimization, _tx_final).await;
-    });
-
-    loop {
-        // Wait for a trigger with OptimizationData
-        println!("Loop started.");
-
-        tokio::select! {
-            Some(optimization_data) = rx_o.recv() => {
-                // Send the received OptimizationData to the next task in the pipeline
-                println!("Received OptimizationData trigger.");
-                if tx_weather.send(optimization_data).await.is_ok() {
-                    println!("OptimizationData sent to weather data task.");
-                } else {
-                    eprintln!("Failed to send OptimizationData to tx_weather.");
-                }
-            }
-            _ = time::sleep(Duration::from_secs(1)) => {
-                // This is a small delay to check the stop signal periodically
-            }
-        }
-
-        // Process final data
-        while let Some(final_data) = _rx_final.recv().await {
-            // Correctly call send_to_server_task with the received data
-            println!("jee");
-        }
-    }
-    println!("Event loop terminated.");
-}
-
-*/
 
 async fn send_serialized_batches_old(serialized_batches: &[(String, Vec<u8>)], zmq_context: &zmq::Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let push_socket = zmq_context.socket(zmq::PUSH)?;
@@ -340,97 +281,34 @@ async fn send_serialized_batches(
     Ok(())
 }
 
-/* 
-async fn optimization_task_old(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
-    let zmq_context = zmq::Context::new();
-    let data_store: Arc<Mutex<Vec<input_data::DataTable>>> = Arc::new(Mutex::new(Vec::new()));
-    let endpoint = "tcp://127.0.0.1:5556"; // Assuming results are sent to this port
-
-    while let Some(optimization_data) = rx.recv().await {
-        let optimization_data = Arc::new(Mutex::new(optimization_data));
-
-        let data_clone1 = Arc::clone(&optimization_data);
-        let update_handle: JoinHandle<()> = tokio::spawn(async move {
-            input_data::update_all_ts_data(data_clone1).await;
-        });
-
-        let data_clone2 = Arc::clone(&optimization_data);
-        let check_handle: JoinHandle<()> = tokio::spawn(async move {
-            input_data::check_ts_data_against_temporals(data_clone2).await;
-        });
-
-        // Await the completion of both tasks
-        let _ = tokio::join!(update_handle, check_handle);
-
-        // Lock the updated data and proceed with serialization
-        let mut updated_data = optimization_data.lock().await;
-
-        // Print the updated data for debugging
-        println!("Updated OptimizationData: {:?}", *updated_data);
-
-        if let Some(model_data) = &updated_data.model_data {
-            match arrow_input::create_and_serialize_record_batches(model_data) {
-                Ok(serialized_batches) => {
-                    // Send serialized batches to server
-                    if let Err(e) = send_serialized_batches(&serialized_batches, &zmq_context).await {
-                        eprintln!("Failed to send serialized batches: {}", e);
-                        continue;
-                    }
-
-                    // Receive results from server
-                    if let Err(e) = receive_data(endpoint, &zmq_context, &data_store).await {
-                        eprintln!("Failed to receive results: {}", e);
-                        continue;
-                    }
-
-                    // Update control_results in optimization_data
-                    let data_store = data_store.lock().await;
-                    updated_data.control_results = Some(data_store.clone());
-                }
-                Err(e) => {
-                    eprintln!("Failed to serialize model data: {}", e);
-                    continue;
-                }
-            }
-        }
-
-        // Send the updated OptimizationData downstream
-        if tx.send(updated_data.clone()).await.is_err() {
-            eprintln!("Failed to send updated OptimizationData to optimization task");
-        } else {
-            println!("OptimizationData updated and sent successfully.");
-        }
-    }
-}
-*/
-
 async fn update_model_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
     while let Some(mut optimization_data) = rx.recv().await {
         
-        // Update temporals to model data
-        if let Err(e) = update_timeseries(&mut optimization_data) {
-            eprintln!("Failed to update timeseries: {}", e);
-            // Optionally, continue to attempt other updates even if one fails.
-        }
-        /* 
-        // Update indoor temperature
-        if let Err(e) = update_interior_air_initial_state(&mut optimization_data) {
-            eprintln!("Failed to update indoor air initial state: {}", e);
-            // Optionally, continue to attempt other updates even if one fails.
-        }
-        */
-        // Update outdoor temp flow
-        if let Err(e) = update_outside_node_inflow(&mut optimization_data) {
-            eprintln!("Failed to update outside node inflow: {}", e);
-            // Optionally, continue to attempt other updates even if one fails.
+        // Conditionally update temporals to model data
+        if optimization_data.fetch_time_data {
+            if let Err(e) = update_timeseries(&mut optimization_data) {
+                eprintln!("Failed to update timeseries: {}", e);
+                // Optionally, continue to attempt other updates even if one fails.
+            }
         }
 
-        // Update elec prices
-        match update_npe_market_prices(&mut optimization_data) {
-            Ok(_) => (),
-            Err(e) => eprintln!("Failed to update NPE market prices: {}", e),
+        // Conditionally update outdoor temp flow
+        if optimization_data.fetch_weather_data {
+            if let Err(e) = update_outside_node_inflow(&mut optimization_data) {
+                eprintln!("Failed to update outside node inflow: {}", e);
+                // Optionally, continue to attempt other updates even if one fails.
+            }
         }
 
+        // Conditionally update elec prices
+        if optimization_data.fetch_elec_data {
+            match update_npe_market_prices(&mut optimization_data) {
+                Ok(_) => (),
+                Err(e) => eprintln!("Failed to update NPE market prices: {}", e),
+            }
+        }
+
+        // Send the updated OptimizationData to the next task
         if tx.send(optimization_data).await.is_err() {
             eprintln!("Failed to send updated OptimizationData to model data update");
         } else {
@@ -502,7 +380,7 @@ pub fn update_interior_air_initial_state(optimization_data: &mut OptimizationDat
 */
 
 
-fn update_npe_market_prices(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
+pub fn update_npe_market_prices(optimization_data: &mut input_data::OptimizationData) -> Result<(), &'static str> {
     // Check if ElectricityPriceData is Some
     if let Some(electricity_price_data) = &optimization_data.elec_price_data {
         // Ensure model_data is available and contains the "npe" market
@@ -511,11 +389,16 @@ fn update_npe_market_prices(optimization_data: &mut OptimizationData) -> Result<
 
         // Find the market named "npe"
         if let Some(npe_market) = markets.get_mut("npe") {
-            // Update the npe market's price with the electricity_price_data
-            npe_market.price.ts_data = electricity_price_data.price_data.ts_data.clone();
-            // Additionally, update the up_price and down_price based on electricity_price_data
-            npe_market.up_price.ts_data = electricity_price_data.up_price_data.ts_data.clone();
-            npe_market.down_price.ts_data = electricity_price_data.down_price_data.ts_data.clone();
+            // Check and update the npe market's price with the electricity_price_data
+            if let Some(price_data) = &electricity_price_data.price_data {
+                npe_market.price.ts_data = price_data.ts_data.clone();
+            }
+            if let Some(up_price_data) = &electricity_price_data.up_price_data {
+                npe_market.up_price.ts_data = up_price_data.ts_data.clone();
+            }
+            if let Some(down_price_data) = &electricity_price_data.down_price_data {
+                npe_market.down_price.ts_data = down_price_data.ts_data.clone();
+            }
             return Ok(());
         } else {
             // "npe" market not found
@@ -593,39 +476,50 @@ async fn create_time_data_task(
     */
 
 
-async fn fetch_weather_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
-    loop {
-        tokio::select! {
-            Some(mut optimization_data) = rx.recv() => {
-                if let Some(time_data) = &optimization_data.time_data {
-                    let location = optimization_data.location.clone().unwrap_or_default();
-
-                    // Format start_time and end_time to the desired string representation
-                    let start_time_formatted = time_data.start_time.format("%Y-%m-%dT%H:00:00Z").to_string();
-                    let end_time_formatted = time_data.end_time.format("%Y-%m-%dT%H:00:00Z").to_string();
-
-                    // Fetch weather data using the formatted times
-                    match fetch_weather_data(start_time_formatted, end_time_formatted, location).await {
-                        Ok(weather_values) => {
-                            // Create and update WeatherData
-                            create_and_update_weather_data(&mut optimization_data, &weather_values);
-                        },
-                        Err(e) => eprintln!("fetch_weather_data_task: Failed to fetch weather data: {}", e),
+    async fn fetch_weather_data_task(
+        mut rx: mpsc::Receiver<OptimizationData>,
+        tx: mpsc::Sender<OptimizationData>
+    ) {
+        loop {
+            tokio::select! {
+                Some(mut optimization_data) = rx.recv() => {
+                    if !optimization_data.fetch_weather_data {
+                        // If fetch_weather_data is false, directly forward the data to the next task
+                        if tx.send(optimization_data).await.is_err() {
+                            eprintln!("Failed to send optimization data from weather task without processing");
+                        }
+                        continue;
                     }
-
-                    // Attempt to send the updated optimization data back
-                    if tx.send(optimization_data).await.is_err() {
-                        eprintln!("Failed to send updated optimization data from weather task");
+    
+                    if let Some(time_data) = &optimization_data.time_data {
+                        let location = optimization_data.location.clone().unwrap_or_default();
+    
+                        // Format start_time and end_time to the desired string representation
+                        let start_time_formatted = time_data.start_time.format("%Y-%m-%dT%H:00:00Z").to_string();
+                        let end_time_formatted = time_data.end_time.format("%Y-%m-%dT%H:00:00Z").to_string();
+    
+                        // Fetch weather data using the formatted times
+                        match fetch_weather_data(start_time_formatted, end_time_formatted, location).await {
+                            Ok(weather_values) => {
+                                // Create and update WeatherData
+                                create_and_update_weather_data(&mut optimization_data, &weather_values);
+                            },
+                            Err(e) => eprintln!("fetch_weather_data_task: Failed to fetch weather data: {}", e),
+                        }
+    
+                        // Attempt to send the updated optimization data back
+                        if tx.send(optimization_data).await.is_err() {
+                            eprintln!("Failed to send updated optimization data from weather task");
+                        }
+                    } else {
+                        eprintln!("fetch_weather_data_task: Time data is missing.");
                     }
-                } else {
-                    println!("fetch_weather_data_task: Time data is missing.");
-                }
-            },
-            else => break,
+                },
+                else => break,
+            }
         }
     }
-}
-
+    
 
 pub fn update_outside_node_inflow(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
     // Check if weather_data is Some
@@ -734,51 +628,54 @@ async fn fetch_weather_data(start_time: String, end_time: String, place: String)
     }
 }
 
-async fn fetch_electricity_prices(start_time: String, end_time: String, country: String) -> Result<Vec<f64>, Box<dyn std::error::Error + Send + Sync>> {
-    //println!("Fetching electricity price data for country: {}, start time: {}, end_time: {}", country, start_time, end_time);
-
+async fn fetch_electricity_prices(start_time: String, end_time: String, country: String) -> Result<BTreeMap<String, f64>, Box<dyn std::error::Error + Send + Sync>> {
     let client = reqwest::Client::new();
     let url = format!("https://dashboard.elering.ee/api/nps/price?start={}&end={}", start_time, end_time);
 
     // Fetch the response
-    let response = client.get(&url).header("accept", "").send().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+    let response = client.get(&url).header("accept", "application/json").send().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
     // Attempt to print the raw response text for debugging before parsing
     let response_text = response.text().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
-    // Deserialize the response text into the custom ApiResponse structure
-    let api_response: input_data::EleringData = serde_json::from_str(&response_text).map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+    // Deserialize the response text into a HashMap
+    let api_response: HashMap<String, Vec<HashMap<String, f64>>> = serde_json::from_str(&response_text).map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
-    // Extract only the prices for the specified country and debug print the extracted segment
-    let country_data = api_response.data.get(&country)
+    // Extract only the prices for the specified country
+    let country_data = api_response.get(&country)
         .ok_or_else(|| Box::new(std::io::Error::new(std::io::ErrorKind::NotFound, "Country data not found")) as Box<dyn std::error::Error + Send + Sync>)?;
 
-    // Convert the prices to the desired format and collect them
-    let prices = country_data.iter()
-        .map(|entry| entry.price * 1.0) // Convert from EUR/MWh to cents/kWh if needed
-        .collect::<Vec<f64>>();
+    // Convert the prices to the desired format and collect them in BTreeMap
+    let mut series = BTreeMap::new();
+    for entry in country_data {
+        if let (Some(&timestamp), Some(&price)) = (entry.get("timestamp"), entry.get("price")) {
+            let timestamp_str = DateTime::<Utc>::from_utc(chrono::NaiveDateTime::from_timestamp(timestamp as i64, 0), Utc)
+                .format("%Y-%m-%dT%H:00:00Z")
+                .to_string();
+            series.insert(timestamp_str, price * 1.0); // Convert from EUR/MWh to cents/kWh if needed
+        }
+    }
 
-    Ok(prices)
+    Ok(series)
 }
 
-pub fn create_and_update_elec_price_data(optimization_data: &mut OptimizationData, prices: Vec<f64>) {
+pub fn create_and_update_elec_price_data(optimization_data: &mut OptimizationData, price_series: &BTreeMap<String, f64>) {
     if let Some(time_data) = &optimization_data.time_data {
         let series = &time_data.series;
 
-        // Pair the series with the provided prices
-        let price_series = pair_timeseries_with_values(series, &prices);
-
         // Generating modified TimeSeriesData for original, up, and down price scenarios
-        let original_ts_data = create_modified_price_series_data(&price_series, 1.0); // No modification for the original
-        let up_price_ts_data = create_modified_price_series_data(&price_series, 1.1); // Increase by 10%
-        let down_price_ts_data = create_modified_price_series_data(&price_series, 0.9); // Decrease by 10%
+        let original_ts_data = Some(create_modified_price_series_data(&price_series, 1.0)); // No modification for the original
+        let up_price_ts_data = Some(create_modified_price_series_data(&price_series, 1.1)); // Increase by 10%
+        let down_price_ts_data = Some(create_modified_price_series_data(&price_series, 0.9)); // Decrease by 10%
 
         // Assuming the country is defined somewhere within optimization_data, for example in the location field
         let country = optimization_data.location.clone().unwrap_or_default();
 
         // Constructing the ElectricityPriceData structure
         let electricity_price_data = input_data::ElectricityPriceData {
-            country,
+            api_source: Some("".to_string()),
+            api_key: Some("".to_string()),
+            country: Some(country),
             price_data: original_ts_data,
             up_price_data: up_price_ts_data,
             down_price_data: down_price_ts_data,
@@ -855,13 +752,24 @@ async fn fetch_entsoe_electricity_prices(
 
 
 
-async fn fetch_elec_price_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
-    let mut interval = time::interval(tokio::time::Duration::from_secs(60));
+async fn fetch_elec_price_task(
+    mut rx: mpsc::Receiver<OptimizationData>,
+    tx: mpsc::Sender<OptimizationData>
+) {
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
 
     loop {
         interval.tick().await;
 
         if let Some(mut optimization_data) = rx.recv().await {
+            if !optimization_data.fetch_elec_data {
+                // If fetch_elec_data is false, directly forward the data to the next task
+                if tx.send(optimization_data).await.is_err() {
+                    eprintln!("Failed to send optimization data from elec task without processing");
+                }
+                continue;
+            }
+
             if let (Some(country), Some(time_data)) = (&optimization_data.country, &optimization_data.time_data) {
                 // Convert start_time and end_time to strings in the format "%Y-%m-%dT%H:00:00Z"
                 let start_time_str = time_data.start_time.format("%Y-%m-%dT%H:00:00Z").to_string();
@@ -870,7 +778,7 @@ async fn fetch_elec_price_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mps
                 match fetch_electricity_prices(start_time_str, end_time_str, country.clone()).await {
                     Ok(prices) => {
                         //println!("Fetched electricity prices for country '{}': {:?}", country, prices);
-                        create_and_update_elec_price_data(&mut optimization_data, prices);
+                        create_and_update_elec_price_data(&mut optimization_data, &prices);
                         if tx.send(optimization_data).await.is_err() {
                             eprintln!("Failed to send updated optimization data in electricity prices");
                         }
@@ -893,3 +801,4 @@ async fn fetch_elec_price_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mps
         }
     }
 }
+    
