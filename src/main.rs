@@ -42,6 +42,7 @@ use tokio::io::{AsyncBufReadExt, BufReader as AsyncBufReader};
 use chrono::{Timelike, FixedOffset, Utc, Duration as ChronoDuration};
 use std::time::Duration;
 use tokio::time::sleep;
+use input_data::{OptimizationData, InputData};
 
 //use std::time::{SystemTime, UNIX_EPOCH};
 //use tokio::join;
@@ -289,7 +290,7 @@ pub fn create_time_data() -> input_data::TimeData {
 }
 
 
-pub fn run_python_script() -> io::Result<()> {
+pub fn run_python_script() -> Result<(), Box<dyn Error>> {
     let status = Command::new("python")
         .arg("input_data.py")
         .status()?;
@@ -305,12 +306,13 @@ pub fn run_python_script() -> io::Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+
     // Define a route with query parameters for optimization
     let optimize_route = warp::path("optimize")
         .and(warp::post())
         .and(warp::query::<HashMap<String, String>>())
         .and(warp::body::json())
-        .and_then(|params: HashMap<String, String>, input_data: input_data::InputData| async move {
+        .and_then(|params: HashMap<String, String>, input_data: InputData| async move {
             let fetch_time_data = params.get("fetch_time_data").map_or(false, |v| v == "true");
             let fetch_weather_data = params.get("fetch_weather_data").map_or(false, |v| v == "true");
             let fetch_elec_data = params.get("fetch_elec_data").map_or(false, |v| v == "elering" || v == "entsoe");
@@ -327,7 +329,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("Location: {:?}", location);
 
             // Create OptimizationData instance
-            let optimization_data = input_data::OptimizationData {
+            let optimization_data = OptimizationData {
                 fetch_weather_data,
                 fetch_elec_data,
                 fetch_time_data,
@@ -345,7 +347,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
             println!("Created OptimizationData: {:?}", optimization_data);
 
-            let (tx, rx) = mpsc::channel::<input_data::OptimizationData>(32);
+            let (tx, rx) = mpsc::channel::<OptimizationData>(32);
             let tx = Arc::new(Mutex::new(tx));
 
             tokio::spawn(async move {
@@ -372,11 +374,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     warp::serve(routes)
         .run(([127, 0, 0, 1], 3030))
         .await;
-
-    match run_python_script() {
-        Ok(_) => println!("Python script finished."),
-        Err(e) => println!("Failed to run Python script: {}", e),
-    }
 
     Ok(())
 
