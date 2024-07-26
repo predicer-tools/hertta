@@ -503,9 +503,9 @@ pub fn groups_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError
             entities_array,
             group_names_array,
         ],
-    );
+    )?;
 
-    record_batch
+    Ok(record_batch)
 }
 
 // Convert HashMap<String, ProcessTopology> to RecordBatch
@@ -666,8 +666,8 @@ pub fn node_histories_to_arrow(input_data: &InputData) -> Result<RecordBatch, Ar
 
     // Placeholder to hold time series data
     let mut running_number = Vec::new();
-    let mut string_columns_data: HashMap<String, Vec<String>> = HashMap::new();
-    let mut float_columns_data: HashMap<String, Vec<f64>> = HashMap::new();
+    let mut string_columns_data: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut float_columns_data: BTreeMap<String, Vec<f64>> = BTreeMap::new();
 
     // Determine the expected length of TimeSeries data
     let mut expected_length = None;
@@ -691,7 +691,7 @@ pub fn node_histories_to_arrow(input_data: &InputData) -> Result<RecordBatch, Ar
 
     let max_length = expected_length.unwrap_or(0);
 
-    // Populate the columns from the NodeHistory HashMap
+    // Populate the columns from the NodeHistory BTreeMap
     for node_history in node_histories.values() {
         for ts in &node_history.steps.ts_data {
             let column_name_string = format!("{},t,{}", node_history.node, ts.scenario);
@@ -1292,7 +1292,7 @@ pub fn reserve_type_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
     let mut types: Vec<String> = Vec::new();
     let mut ramp_factors: Vec<f64> = Vec::new();
 
-    // Populate the vectors from the HashMap
+    // Populate the vectors from the BTreeMap
     for (key, &value) in reserve_type.iter() {
         types.push(key.clone());
         ramp_factors.push(value);
@@ -1332,7 +1332,7 @@ pub fn risk_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> 
     let mut parameters: Vec<String> = Vec::new();
     let mut values: Vec<f64> = Vec::new();
 
-    // Populate the vectors from the HashMap
+    // Populate the vectors from the BTreeMap
     for (key, &value) in risk.iter() {
         parameters.push(key.clone());
         values.push(value);
@@ -1346,9 +1346,9 @@ pub fn risk_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> 
     let record_batch = RecordBatch::try_new(
         Arc::new(schema),
         vec![parameter_array, value_array],
-    );
+    )?;
 
-    record_batch
+    Ok(record_batch)
 }
 
 pub fn processes_cap_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
@@ -1425,7 +1425,7 @@ pub fn gen_constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, A
     let gen_constraints = &input_data.gen_constraints;
     
     let mut fields: Vec<Field> = Vec::new();
-    let mut column_data: HashMap<String, Vec<Option<f64>>> = HashMap::new();
+    let mut column_data: BTreeMap<String, Vec<Option<f64>>> = BTreeMap::new();
     let timestamps: Vec<Option<String>> = temporals.t.iter().map(|t| Some(t.clone())).collect();
 
     fields.push(Field::new("t", DataType::Utf8, false)); // Timestamp column is not nullable
@@ -1565,7 +1565,7 @@ pub fn bid_slots_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowEr
     // Check if bid_slots has data
     let has_bid_slots = !bid_slots.is_empty();
 
-    if has_bid_slots {
+    if (has_bid_slots) {
         // If there are bid_slots, collect the time_steps from each BidSlot
         for bid_slot in bid_slots.values() {
             timestamps.extend(bid_slot.time_steps.clone());
@@ -2369,7 +2369,51 @@ mod tests {
         );
     }
     
+    #[test]
+    fn test_groups_to_arrow() {
+        let input_data = load_test_data();
 
+        // Print all groups in the BTreeMap
+        for (group_name, group) in &input_data.groups {
+            println!("Group Name: {}", group_name);
+            println!("Group: {:?}", group);
+        }
+
+        // Convert groups to Arrow RecordBatch
+        let record_batch = groups_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
+        // Print the RecordBatch for debugging
+        let batches = vec![record_batch.clone()];
+        print_batches(&batches);
+
+        // Expected result DataFrame
+        let expected_types = vec![
+            "node", "process", "process", "process"
+        ];
+        let expected_entities = vec![
+            "elc", "ngchp", "hp1", "p2x1"
+        ];
+        let expected_group_names = vec![
+            "elc_res", "p1", "p1", "p1"
+        ];
+
+        // Helper function to assert string column values
+        fn assert_string_column(array: &StringArray, expected_values: &[&str], column_name: &str) {
+            for (i, expected) in expected_values.iter().enumerate() {
+                assert_eq!(array.value(i), *expected, "Mismatch at row {}, column '{}'", i, column_name);
+            }
+        }
+
+        // Assert columns
+        let types_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(types_array, &expected_types, "type");
+
+        let entities_array = record_batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(entities_array, &expected_entities, "entity");
+
+        let group_names_array = record_batch.column(2).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(group_names_array, &expected_group_names, "group");
+    }
 
     #[test]
     fn test_inputdatasetup_to_arrow() {
