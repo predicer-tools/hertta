@@ -19,7 +19,7 @@
        "contains_piecewise_eff":true,
        "contains_risk":true,
        "contains_diffusion":true,
-       "contains_delay":true,
+       "contains_delay":false,
        "contains_markets":true,
        "reserve_realisation":true,
        "use_market_bids":true,
@@ -171,7 +171,7 @@
           "min_offline":0,
           "max_online":0,
           "max_offline":0,
-          "initial_state":true,
+          "initial_state":false,
           "is_scenario_independent":false,
           "topos":[
              {
@@ -302,7 +302,7 @@
           "min_offline":0,
           "max_online":0,
           "max_offline":0,
-          "initial_state":true,
+          "initial_state":false,
           "is_scenario_independent":false,
           "topos":[
              {
@@ -383,7 +383,7 @@
           "min_offline":0,
           "max_online":0,
           "max_offline":0,
-          "initial_state":true,
+          "initial_state":false,
           "is_scenario_independent":false,
           "topos":[
              {
@@ -471,7 +471,7 @@
           "min_offline":0,
           "max_online":0,
           "max_offline":0,
-          "initial_state":true,
+          "initial_state":false,
           "is_scenario_independent":false,
           "topos":[
              {
@@ -534,7 +534,7 @@
           "min_offline":0,
           "max_online":0,
           "max_offline":0,
-          "initial_state":true,
+          "initial_state":false,
           "is_scenario_independent":false,
           "topos":[
              {
@@ -615,7 +615,7 @@
           "min_offline":0,
           "max_online":0,
           "max_offline":0,
-          "initial_state":true,
+          "initial_state":false,
           "is_scenario_independent":false,
           "topos":[
              {
@@ -696,7 +696,7 @@
           "min_offline":0,
           "max_online":0,
           "max_offline":0,
-          "initial_state":true,
+          "initial_state":false,
           "is_scenario_independent":false,
           "topos":[
              {
@@ -708,87 +708,6 @@
                 "ramp_down":1.0,
                 "initial_load":0.6,
                 "initial_flow":0.6,
-                "cap_ts":{
-                   "ts_data":[
-                      
-                   ],
-                   "index":{
-                      
-                   }
-                }
-             }
-          ],
-          "cf":{
-             "ts_data":[
-                
-             ],
-             "index":{
-                
-             }
-          },
-          "eff_ts":{
-             "ts_data":[
-                
-             ],
-             "index":{
-                
-             }
-          },
-          "eff_ops":[
-             
-          ],
-          "eff_fun":[
-             
-          ]
-       },
-       "elc_npe_trade_process":{
-          "name":"elc_npe_trade_process",
-          "groups":[
-             
-          ],
-          "conversion":3,
-          "is_cf":false,
-          "is_cf_fix":false,
-          "is_online":false,
-          "is_res":false,
-          "eff":1.0,
-          "load_min":0.0,
-          "load_max":1.0,
-          "start_cost":0.0,
-          "min_online":0,
-          "min_offline":0,
-          "max_online":0,
-          "max_offline":0,
-          "initial_state":true,
-          "is_scenario_independent":false,
-          "topos":[
-             {
-                "source":"elc",
-                "sink":"npe",
-                "capacity":0.0,
-                "vom_cost":1.0e-5,
-                "ramp_up":1.0,
-                "ramp_down":1.0,
-                "initial_load":1.0,
-                "initial_flow":1.0,
-                "cap_ts":{
-                   "ts_data":[
-                      
-                   ],
-                   "index":{
-                      
-                   }
-                }
-             },
-             {
-                "source":"npe",
-                "sink":"elc",
-                "capacity":0.0,
-                "vom_cost":0.0,
-                "ramp_up":1.0,
-                "ramp_down":1.0,
-                "initial_load":1.0,
-                "initial_flow":1.0,
                 "cap_ts":{
                    "ts_data":[
                       

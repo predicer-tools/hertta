@@ -32,7 +32,7 @@ pub struct OptimizationData {
 pub struct InputData {
     pub temporals: Temporals,
     pub setup: InputDataSetup,
-    pub processes: HashMap<String, Process>,
+    pub processes: BTreeMap<String, Process>,
     pub nodes: BTreeMap<String, Node>,
     pub node_diffusion: Vec<NodeDiffusion>,
     pub node_delay: Vec<(String, String, f64, f64, f64)>,
