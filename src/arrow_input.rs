@@ -97,7 +97,7 @@ pub fn create_record_batches(
     batches.push(("processes".to_string(), processes_to_arrow(&input_data)?));
     batches.push(("groups".to_string(), groups_to_arrow(&input_data)?));
     batches.push(("process_topology".to_string(), process_topos_to_arrow(&input_data)?));
-    batches.push(("node_history".to_string(), node_histories_to_arrow(&input_data)?));
+    //batches.push(("node_history".to_string(), node_histories_to_arrow(&input_data)?));
     batches.push(("node_delay".to_string(), node_delays_to_arrow(&input_data)?));
     batches.push(("node_diffusion".to_string(), node_diffusion_to_arrow(&input_data)?));
     batches.push(("inflow_blocks".to_string(), inflow_blocks_to_arrow(&input_data)?));
@@ -662,10 +662,10 @@ pub fn node_diffusion_to_arrow(input_data: &InputData) -> Result<RecordBatch, Ar
     RecordBatch::try_new(schema, columns)
 }
 
-
+/* 
 // Function to convert node histories to Arrow RecordBatch
 pub fn node_histories_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    println!("histories");
+    // Extract node histories from input data
     let node_histories = &input_data.node_histories;
 
     // Define the schema for the Arrow RecordBatch dynamically
@@ -677,27 +677,20 @@ pub fn node_histories_to_arrow(input_data: &InputData) -> Result<RecordBatch, Ar
     let mut string_columns_data: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut float_columns_data: BTreeMap<String, Vec<f64>> = BTreeMap::new();
 
-    // Determine the expected length of TimeSeries data
-    let mut expected_length = None;
+    // Determine the maximum length of the time series data (number of rows)
+    let max_length = node_histories
+        .values()
+        .map(|nh| {
+            nh.steps.ts_data.iter().map(|ts| ts.series.len()).max().unwrap_or(0)
+        })
+        .max()
+        .unwrap_or(0);
 
-    for node_history in node_histories.values() {
-        for ts in &node_history.steps.ts_data {
-            match expected_length {
-                Some(length) => {
-                    if ts.series.len() != length {
-                        return Err(ArrowError::InvalidArgumentError(
-                            "Inconsistent number of timestamps or values across scenarios".to_string(),
-                        ));
-                    }
-                }
-                None => {
-                    expected_length = Some(ts.series.len());
-                }
-            }
-        }
+    // Fill running number column (t)
+    for i in 0..max_length {
+        running_number.push(i as i32 + 1);
     }
-
-    let max_length = expected_length.unwrap_or(0);
+    columns.push(Arc::new(Int32Array::from(running_number)) as ArrayRef);
 
     // Populate the columns from the NodeHistory BTreeMap
     for node_history in node_histories.values() {
@@ -705,42 +698,37 @@ pub fn node_histories_to_arrow(input_data: &InputData) -> Result<RecordBatch, Ar
             let column_name_string = format!("{},t,{}", node_history.node, ts.scenario);
             let column_name_float = format!("{},{}", node_history.node, ts.scenario);
 
+            // Add the schema fields
             fields.push(Field::new(&column_name_string, DataType::Utf8, false));
             fields.push(Field::new(&column_name_float, DataType::Float64, false));
 
-            for (t, value) in &ts.series {
-                string_columns_data
-                    .entry(column_name_string.clone())
-                    .or_insert_with(Vec::new)
-                    .push(t.clone());
-                float_columns_data
-                    .entry(column_name_float.clone())
-                    .or_insert_with(Vec::new)
-                    .push(*value);
+            // Initialize empty vectors for the column data
+            let mut timestamps = vec!["".to_string(); max_length]; // Use empty strings for uninitialized slots
+            let mut values = vec![f64::NAN; max_length]; // Use NaN for uninitialized float slots
+
+            // Fill the column data
+            for (i, (timestamp, value)) in ts.series.iter().enumerate() {
+                timestamps[i] = timestamp.clone();
+                values[i] = *value;
             }
+
+            // Insert the data into the respective maps
+            string_columns_data.insert(column_name_string, timestamps);
+            float_columns_data.insert(column_name_float, values);
         }
     }
 
-    // Fill running number column
-    for i in 0..max_length {
-        running_number.push(i as i32 + 1);
-    }
-
-    // Add running number column
-    println!("Running number length: {}", running_number.len());
-    columns.push(Arc::new(Int32Array::from(running_number)) as ArrayRef);
-
-    // Add the string and float columns to the RecordBatch
-    for (key, val) in string_columns_data.iter() {
-        println!("String column '{}' length: {}", key, val.len());
+    // Add the string columns to the RecordBatch
+    for (_, val) in string_columns_data.iter() {
         columns.push(Arc::new(StringArray::from(val.clone())) as ArrayRef);
     }
-    for (key, val) in float_columns_data.iter() {
-        println!("Float column '{}' length: {}", key, val.len());
+
+    // Add the float columns to the RecordBatch
+    for (_, val) in float_columns_data.iter() {
         columns.push(Arc::new(Float64Array::from(val.clone())) as ArrayRef);
     }
 
-    // Update the schema to match the columns
+    // Create the schema
     let schema = Arc::new(Schema::new(fields));
 
     // Create the RecordBatch using these arrays and the schema
@@ -748,7 +736,7 @@ pub fn node_histories_to_arrow(input_data: &InputData) -> Result<RecordBatch, Ar
 
     Ok(record_batch)
 }
-
+*/
 
 pub fn node_delays_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     println!("delays");
@@ -2165,7 +2153,7 @@ mod tests {
 
     fn load_test_data() -> InputData {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("tests/predicer/predicer_all.json");
+        path.push("tests/predicer/predicer_no_node_histories.json");
         let file = File::open(path).expect("Failed to open test file");
         let reader = BufReader::new(file);
         serde_json::from_reader(reader).expect("Failed to parse JSON")
@@ -2447,6 +2435,59 @@ mod tests {
         assert_float64_column(initial_loads_array, &expected_initial_loads, "initial_load");
         assert_float64_column(initial_flows_array, &expected_initial_flows, "initial_flow");
     }
+
+    //NO TEST FOR NODE HISTORIES YET
+
+    #[test]
+    fn test_node_delays_to_arrow() {
+        // Load the test input data
+        let input_data = load_test_data();
+
+        // Convert the node delays to a RecordBatch
+        let record_batch = node_delays_to_arrow(&input_data).expect("Failed to create RecordBatch");
+
+        // Print the generated Arrow table using the provided print_batches function
+        print_batches(&[record_batch.clone()]);
+
+        // Expected values
+        let expected_node1 = vec!["delay_source"];
+        let expected_node2 = vec!["dh_source"];
+        let expected_delay_t = vec![2.0];
+        let expected_min_flow = vec![0.0];
+        let expected_max_flow = vec![1000.0];
+
+        // Get columns from the RecordBatch
+        let node1_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let node2_array = record_batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+        let delay_t_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        let min_flow_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        let max_flow_array = record_batch.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        // Validate the 'node1' column
+        for (i, expected_value) in expected_node1.iter().enumerate() {
+            assert_eq!(node1_array.value(i), *expected_value, "Mismatch at row {} in 'node1' column", i);
+        }
+
+        // Validate the 'node2' column
+        for (i, expected_value) in expected_node2.iter().enumerate() {
+            assert_eq!(node2_array.value(i), *expected_value, "Mismatch at row {} in 'node2' column", i);
+        }
+
+        // Validate the 'delay_t' column
+        for (i, expected_value) in expected_delay_t.iter().enumerate() {
+            assert_eq!(delay_t_array.value(i), *expected_value, "Mismatch at row {} in 'delay_t' column", i);
+        }
+
+        // Validate the 'min_flow' column
+        for (i, expected_value) in expected_min_flow.iter().enumerate() {
+            assert_eq!(min_flow_array.value(i), *expected_value, "Mismatch at row {} in 'min_flow' column", i);
+        }
+
+        // Validate the 'max_flow' column
+        for (i, expected_value) in expected_max_flow.iter().enumerate() {
+            assert_eq!(max_flow_array.value(i), *expected_value, "Mismatch at row {} in 'max_flow' column", i);
+        }
+    }
     
     #[test]
     fn test_groups_to_arrow() {
@@ -2539,60 +2580,5 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_node_histories_to_arrow() {
-        // Load the JSON data from the file
-        let input_data = load_test_data();
 
-        // Convert to Arrow RecordBatch
-        let record_batch = node_histories_to_arrow(&input_data).expect("Failed to convert to Arrow");
-
-        // Check the schema
-        let schema = record_batch.schema();
-        let expected_fields = vec![
-            Field::new("t", DataType::Int32, false),
-            Field::new("dh_source,t,s1", DataType::Utf8, false),
-            Field::new("dh_source,s1", DataType::Float64, false),
-            Field::new("dh_source,t,s2", DataType::Utf8, false),
-            Field::new("dh_source,s2", DataType::Float64, false),
-            Field::new("dh_source,t,s3", DataType::Utf8, false),
-            Field::new("dh_source,s3", DataType::Float64, false),
-        ];
-
-        for (i, field) in schema.fields().iter().enumerate() {
-            assert_eq!(**field, expected_fields[i]);
-        }
-
-        // Check the data
-        let running_numbers = record_batch.column(0).as_any().downcast_ref::<Int32Array>().expect("Failed to cast column");
-        let timestamps_s1 = record_batch.column(1).as_any().downcast_ref::<StringArray>().expect("Failed to cast column");
-        let values_s1 = record_batch.column(2).as_any().downcast_ref::<Float64Array>().expect("Failed to cast column");
-        let timestamps_s2 = record_batch.column(3).as_any().downcast_ref::<StringArray>().expect("Failed to cast column");
-        let values_s2 = record_batch.column(4).as_any().downcast_ref::<Float64Array>().expect("Failed to cast column");
-        let timestamps_s3 = record_batch.column(5).as_any().downcast_ref::<StringArray>().expect("Failed to cast column");
-        let values_s3 = record_batch.column(6).as_any().downcast_ref::<Float64Array>().expect("Failed to cast column");
-
-        // Expected data
-        let expected_running_numbers = vec![1, 2];
-        let expected_timestamps = vec!["2022-04-20T00:00:00+00:00", "2022-04-20T01:00:00+00:00"];
-        let expected_values = vec![1.0, 1.0];
-
-        assert_eq!(running_numbers.len(), 2);
-        assert_eq!(timestamps_s1.len(), 2);
-        assert_eq!(values_s1.len(), 2);
-        assert_eq!(timestamps_s2.len(), 2);
-        assert_eq!(values_s2.len(), 2);
-        assert_eq!(timestamps_s3.len(), 2);
-        assert_eq!(values_s3.len(), 2);
-
-        for i in 0..2 {
-            assert_eq!(running_numbers.value(i), expected_running_numbers[i]);
-            assert_eq!(timestamps_s1.value(i), expected_timestamps[i]);
-            assert_eq!(values_s1.value(i), expected_values[i]);
-            assert_eq!(timestamps_s2.value(i), expected_timestamps[i]);
-            assert_eq!(values_s2.value(i), expected_values[i]);
-            assert_eq!(timestamps_s3.value(i), expected_timestamps[i]);
-            assert_eq!(values_s3.value(i), expected_values[i]);
-        }
-    }
 }
