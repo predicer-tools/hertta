@@ -44,7 +44,7 @@ pub struct InputData {
     pub risk: BTreeMap<String, f64>,
     pub inflow_blocks: BTreeMap<String, InflowBlock>,
     pub bid_slots: BTreeMap<String, BidSlot>,
-    pub gen_constraints: HashMap<String, GenConstraint>,
+    pub gen_constraints: BTreeMap<String, GenConstraint>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]

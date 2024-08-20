@@ -508,7 +508,6 @@ pub fn groups_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError
     Ok(record_batch)
 }
 
-// Convert HashMap<String, ProcessTopology> to RecordBatch
 pub fn process_topos_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     println!("processes_topos");
     let process_topologys = &input_data.processes;
@@ -540,24 +539,33 @@ pub fn process_topos_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
     // Extract data from the HashMap
     for (process_name, process) in process_topologys {
         for topo in &process.topos {
-            processes.push(process_name.clone());
+            // Add row for source if the process name is not the same as the source
+            if process.name != topo.source {
+                processes.push(process_name.clone());
+                source_sinks.push("source".to_string());
+                nodes.push(topo.source.clone());
+                conversion_coeffs.push(1.0); // Example placeholder value for `conversion_coeff`
+                capacities.push(topo.capacity);
+                vom_costs.push(topo.vom_cost);
+                ramp_ups.push(topo.ramp_up);
+                ramp_downs.push(topo.ramp_down);
+                initial_loads.push(topo.initial_load);
+                initial_flows.push(topo.initial_flow);
+            }
 
-            // Determine the `source_sink` value and `node` value based on process name
-            let (source_sink, node) = if process.name == topo.sink {
-                ("source".to_string(), topo.source.clone())
-            } else {
-                ("sink".to_string(), topo.sink.clone())
-            };
-
-            source_sinks.push(source_sink);
-            nodes.push(node);
-            conversion_coeffs.push(1.0); // Example placeholder value for `conversion_coeff`
-            capacities.push(topo.capacity);
-            vom_costs.push(topo.vom_cost);
-            ramp_ups.push(topo.ramp_up);
-            ramp_downs.push(topo.ramp_down);
-            initial_loads.push(topo.initial_load);
-            initial_flows.push(topo.initial_flow);
+            // Add row for sink if the process name is not the same as the sink
+            if process.name != topo.sink {
+                processes.push(process_name.clone());
+                source_sinks.push("sink".to_string());
+                nodes.push(topo.sink.clone());
+                conversion_coeffs.push(1.0); // Example placeholder value for `conversion_coeff`
+                capacities.push(topo.capacity);
+                vom_costs.push(topo.vom_cost);
+                ramp_ups.push(topo.ramp_up);
+                ramp_downs.push(topo.ramp_down);
+                initial_loads.push(topo.initial_load);
+                initial_flows.push(topo.initial_flow);
+            }
         }
     }
 
@@ -2367,6 +2375,77 @@ mod tests {
             &expected_delay,
             "delay",
         );
+    }
+
+    #[test]
+    fn test_process_topos_to_arrow() {
+        // Load the test input data
+        let input_data = load_test_data();
+
+        // Convert the input data to a RecordBatch
+        let record_batch = process_topos_to_arrow(&input_data).expect("Failed to create RecordBatch");
+
+        // Use the existing print_batches function to print the generated Arrow table
+        print_batches(&[record_batch.clone()]);
+
+        // Expected values
+        let expected_processes = vec![
+            "dh_source_out", "dh_sto_charge", "dh_sto_charge", "dh_sto_discharge", "dh_sto_discharge",
+            "dh_tra", "dh_tra", "hp1", "hp1", "ngchp", "ngchp", "ngchp", "p2x1", "p2x1", "pv1",
+        ];
+
+        let expected_source_sinks = vec![
+            "sink", "source", "sink", "source", "sink", "source", "sink", "source", "sink",
+            "source", "sink", "sink", "source", "sink", "sink",
+        ];
+
+        let expected_nodes = vec![
+            "dh", "dh", "dh_sto", "dh_sto", "dh", "dh", "dh2", "elc", "dh", "ng", "dh", "elc", "elc", "h2", "elc",
+        ];
+
+        let expected_conversion_coeffs = vec![1.0; 15];
+        let expected_capacities = vec![1000.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 5.0, 15.0, 20.0, 10.0, 8.0, 10.0, 7.0, 5.0];
+        let expected_vom_costs = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 15.0, 0.5, 3.0, 0.0, 0.0, 15.0, 1.0, 0.5];
+        let expected_ramp_ups = vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0];
+        let expected_ramp_downs = vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0];
+        let expected_initial_loads = vec![0.6; 15];
+        let expected_initial_flows = vec![0.6; 15];
+
+        // Get columns from RecordBatch
+        let processes_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let source_sinks_array = record_batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+        let nodes_array = record_batch.column(2).as_any().downcast_ref::<StringArray>().unwrap();
+        let conversion_coeffs_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        let capacities_array = record_batch.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
+        let vom_costs_array = record_batch.column(5).as_any().downcast_ref::<Float64Array>().unwrap();
+        let ramp_ups_array = record_batch.column(6).as_any().downcast_ref::<Float64Array>().unwrap();
+        let ramp_downs_array = record_batch.column(7).as_any().downcast_ref::<Float64Array>().unwrap();
+        let initial_loads_array = record_batch.column(8).as_any().downcast_ref::<Float64Array>().unwrap();
+        let initial_flows_array = record_batch.column(9).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        // Assertions for each column
+        assert_eq!(processes_array.len(), expected_processes.len());
+        for (i, expected_value) in expected_processes.iter().enumerate() {
+            assert_eq!(processes_array.value(i), *expected_value, "Mismatch at row {} in 'process' column", i);
+        }
+
+        assert_eq!(source_sinks_array.len(), expected_source_sinks.len());
+        for (i, expected_value) in expected_source_sinks.iter().enumerate() {
+            assert_eq!(source_sinks_array.value(i), *expected_value, "Mismatch at row {} in 'source_sink' column", i);
+        }
+
+        assert_eq!(nodes_array.len(), expected_nodes.len());
+        for (i, expected_value) in expected_nodes.iter().enumerate() {
+            assert_eq!(nodes_array.value(i), *expected_value, "Mismatch at row {} in 'node' column", i);
+        }
+
+        assert_float64_column(conversion_coeffs_array, &expected_conversion_coeffs, "conversion_coeff");
+        assert_float64_column(capacities_array, &expected_capacities, "capacity");
+        assert_float64_column(vom_costs_array, &expected_vom_costs, "vom_cost");
+        assert_float64_column(ramp_ups_array, &expected_ramp_ups, "ramp_up");
+        assert_float64_column(ramp_downs_array, &expected_ramp_downs, "ramp_down");
+        assert_float64_column(initial_loads_array, &expected_initial_loads, "initial_load");
+        assert_float64_column(initial_flows_array, &expected_initial_flows, "initial_flow");
     }
     
     #[test]
