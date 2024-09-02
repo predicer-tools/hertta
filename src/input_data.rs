@@ -19,7 +19,7 @@ pub struct OptimizationData {
     pub country: Option<String>,
     pub location: Option<String>,
     pub timezone: Option<String>,
-    pub elec_price_source: Option<ElecPriceSource>,
+    pub elec_price_source: Option<String>,
     pub model_data: Option<InputData>,
     pub time_data: Option<TimeData>,
     pub weather_data: Option<WeatherData>,
