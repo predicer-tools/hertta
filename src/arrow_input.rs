@@ -97,7 +97,7 @@ pub fn create_record_batches(
     batches.push(("processes".to_string(), processes_to_arrow(&input_data)?));
     batches.push(("groups".to_string(), groups_to_arrow(&input_data)?));
     batches.push(("process_topology".to_string(), process_topos_to_arrow(&input_data)?));
-    //batches.push(("node_history".to_string(), node_histories_to_arrow(&input_data)?));
+    batches.push(("node_history".to_string(), node_histories_to_arrow(&input_data)?));
     batches.push(("node_delay".to_string(), node_delays_to_arrow(&input_data)?));
     batches.push(("node_diffusion".to_string(), node_diffusion_to_arrow(&input_data)?));
     batches.push(("inflow_blocks".to_string(), inflow_blocks_to_arrow(&input_data)?));
