@@ -1390,6 +1390,7 @@ pub fn risk_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> 
     Ok(record_batch)
 }
 
+//NOT WORKING
 pub fn processes_cap_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     println!("processes cap");
 
@@ -2961,6 +2962,130 @@ mod tests {
         let value_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
         assert_float64_column(value_array, &expected_values, "value");
     }
+
+    //STILL PROBLEMS
+    #[test]
+    fn test_processes_cap_to_arrow() {
+        let input_data = load_test_data(); // Load the test data from the provided JSON file.
+    
+        // Convert processes cap data to Arrow RecordBatch
+        let record_batch = processes_cap_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+    
+        // Print the RecordBatch for debugging
+        let batches = vec![record_batch.clone()];
+        print_batches(&batches);
+    
+        // Expected result DataFrame
+        let expected_t = vec![
+            "2022-04-20T00:00:00+00:00",
+            "2022-04-20T01:00:00+00:00",
+            "2022-04-20T02:00:00+00:00",
+        ];
+        let expected_hp1_elc_s1 = vec![5.0, 4.28571, 4.28571];
+        let expected_hp1_elc_s2 = vec![5.0, 4.28571, 4.28571];
+        let expected_hp1_elc_s3 = vec![5.0, 4.28571, 4.28571];
+    
+        // Assert 't' column
+        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(t_array, &expected_t, "t");
+    
+        // Assert 'hp1,elc,s1' column
+        let hp1_elc_s1_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(hp1_elc_s1_array, &expected_hp1_elc_s1, "hp1,elc,s1");
+    
+        // Assert 'hp1,elc,s2' column
+        let hp1_elc_s2_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(hp1_elc_s2_array, &expected_hp1_elc_s2, "hp1,elc,s2");
+    
+        // Assert 'hp1,elc,s3' column
+        let hp1_elc_s3_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(hp1_elc_s3_array, &expected_hp1_elc_s3, "hp1,elc,s3");
+    }
+
+    #[test]
+    fn test_gen_constraints_to_arrow() {
+        let input_data = load_test_data(); // Load the test data from the provided JSON file.
+    
+        // Convert gen constraints to Arrow RecordBatch
+        let record_batch = gen_constraints_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+    
+        // Print the RecordBatch for debugging
+        let batches = vec![record_batch.clone()];
+        print_batches(&batches);
+    
+        // Expected result DataFrame
+        let expected_t_values = vec![
+            "2022-04-20T00:00:00+00:00", 
+            "2022-04-20T01:00:00+00:00", 
+            "2022-04-20T02:00:00+00:00"
+        ];
+        let expected_c1_s1 = vec![0.0, 0.0, 0.0];
+        let expected_c1_s2 = vec![0.0, 0.0, 0.0];
+        let expected_c1_s3 = vec![0.0, 0.0, 0.0];
+        let expected_c1_ngchp_elc_s1 = vec![1.0, 1.0, 1.0];
+        let expected_c1_ngchp_elc_s2 = vec![1.0, 1.0, 1.0];
+        let expected_c1_ngchp_elc_s3 = vec![1.0, 1.0, 1.0];
+        let expected_c1_ngchp_dh_s1 = vec![-0.8, -0.8, -0.8];
+        let expected_c1_ngchp_dh_s2 = vec![-0.8, -0.8, -0.8];
+        let expected_c1_ngchp_dh_s3 = vec![-0.8, -0.8, -0.8];
+        let expected_c2_dh_sto_s1 = vec![300.0, 300.0, 300.0];
+        let expected_c2_dh_sto_s2 = vec![300.0, 300.0, 300.0];
+        let expected_c2_dh_sto_s3 = vec![300.0, 300.0, 300.0];
+        let expected_c3_dh_sto_s1 = vec![256.0, 256.0, 256.0];
+        let expected_c3_dh_sto_s2 = vec![256.0, 256.0, 256.0];
+        let expected_c3_dh_sto_s3 = vec![256.0, 256.0, 256.0];
+    
+        // Assert 't' column
+        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(t_array, &expected_t_values, "t");
+    
+        // Assert other columns in lexicographical order
+        let column_c1_s1 = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_c1_s1, &expected_c1_s1, "c1,s1");
+    
+        let column_c1_s2 = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_c1_s2, &expected_c1_s2, "c1,s2");
+    
+        let column_c1_s3 = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_c1_s3, &expected_c1_s3, "c1,s3");
+    
+        let column_c1_ngchp_elc_s1 = record_batch.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_c1_ngchp_elc_s1, &expected_c1_ngchp_elc_s1, "c1,ngchp,elc,s1");
+    
+        let column_c1_ngchp_elc_s2 = record_batch.column(5).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_c1_ngchp_elc_s2, &expected_c1_ngchp_elc_s2, "c1,ngchp,elc,s2");
+    
+        let column_c1_ngchp_elc_s3 = record_batch.column(6).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_c1_ngchp_elc_s3, &expected_c1_ngchp_elc_s3, "c1,ngchp,elc,s3");
+    
+        let column_c1_ngchp_dh_s1 = record_batch.column(7).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_c1_ngchp_dh_s1, &expected_c1_ngchp_dh_s1, "c1,ngchp,dh,s1");
+    
+        let column_c1_ngchp_dh_s2 = record_batch.column(8).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_c1_ngchp_dh_s2, &expected_c1_ngchp_dh_s2, "c1,ngchp,dh,s2");
+    
+        let column_c1_ngchp_dh_s3 = record_batch.column(9).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_c1_ngchp_dh_s3, &expected_c1_ngchp_dh_s3, "c1,ngchp,dh,s3");
+    
+        let column_c2_dh_sto_s1 = record_batch.column(10).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_c2_dh_sto_s1, &expected_c2_dh_sto_s1, "c2,dh_sto,s1");
+    
+        let column_c2_dh_sto_s2 = record_batch.column(11).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_c2_dh_sto_s2, &expected_c2_dh_sto_s2, "c2,dh_sto,s2");
+    
+        let column_c2_dh_sto_s3 = record_batch.column(12).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_c2_dh_sto_s3, &expected_c2_dh_sto_s3, "c2,dh_sto,s3");
+    
+        let column_c3_dh_sto_s1 = record_batch.column(13).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_c3_dh_sto_s1, &expected_c3_dh_sto_s1, "c3,dh_sto,s1");
+    
+        let column_c3_dh_sto_s2 = record_batch.column(14).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_c3_dh_sto_s2, &expected_c3_dh_sto_s2, "c3,dh_sto,s2");
+    
+        let column_c3_dh_sto_s3 = record_batch.column(15).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_c3_dh_sto_s3, &expected_c3_dh_sto_s3, "c3,dh_sto,s3");
+    }
+    
 
 
     #[test]
