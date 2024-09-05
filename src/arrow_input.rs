@@ -3086,7 +3086,39 @@ mod tests {
         assert_float64_column(column_c3_dh_sto_s3, &expected_c3_dh_sto_s3, "c3,dh_sto,s3");
     }
     
+    #[test]
+    fn test_constraints_to_arrow() {
+        let input_data = load_test_data(); // Load the test data from the provided JSON file.
 
+        // Convert constraints to Arrow RecordBatch
+        let record_batch = constraints_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
+        // Print the RecordBatch for debugging
+        let batches = vec![record_batch.clone()];
+        print_batches(&batches);
+
+        // Expected result DataFrame
+        let expected_names = vec!["c1", "c2", "c3"];
+        let expected_operators = vec!["eq", "st", "gt"];
+        let expected_is_setpoints = vec![false, true, true];
+        let expected_penalties = vec![0.0, 1.0, 1.0];
+
+        // Assert 'name' column
+        let name_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(name_array, &expected_names, "name");
+
+        // Assert 'operator' column
+        let operator_array = record_batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(operator_array, &expected_operators, "operator");
+
+        // Assert 'is_setpoint' column
+        let is_setpoint_array = record_batch.column(2).as_any().downcast_ref::<BooleanArray>().unwrap();
+        assert_boolean_column(is_setpoint_array, &expected_is_setpoints, "is_setpoint");
+
+        // Assert 'penalty' column
+        let penalty_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(penalty_array, &expected_penalties, "penalty");
+    }
 
     #[test]
     fn test_groups_to_arrow() {
