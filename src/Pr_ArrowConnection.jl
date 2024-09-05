@@ -122,7 +122,7 @@ function main()
         df = DataFrame(table)  # Convert Arrow table to DataFrame
         push!(data_dict, (keywords[length(data_dict) + 1] => df))
         println("Received DataFrame for keyword $(keywords[length(data_dict)]):")
-        println(df)  # Print the DataFrame
+        #println(df)  # Print the DataFrame
         # Send acknowledgment
         println("Sending acknowledgment for keyword $(keywords[length(data_dict)])...")
         ZMQ.send(socket, "ACK")
@@ -182,6 +182,22 @@ function main()
 
     println("All DataFrames received and paired with keywords.")
 
+    println("Temporals:")
+    println(temporals)
+
+    println("System Data:")
+    for (key, df) in system_data
+        println("Key: $key")
+        println(df)
+    end
+
+    println("Timeseries Data:")
+    for (key, df) in timeseries_data
+        println("Key: $key")
+        println(df)
+    end
+    """
+    
     input_data = Predicer.compile_input_data(system_data, timeseries_data, temporals)
     mc, input_data = Predicer.generate_model(input_data)
     Predicer.solve_model(mc)
@@ -217,11 +233,15 @@ function main()
         ZMQ.close(push_socket)
     end
 
+    """
+
     # Send Quit command to the server
     ZMQ.send(socket, "Quit")
 
     ZMQ.close(socket)
     ZMQ.close(zmq_context)
 end
+
+
 
 main()

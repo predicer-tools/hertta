@@ -3,8 +3,6 @@ use warp::reject::Reject;
 use std::error::Error;
 use arrow::error::ArrowError;
 use serde::{Serialize, Deserialize};
-use thiserror::Error;
-use std::io;
 
 /// A custom error type for representing errors from Julia.
 ///

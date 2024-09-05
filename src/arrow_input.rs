@@ -810,100 +810,122 @@ pub fn node_delays_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arrow
 
 pub fn inflow_blocks_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     println!("inflow_blocks");
-    // Extract inflow_blocks and temporals from input_data
+
     let inflow_blocks = &input_data.inflow_blocks;
 
-    // Check if inflow_blocks is empty
     if inflow_blocks.is_empty() {
-        // Create a schema for the empty inflow_blocks scenario
         let schema = Arc::new(Schema::new(vec![Field::new("t", DataType::Int32, false)]));
-
-        // Create a vector with values from 1 to 10
-        let t_values: Vec<i32> = (1..=10).collect::<Vec<usize>>().into_iter().map(|x| x as i32).collect();
-
-        // Create an Arrow array from the vector
+        let t_values: Vec<i32> = (1..=10).collect(); // Running number for `t`
         let t_array: ArrayRef = Arc::new(Int32Array::from(t_values));
-
-        // Create the RecordBatch using the array and the schema
         return RecordBatch::try_new(schema, vec![t_array]);
     }
 
-    // Original processing for non-empty inflow_blocks
-    let temporals = &input_data.temporals;
+    let mut scenario_names = BTreeMap::new(); // Use BTreeMap for consistent lexicographical ordering
+    let mut common_timestamps: Option<Vec<String>> = None;
 
-    // Collect all unique scenario names across all inflow blocks
-    let mut scenario_names = HashMap::new();
+    // Collect all unique scenario names and ensure timestamps are consistent across all inflow blocks
     for block in inflow_blocks.values() {
         for ts in &block.data.ts_data {
-            scenario_names.insert(ts.scenario.clone(), ());
+            scenario_names.insert(ts.scenario.clone(), ()); // BTreeMap will maintain lexicographical order
+
+            let timestamps: Vec<String> = ts.series.keys().cloned().collect();
+
+            // Check if timestamps are consistent across all inflow blocks
+            if let Some(ref common_ts) = common_timestamps {
+                if *common_ts != timestamps {
+                    return Err(ArrowError::ComputeError(
+                        "Inconsistent timestamps across inflow blocks".to_string(),
+                    ));
+                }
+            } else {
+                common_timestamps = Some(timestamps);
+            }
         }
     }
-    let scenario_names: Vec<String> = scenario_names.into_keys().collect();
 
-    // Define the schema dynamically based on the scenario names
-    let mut fields: Vec<Field> = vec![Field::new("t", DataType::Int32, false)];
+    let scenario_names: Vec<String> = scenario_names.keys().cloned().collect(); // Extract scenario names in lexicographical order
+    let common_timestamps = common_timestamps.ok_or_else(|| ArrowError::ComputeError("No timestamps found".to_string()))?;
+
+    // Create the schema with the `t` column and additional columns based on inflow blocks
+    let mut fields: Vec<Field> = vec![Field::new("t", DataType::Int64, false)]; // `t` as running number
+
     for block in inflow_blocks.values() {
+        // Add the block name, node (e.g., "b1,dh_sto") column
         fields.push(Field::new(&format!("{},{}", block.name, block.node), DataType::Utf8, false));
+        
+        // Add scenario columns (e.g., "b1,s1", "b1,s2", ...) in lexicographical order
         for scenario in &scenario_names {
             fields.push(Field::new(&format!("{},{}", block.name, scenario), DataType::Float64, false));
         }
     }
 
-    // Initialize data structures for each column
-    let t_values: Vec<i32> = (1..=temporals.t.len()).map(|x| x as i32).collect();
-    let mut start_times: HashMap<String, Vec<String>> = HashMap::new();
-    let mut scenario_values: HashMap<String, HashMap<String, Vec<f64>>> = HashMap::new();
+    // Running number for the `t` column
+    let t_values: Vec<i64> = (1..=common_timestamps.len() as i64).collect(); 
+
+    let mut start_times: BTreeMap<String, Vec<String>> = BTreeMap::new(); // Use BTreeMap to preserve ordering
+    let mut scenario_values: BTreeMap<String, BTreeMap<String, Vec<f64>>> = BTreeMap::new(); // Use BTreeMap to preserve ordering
+
+    // Initialize data structures for each block and scenario
     for block in inflow_blocks.values() {
-        start_times.insert(block.name.clone(), vec![]);
-        let mut scenario_map = HashMap::new();
+        start_times.entry(block.name.clone()).or_insert_with(Vec::new);
+
+        let mut scenario_map = BTreeMap::new(); // Use BTreeMap for scenarios to preserve order
         for scenario in &scenario_names {
             scenario_map.insert(scenario.clone(), vec![]);
         }
-        scenario_values.insert(block.name.clone(), scenario_map);
+        scenario_values.entry(block.name.clone()).or_insert(scenario_map);
     }
 
-    // Populate the vectors from the HashMap
+    // Populate the vectors for each inflow block and its scenarios
     for block in inflow_blocks.values() {
-        for ts in &block.data.ts_data {
-            if ts.series.len() != temporals.t.len() {
-                return Err(ArrowError::ComputeError("Timeseries length mismatch".to_string()));
-            }
-        }
+        let start_time_vec = start_times
+            .get_mut(&block.name)
+            .expect("block.name not found in start_times");
 
-        let start_time_vec = start_times.get_mut(&block.name).unwrap();
-        let scenario_map = scenario_values.get_mut(&block.name).unwrap();
-        for t in &temporals.t {
-            start_time_vec.push(block.start_time.clone());
+        let scenario_map = scenario_values
+            .get_mut(&block.name)
+            .expect("block.name not found in scenario_values");
+
+        for t in &common_timestamps {
+            start_time_vec.push(t.clone()); // Store the timestamp in `start_time_vec`
 
             for ts in &block.data.ts_data {
-                if !ts.series.contains_key(t) {
-                    return Err(ArrowError::ComputeError("Timeseries mismatch in temporal data".to_string()));
+                if let Some(value) = ts.series.get(t) {
+                    scenario_map
+                        .get_mut(&ts.scenario)
+                        .expect("Scenario not found in scenario_map")
+                        .push(*value);
+                } else {
+                    return Err(ArrowError::ComputeError(format!(
+                        "Timeseries mismatch for timestamp {} in temporal data",
+                        t
+                    )));
                 }
-                scenario_map.get_mut(&ts.scenario).unwrap().push(ts.series[t]);
             }
-        }
-    }
-
-    // Ensure all columns have the same length
-    let start_times_len = start_times.values().next().unwrap().len();
-    assert_eq!(t_values.len(), start_times_len, "t_values and start_times lengths do not match");
-
-    for scenario_map in scenario_values.values() {
-        for values in scenario_map.values() {
-            assert_eq!(values.len(), start_times_len, "Scenario values length does not match start_times length");
         }
     }
 
     // Create Arrow arrays from the vectors
-    let t_array: ArrayRef = Arc::new(Int32Array::from(t_values));
+    let t_array: ArrayRef = Arc::new(Int64Array::from(t_values)); // Running number in `t`
     let mut columns: Vec<ArrayRef> = vec![t_array];
 
     for block in inflow_blocks.values() {
-        let start_times_array: ArrayRef = Arc::new(StringArray::from(start_times.remove(&block.name).unwrap_or_else(Vec::new)));
+        // Create column for `block.name,block.node` (e.g., "b1,dh_sto")
+        let start_times_array: ArrayRef = Arc::new(StringArray::from(
+            start_times
+                .remove(&block.name)
+                .unwrap_or_else(Vec::new),
+        ));
         columns.push(start_times_array);
 
+        // Add scenario columns (e.g., "b1,s1", "b1,s2", ...) in lexicographical order
         for scenario in &scenario_names {
-            let values = scenario_values.get(&block.name).unwrap().get(scenario).unwrap().clone();
+            let values = scenario_values
+                .get(&block.name)
+                .expect("block.name not found in scenario_values")
+                .get(scenario)
+                .expect("Scenario not found in scenario_map")
+                .clone();
             columns.push(Arc::new(Float64Array::from(values)) as ArrayRef);
         }
     }
@@ -2178,7 +2200,7 @@ mod tests {
                 print!("{:<20}\t", field.name());
             }
             println!();
-
+    
             // Print rows
             for row in 0..batch.num_rows() {
                 for column in batch.columns() {
@@ -2188,6 +2210,8 @@ mod tests {
                         array.value(row).to_string()
                     } else if let Some(array) = column.as_any().downcast_ref::<Float64Array>() {
                         array.value(row).to_string()
+                    } else if let Some(array) = column.as_any().downcast_ref::<Int64Array>() {
+                        array.value(row).to_string() // Handle Int64Array here
                     } else {
                         "N/A".to_string()
                     };
@@ -2196,7 +2220,7 @@ mod tests {
                 println!();
             }
         }
-    }
+    }    
 
     fn assert_boolean_column(array: &BooleanArray, expected_values: &[bool], column_name: &str) {
         for (i, expected) in expected_values.iter().enumerate() {
@@ -2215,6 +2239,12 @@ mod tests {
             assert_eq!(array.value(i), *expected, "Mismatch at row {}, column '{}'", i, column_name);
         }
     }
+
+    fn assert_string_column(array: &StringArray, expected_values: &[&str], column_name: &str) {
+        for (i, expected) in expected_values.iter().enumerate() {
+            assert_eq!(array.value(i), *expected, "Mismatch at row {}, column '{}'", i, column_name);
+        }
+    }    
     
 
     #[test]
@@ -2563,7 +2593,106 @@ mod tests {
         }
     }
 
-    //TEST NODE DIFFUSION
+    #[test]
+    fn test_node_diffusion_to_arrow() {
+        let input_data = load_test_data(); // Assuming this loads data similar to what was described
+
+        // Print all node diffusions for debugging
+        for node_diffusion in &input_data.node_diffusion {
+            println!("Node Diffusion: {:?}", node_diffusion);
+        }
+
+        // Convert node diffusion to Arrow RecordBatch
+        let record_batch = node_diffusion_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
+        // Print the RecordBatch for debugging
+        let batches = vec![record_batch.clone()];
+        print_batches(&batches);
+
+        // Expected result DataFrame
+        let expected_t_values = vec!["2022-04-20T00:00:00+00:00", "2022-04-20T01:00:00+00:00", "2022-04-20T02:00:00+00:00"];
+        let expected_value_s1 = vec![0.02, 0.02, 0.02];
+        let expected_value_s2 = vec![0.02, 0.02, 0.02];
+        let expected_value_s3 = vec![0.02, 0.02, 0.02];
+
+        // Helper function to assert string column values
+        fn assert_string_column(array: &StringArray, expected_values: &[&str], column_name: &str) {
+            for (i, expected) in expected_values.iter().enumerate() {
+                assert_eq!(array.value(i), *expected, "Mismatch at row {}, column '{}'", i, column_name);
+            }
+        }
+
+        // Helper function to assert float column values
+        fn assert_float_column(array: &Float64Array, expected_values: &[f64], column_name: &str) {
+            for (i, expected) in expected_values.iter().enumerate() {
+                assert!((array.value(i) - *expected).abs() < f64::EPSILON, "Mismatch at row {}, column '{}'", i, column_name);
+            }
+        }
+
+        // Assert 't' column
+        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(t_array, &expected_t_values, "t");
+
+        // Assert 'dh_sto,ambience,s1' column
+        let value_s1_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float_column(value_s1_array, &expected_value_s1, "dh_sto,ambience,s1");
+
+        // Assert 'dh_sto,ambience,s2' column
+        let value_s2_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float_column(value_s2_array, &expected_value_s2, "dh_sto,ambience,s2");
+
+        // Assert 'dh_sto,ambience,s3' column
+        let value_s3_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float_column(value_s3_array, &expected_value_s3, "dh_sto,ambience,s3");
+    }
+
+    #[test]
+    fn test_inflow_blocks_to_arrow() {
+        let input_data = load_test_data(); // Load the test data from the provided JSON file.
+    
+        // Print all inflow blocks for debugging
+        for inflow_block in &input_data.inflow_blocks {
+            println!("Inflow Block: {:?}", inflow_block);
+        }
+    
+        // Convert inflow blocks to Arrow RecordBatch
+        let record_batch = inflow_blocks_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+    
+        // Print the RecordBatch for debugging
+        let batches = vec![record_batch.clone()];
+        print_batches(&batches);
+    
+        // Expected result DataFrame
+        let expected_t_values = vec![1, 2, 3];
+        let expected_b1_dh_sto = vec![
+            "2022-04-20T00:00:00+00:00",
+            "2022-04-20T01:00:00+00:00",
+            "2022-04-20T02:00:00+00:00",
+        ];
+        let expected_b1_s1 = vec![-2.0, 1.0, 2.0];
+        let expected_b1_s2 = vec![-3.0, 2.0, 2.0];
+        let expected_b1_s3 = vec![-4.0, 3.0, 2.0];
+    
+        // Assert 't' column (running numbers)
+        let t_array = record_batch.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
+        assert_int64_column(t_array, &expected_t_values.iter().map(|&x| x as i64).collect::<Vec<i64>>(), "t");
+    
+        // Assert 'b1,dh_sto' column (timestamps)
+        let b1_dh_sto_array = record_batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(b1_dh_sto_array, &expected_b1_dh_sto, "b1,dh_sto");
+    
+        // Assert 'b1,s1' column
+        let b1_s1_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(b1_s1_array, &expected_b1_s1, "b1,s1");
+    
+        // Assert 'b1,s2' column
+        let b1_s2_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(b1_s2_array, &expected_b1_s2, "b1,s2");
+    
+        // Assert 'b1,s3' column
+        let b1_s3_array = record_batch.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(b1_s3_array, &expected_b1_s3, "b1,s3");
+    }    
     
     #[test]
     fn test_groups_to_arrow() {

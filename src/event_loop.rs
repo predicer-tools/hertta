@@ -1,5 +1,4 @@
 
-use crate::errors;
 use crate::input_data;
 use crate::utilities;
 
@@ -8,8 +7,6 @@ use tokio::time::{self, Duration};
 use tokio::sync::{Mutex};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use std::error::Error;
-use crate::input_data::{OptimizationData};
-use serde_yaml;
 use std::sync::Arc;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -17,12 +14,12 @@ use crate::arrow_input;
 use arrow::ipc::reader::StreamReader;
 use arrow::record_batch::RecordBatch;
 use std::sync::atomic::{AtomicBool, Ordering};
-use reqwest::Client;
 use tokio::time::sleep;
-use zmq::Context;
 use tokio::task::JoinHandle;
 use async_std::task;
 use chrono::{DateTime, Utc};
+use crate::input_data::OptimizationData;
+use zmq::Context;
 
 
 pub async fn event_loop(mut rx: mpsc::Receiver<input_data::OptimizationData>) {
@@ -235,19 +232,7 @@ pub async fn data_conversion_task(
     }
 }
 
-async fn send_serialized_batches_old(serialized_batches: &[(String, Vec<u8>)], zmq_context: &zmq::Context) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let push_socket = zmq_context.socket(zmq::PUSH)?;
-    push_socket.connect("tcp://127.0.0.1:5555")?;
-
-    for (key, batch) in serialized_batches {
-        println!("Sending batch: {}", key); // Debug print
-        push_socket.send(batch, 0)?;
-    }
-
-    Ok(())
-}
-
-pub fn receive_data(endpoint: &str, zmq_context: &zmq::Context, data_store: &Arc<Mutex<Vec<input_data::DataTable>>>) -> Result<(), Box<dyn Error>> {
+pub fn receive_data(endpoint: &str, zmq_context: &zmq::Context, _data_store: &Arc<Mutex<Vec<input_data::DataTable>>>) -> Result<(), Box<dyn Error>> {
     let receiver = zmq_context.socket(zmq::PULL)?;
     receiver.connect(endpoint)?;
     let flags = 0;
@@ -256,7 +241,7 @@ pub fn receive_data(endpoint: &str, zmq_context: &zmq::Context, data_store: &Arc
     let reader = StreamReader::try_new(pull_result.as_slice(), None).expect("Failed to construct Arrow reader");
 
     for record_batch_result in reader {
-        let record_batch = record_batch_result.expect("Failed to read record batch");
+        let _record_batch = record_batch_result.expect("Failed to read record batch");
         //let data_table = input_data::DataTable::from_record_batch(&record_batch);
         
         //let mut data_store = data_store.lock().unwrap();
@@ -266,7 +251,7 @@ pub fn receive_data(endpoint: &str, zmq_context: &zmq::Context, data_store: &Arc
     Ok(())
 }
 
-async fn send_serialized_batches(
+async fn _send_serialized_batches(
     serialized_batches: &[(String, Vec<u8>)],
     zmq_context: &Context,
 ) -> Result<(), Box<dyn Error>> {
