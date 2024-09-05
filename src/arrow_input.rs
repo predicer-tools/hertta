@@ -2914,7 +2914,55 @@ mod tests {
         assert_float64_column(column_5, &expected_column_5, "5");
     }
     
-    
+    #[test]
+    fn test_reserve_type_to_arrow() {
+        let input_data = load_test_data(); // Load the test data from the provided JSON file.
+
+        // Convert reserve types to Arrow RecordBatch
+        let record_batch = reserve_type_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
+        // Print the RecordBatch for debugging
+        let batches = vec![record_batch.clone()];
+        print_batches(&batches);
+
+        // Expected result DataFrame
+        let expected_reserve_type = vec!["slow"];
+        let expected_ramp_factor = vec![1.0];
+
+        // Assert 'reserve_type' column
+        let reserve_type_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(reserve_type_array, &expected_reserve_type, "reserve_type");
+
+        // Assert 'ramp_factor' column
+        let ramp_factor_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(ramp_factor_array, &expected_ramp_factor, "ramp_factor");
+    }
+
+    #[test]
+    fn test_risk_to_arrow() {
+        let input_data = load_test_data(); // Load the test data from the provided JSON file.
+
+        // Convert risk data to Arrow RecordBatch
+        let record_batch = risk_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
+        // Print the RecordBatch for debugging
+        let batches = vec![record_batch.clone()];
+        print_batches(&batches);
+
+        // Expected result DataFrame
+        let expected_parameters = vec!["alfa", "beta"];
+        let expected_values = vec![0.1, 0.2];
+
+        // Assert 'parameter' column
+        let parameter_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(parameter_array, &expected_parameters, "parameter");
+
+        // Assert 'value' column
+        let value_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(value_array, &expected_values, "value");
+    }
+
+
     #[test]
     fn test_groups_to_arrow() {
         let input_data = load_test_data();
