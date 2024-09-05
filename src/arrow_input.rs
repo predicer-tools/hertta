@@ -2693,6 +2693,73 @@ mod tests {
         let b1_s3_array = record_batch.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
         assert_float64_column(b1_s3_array, &expected_b1_s3, "b1,s3");
     }    
+
+    //markets
+
+    #[test]
+    fn test_markets_to_arrow() {
+        let input_data = load_test_data(); // Load the test data from the provided JSON file.
+    
+        // Print all markets for debugging
+        for market in &input_data.markets {
+            println!("Market: {:?}", market);
+        }
+    
+        // Convert markets to Arrow RecordBatch
+        let record_batch = markets_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+    
+        // Print the RecordBatch for debugging
+        let batches = vec![record_batch.clone()];
+        print_batches(&batches);
+    
+        // Expected result DataFrame based on the lexicographical order from BTreeMap
+        let expected_market = vec!["fcr_up", "npe"];
+        let expected_market_type = vec!["reserve", "energy"];
+        let expected_node = vec!["elc_res", "elc"];
+        let expected_processgroup = vec!["p1", "p1"];
+        let expected_direction = vec!["res_up", "none"];
+        let expected_reserve_type = vec!["slow", "none"];
+        let expected_is_bid = vec![true, true];
+        let expected_is_limited = vec![false, false];
+        let expected_min_bid = vec![0.0, 0.0];
+        let expected_max_bid = vec![0.0, 0.0];
+        let expected_fee = vec![0.0, 0.0];
+    
+        // Assert columns in the correct order
+        let market_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(market_array, &expected_market, "market");
+    
+        let market_type_array = record_batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(market_type_array, &expected_market_type, "market_type");
+    
+        let node_array = record_batch.column(2).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(node_array, &expected_node, "node");
+    
+        let processgroup_array = record_batch.column(3).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(processgroup_array, &expected_processgroup, "processgroup");
+    
+        let direction_array = record_batch.column(4).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(direction_array, &expected_direction, "direction");
+    
+        let reserve_type_array = record_batch.column(6).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(reserve_type_array, &expected_reserve_type, "reserve_type");
+    
+        let is_bid_array = record_batch.column(7).as_any().downcast_ref::<BooleanArray>().unwrap();
+        assert_boolean_column(is_bid_array, &expected_is_bid, "is_bid");
+    
+        let is_limited_array = record_batch.column(8).as_any().downcast_ref::<BooleanArray>().unwrap();
+        assert_boolean_column(is_limited_array, &expected_is_limited, "is_limited");
+    
+        let min_bid_array = record_batch.column(9).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(min_bid_array, &expected_min_bid, "min_bid");
+    
+        let max_bid_array = record_batch.column(10).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(max_bid_array, &expected_max_bid, "max_bid");
+    
+        let fee_array = record_batch.column(11).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(fee_array, &expected_fee, "fee");
+    }
+
     
     #[test]
     fn test_groups_to_arrow() {
