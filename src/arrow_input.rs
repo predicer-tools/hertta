@@ -1028,17 +1028,20 @@ pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch
     let markets = &input_data.markets;
     let temporals = &input_data.temporals;
 
-    // First, collect all unique scenario names across all markets
-    let mut scenario_names = HashSet::new();
-    let mut market_names = HashSet::new();
+    // Use BTreeSet to ensure lexicographical order for market and scenario names
+    let mut scenario_names: BTreeSet<String> = BTreeSet::new();
+    let mut market_names: BTreeSet<String> = BTreeSet::new();
+
+    // Collect all unique scenario names and market names across all markets
     for market in markets.values() {
         for ts in &market.realisation.ts_data {
             scenario_names.insert(ts.scenario.clone());
-            market_names.insert(market.name.clone());
         }
+        market_names.insert(market.name.clone());
     }
-    let scenario_names: Vec<String> = scenario_names.into_iter().collect();
-    let market_names: Vec<String> = market_names.into_iter().collect();
+
+    let scenario_names: Vec<String> = scenario_names.into_iter().collect(); // Now sorted by BTreeSet order
+    let market_names: Vec<String> = market_names.into_iter().collect(); // Now sorted by BTreeSet order
 
     // Define the schema dynamically based on the scenario names
     let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
@@ -1049,7 +1052,7 @@ pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch
     }
 
     // Initialize a vector for the timestamps and data columns
-    let mut timestamps: Vec<String> = temporals.t.clone();
+    let timestamps: Vec<String> = temporals.t.clone();
     let mut scenario_values: BTreeMap<String, BTreeMap<String, BTreeMap<String, Option<f64>>>> = BTreeMap::new();
 
     // Validate timestamps
@@ -1101,6 +1104,7 @@ pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch
     // Create Arrow arrays from the vectors
     let timestamps_array: ArrayRef = Arc::new(StringArray::from(timestamps.clone()));
     let mut columns: Vec<ArrayRef> = vec![timestamps_array];
+
     for market in market_names {
         for scenario in &scenario_names {
             let values = timestamps.iter().map(|timestamp| scenario_values[&market][scenario].get(timestamp).cloned().unwrap_or(None)).collect::<Vec<Option<f64>>>();
@@ -2694,8 +2698,6 @@ mod tests {
         assert_float64_column(b1_s3_array, &expected_b1_s3, "b1,s3");
     }    
 
-    //markets
-
     #[test]
     fn test_markets_to_arrow() {
         let input_data = load_test_data(); // Load the test data from the provided JSON file.
@@ -2758,6 +2760,49 @@ mod tests {
     
         let fee_array = record_batch.column(11).as_any().downcast_ref::<Float64Array>().unwrap();
         assert_float64_column(fee_array, &expected_fee, "fee");
+    }
+
+    #[test]
+    fn test_market_realisation_to_arrow() {
+        let input_data = load_test_data(); // Load the test data from the provided JSON file.
+
+        // Print all markets for debugging
+        for market in &input_data.markets {
+            println!("Market: {:?}", market);
+        }
+
+        // Convert market realisation data to Arrow RecordBatch
+        let record_batch = market_realisation_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
+        // Print the RecordBatch for debugging
+        let batches = vec![record_batch.clone()];
+        print_batches(&batches);
+
+        // Expected result DataFrame
+        let expected_t_values = vec![
+            "2022-04-20T00:00:00+00:00", 
+            "2022-04-20T01:00:00+00:00", 
+            "2022-04-20T02:00:00+00:00"
+        ];
+        let expected_fcr_up_s1 = vec![0.27, 0.27, 0.27];
+        let expected_fcr_up_s2 = vec![0.27, 0.27, 0.29];
+        let expected_fcr_up_s3 = vec![0.27, 0.27, 0.31];
+
+        // Assert 't' column (timestamps)
+        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(t_array, &expected_t_values, "t");
+
+        // Assert 'fcr_up,s1' column
+        let fcr_up_s1_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(fcr_up_s1_array, &expected_fcr_up_s1, "fcr_up,s1");
+
+        // Assert 'fcr_up,s2' column
+        let fcr_up_s2_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(fcr_up_s2_array, &expected_fcr_up_s2, "fcr_up,s2");
+
+        // Assert 'fcr_up,s3' column
+        let fcr_up_s3_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(fcr_up_s3_array, &expected_fcr_up_s3, "fcr_up,s3");
     }
 
     
