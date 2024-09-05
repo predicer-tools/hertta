@@ -1261,8 +1261,9 @@ pub fn processes_eff_fun_to_arrow(input_data: &InputData) -> Result<RecordBatch,
     println!("eff fun");
     let processes = &input_data.processes;
 
-    // Determine the maximum length of eff_fun across all processes
+    // Determine the maximum length of eff_fun across all processes that actually have data
     let max_length = processes.values()
+        .filter(|p| !p.eff_fun.is_empty()) // Only consider processes with actual efficiency data
         .map(|p| p.eff_fun.len())
         .max()
         .unwrap_or(0);
@@ -1280,17 +1281,20 @@ pub fn processes_eff_fun_to_arrow(input_data: &InputData) -> Result<RecordBatch,
     if max_length > 0 {
         // Construct columns for operation points and efficiency values
         for (process_name, process) in processes {
-            process_column.push(format!("{},op", process_name));
-            process_column.push(format!("{},eff", process_name));
+            // Only add rows for processes that have data in `eff_fun`
+            if !process.eff_fun.is_empty() {
+                process_column.push(format!("{},op", process_name));
+                process_column.push(format!("{},eff", process_name));
 
-            for i in 0..max_length {
-                if i < process.eff_fun.len() {
-                    let (op_point, eff_value) = process.eff_fun[i];
-                    column_data[i].push(Some(op_point));
-                    column_data[i].push(Some(eff_value));
-                } else {
-                    column_data[i].push(None); // For op
-                    column_data[i].push(None); // For eff
+                for i in 0..max_length {
+                    if i < process.eff_fun.len() {
+                        let (op_point, eff_value) = process.eff_fun[i];
+                        column_data[i].push(Some(op_point));
+                        column_data[i].push(Some(eff_value));
+                    } else {
+                        column_data[i].push(None); // For op
+                        column_data[i].push(None); // For eff
+                    }
                 }
             }
         }
@@ -2869,6 +2873,47 @@ mod tests {
         let probability_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
         assert_float64_column(probability_array, &expected_probabilities, "probability");
     }
+
+    #[test]
+    fn test_processes_eff_fun_to_arrow() {
+        let input_data = load_test_data(); // Load the test data from the provided JSON file.
+    
+        // Convert processes efficiency functions to Arrow RecordBatch
+        let record_batch = processes_eff_fun_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+    
+        // Print the RecordBatch for debugging
+        let batches = vec![record_batch.clone()];
+        print_batches(&batches);
+    
+        // Expected result DataFrame
+        let expected_process = vec!["ngchp,op", "ngchp,eff"];
+        let expected_column_1 = vec![0.4, 0.8]; 
+        let expected_column_2 = vec![0.6, 0.78];
+        let expected_column_3 = vec![0.8, 0.75];
+        let expected_column_4 = vec![0.9, 0.7];
+        let expected_column_5 = vec![1.0, 0.65];
+    
+        // Assert 'process' column
+        let process_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(process_array, &expected_process, "process");
+    
+        // Assert each dynamic column for efficiency function
+        let column_1 = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_1, &expected_column_1, "1");
+    
+        let column_2 = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_2, &expected_column_2, "2");
+    
+        let column_3 = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_3, &expected_column_3, "3");
+    
+        let column_4 = record_batch.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_4, &expected_column_4, "4");
+    
+        let column_5 = record_batch.column(5).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_5, &expected_column_5, "5");
+    }
+    
     
     #[test]
     fn test_groups_to_arrow() {
