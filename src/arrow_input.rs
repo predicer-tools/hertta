@@ -1589,6 +1589,7 @@ pub fn constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arrow
     )
 }
 
+//PROBLEMS
 pub fn bid_slots_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     println!("bid slots");
     let bid_slots = &input_data.bid_slots;
@@ -3119,6 +3120,75 @@ mod tests {
         let penalty_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
         assert_float64_column(penalty_array, &expected_penalties, "penalty");
     }
+
+    #[test]
+    fn test_bid_slots_to_arrow() {
+        let input_data = load_test_data(); // Load the test data from the provided JSON file.
+
+        // Convert bid slots to Arrow RecordBatch
+        let record_batch = bid_slots_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
+        // Print the RecordBatch for debugging
+        let batches = vec![record_batch.clone()];
+        print_batches(&batches);
+
+        // Expected result DataFrame
+        let expected_t_values = vec![
+            "2022-04-20T00:00:00+00:00", 
+            "2022-04-20T01:00:00+00:00", 
+            "2022-04-20T02:00:00+00:00"
+        ];
+        let expected_npe_p0 = vec![45.0, 58.0, 55.0];
+        let expected_npe_p1 = vec![45.0, 58.0, 65.0];
+        let expected_npe_p2 = vec![50.0, 62.0, 88.0];
+        let expected_npe_p3 = vec![50.0, 62.0, 91.0];
+
+        // Assert 't' column
+        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(t_array, &expected_t_values, "t");
+
+        // Assert other columns (in the expected order)
+        let column_npe_p0 = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_npe_p0, &expected_npe_p0, "npe,p0");
+
+        let column_npe_p1 = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_npe_p1, &expected_npe_p1, "npe,p1");
+
+        let column_npe_p2 = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_npe_p2, &expected_npe_p2, "npe,p2");
+
+        let column_npe_p3 = record_batch.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_npe_p3, &expected_npe_p3, "npe,p3");
+    }
+
+    #[test]
+    fn test_processes_cf_to_arrow() {
+        let input_data = load_test_data(); // Load the test data from the provided JSON file.
+
+        // Convert processes capacity factor to Arrow RecordBatch
+        let record_batch = processes_cf_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
+        // Print the RecordBatch for debugging
+        let batches = vec![record_batch.clone()];
+        print_batches(&batches);
+
+        // Expected result DataFrame
+        let expected_t_values = vec![
+            "2022-04-20T00:00:00+00:00", 
+            "2022-04-20T01:00:00+00:00", 
+            "2022-04-20T02:00:00+00:00"
+        ];
+        let expected_pv1_s1_s2_s3 = vec![0.0, 0.4, 0.5];
+
+        // Assert 't' column
+        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(t_array, &expected_t_values, "t");
+
+        // Assert the capacity factor column for 'pv1,s1,s2,s3'
+        let column_pv1_s1_s2_s3 = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(column_pv1_s1_s2_s3, &expected_pv1_s1_s2_s3, "pv1,s1,s2,s3");
+    }
+
 
     #[test]
     fn test_groups_to_arrow() {
