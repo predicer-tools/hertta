@@ -1832,19 +1832,8 @@ pub fn market_balance_price_to_arrow(input_data: &InputData) -> Result<RecordBat
         check_timestamps_match(temporals_t, &market.down_price.ts_data)?;
     }
 
-    // Collect all timestamps and initialize columns
-    let mut columns: HashMap<String, Vec<f64>> = HashMap::new();
-    let mut unique_timestamps: HashSet<String> = HashSet::new();
-
-    for market in input_data.markets.values().filter(|m| m.m_type == "energy") {
-        for data in [&market.up_price, &market.down_price].iter() {
-            for ts_data in &data.ts_data {
-                for (timestamp, _) in &ts_data.series {
-                    unique_timestamps.insert(timestamp.clone());
-                }
-            }
-        }
-    }
+    // Collect all timestamps and initialize columns using BTreeMap to ensure order
+    let mut columns: BTreeMap<String, Vec<f64>> = BTreeMap::new();
 
     let sorted_timestamps: Vec<String> = temporals_t.clone();
 
@@ -1877,22 +1866,15 @@ pub fn market_balance_price_to_arrow(input_data: &InputData) -> Result<RecordBat
         }
     }
 
-    // Sort columns by scenario to ensure order: first all s1, then s2, then s3, etc.
-    let mut column_names: Vec<String> = columns.keys().cloned().collect();
-    column_names.sort_by(|a, b| {
-        let a_parts: Vec<&str> = a.split(',').collect();
-        let b_parts: Vec<&str> = b.split(',').collect();
-        a_parts[2].cmp(&b_parts[2]).then_with(|| a_parts[0].cmp(&b_parts[0]))
-    });
-
     // Prepare the schema and arrays
     let mut fields = vec![Field::new("t", DataType::Utf8, false)];
     let timestamp_array: ArrayRef = Arc::new(StringArray::from(sorted_timestamps));
     let mut arrays = vec![timestamp_array];
 
-    for name in column_names {
+    // Add columns in BTreeMap order (already sorted)
+    for (name, data) in columns {
         fields.push(Field::new(&name, DataType::Float64, true));
-        let array: ArrayRef = Arc::new(Float64Array::from(columns.get(&name).unwrap().clone()));
+        let array: ArrayRef = Arc::new(Float64Array::from(data));
         arrays.push(array);
     }
 
@@ -2410,6 +2392,54 @@ mod tests {
             "delay",
         );
     }
+
+    
+    #[test]
+    fn test_groups_to_arrow() {
+        let input_data = load_test_data();
+
+        // Print all groups in the BTreeMap
+        for (group_name, group) in &input_data.groups {
+            println!("Group Name: {}", group_name);
+            println!("Group: {:?}", group);
+        }
+
+        // Convert groups to Arrow RecordBatch
+        let record_batch = groups_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
+        // Print the RecordBatch for debugging
+        let batches = vec![record_batch.clone()];
+        print_batches(&batches);
+
+        // Expected result DataFrame
+        let expected_types = vec![
+            "node", "process", "process", "process"
+        ];
+        let expected_entities = vec![
+            "elc", "ngchp", "hp1", "p2x1"
+        ];
+        let expected_group_names = vec![
+            "elc_res", "p1", "p1", "p1"
+        ];
+
+        // Helper function to assert string column values
+        fn assert_string_column(array: &StringArray, expected_values: &[&str], column_name: &str) {
+            for (i, expected) in expected_values.iter().enumerate() {
+                assert_eq!(array.value(i), *expected, "Mismatch at row {}, column '{}'", i, column_name);
+            }
+        }
+
+        // Assert columns
+        let types_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(types_array, &expected_types, "type");
+
+        let entities_array = record_batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(entities_array, &expected_entities, "entity");
+
+        let group_names_array = record_batch.column(2).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(group_names_array, &expected_group_names, "group");
+    }
+
 
     #[test]
     fn test_process_topos_to_arrow() {
@@ -3259,53 +3289,59 @@ mod tests {
         assert_float64_column(npe_s3_array, &expected_npe_s3, "npe,s3");
     }
     
-
-
     #[test]
-    fn test_groups_to_arrow() {
-        let input_data = load_test_data();
-
-        // Print all groups in the BTreeMap
-        for (group_name, group) in &input_data.groups {
-            println!("Group Name: {}", group_name);
-            println!("Group: {:?}", group);
-        }
-
-        // Convert groups to Arrow RecordBatch
-        let record_batch = groups_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-
+    fn test_market_balance_price_to_arrow() {
+        let input_data = load_test_data(); // Load the test data from the provided JSON file.
+    
+        // Convert market balance price data to Arrow RecordBatch
+        let record_batch = market_balance_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+    
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
         print_batches(&batches);
-
-        // Expected result DataFrame
-        let expected_types = vec![
-            "node", "process", "process", "process"
+    
+        // Expected result DataFrame with columns in BTreeMap lexicographical order
+        let expected_t_values = vec![
+            "2022-04-20T00:00:00+00:00", 
+            "2022-04-20T01:00:00+00:00", 
+            "2022-04-20T02:00:00+00:00"
         ];
-        let expected_entities = vec![
-            "elc", "ngchp", "hp1", "p2x1"
-        ];
-        let expected_group_names = vec![
-            "elc_res", "p1", "p1", "p1"
-        ];
-
-        // Helper function to assert string column values
-        fn assert_string_column(array: &StringArray, expected_values: &[&str], column_name: &str) {
-            for (i, expected) in expected_values.iter().enumerate() {
-                assert_eq!(array.value(i), *expected, "Mismatch at row {}, column '{}'", i, column_name);
-            }
-        }
-
-        // Assert columns
-        let types_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-        assert_string_column(types_array, &expected_types, "type");
-
-        let entities_array = record_batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
-        assert_string_column(entities_array, &expected_entities, "entity");
-
-        let group_names_array = record_batch.column(2).as_any().downcast_ref::<StringArray>().unwrap();
-        assert_string_column(group_names_array, &expected_group_names, "group");
-    }
+        let expected_npe_dw_s1 = vec![43.2, 54.0, 52.2];
+        let expected_npe_dw_s2 = vec![43.2, 54.0, 78.3];
+        let expected_npe_dw_s3 = vec![43.2, 54.0, 78.3];
+        let expected_npe_up_s1 = vec![52.8, 66.0, 63.8];
+        let expected_npe_up_s2 = vec![52.8, 66.0, 95.7];
+        let expected_npe_up_s3 = vec![52.8, 66.0, 95.7];
+    
+        // Assert 't' column
+        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(t_array, &expected_t_values, "t");
+    
+        // Assert 'npe,dw,s1' column
+        let npe_dw_s1_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(npe_dw_s1_array, &expected_npe_dw_s1, "npe,dw,s1");
+    
+        // Assert 'npe,dw,s2' column
+        let npe_dw_s2_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(npe_dw_s2_array, &expected_npe_dw_s2, "npe,dw,s2");
+    
+        // Assert 'npe,dw,s3' column
+        let npe_dw_s3_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(npe_dw_s3_array, &expected_npe_dw_s3, "npe,dw,s3");
+    
+        // Assert 'npe,up,s1' column
+        let npe_up_s1_array = record_batch.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(npe_up_s1_array, &expected_npe_up_s1, "npe,up,s1");
+    
+        // Assert 'npe,up,s2' column
+        let npe_up_s2_array = record_batch.column(5).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(npe_up_s2_array, &expected_npe_up_s2, "npe,up,s2");
+    
+        // Assert 'npe,up,s3' column
+        let npe_up_s3_array = record_batch.column(6).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(npe_up_s3_array, &expected_npe_up_s3, "npe,up,s3");
+    }    
+    
 
     #[test]
     fn test_inputdatasetup_to_arrow() {
