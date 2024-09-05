@@ -2869,8 +2869,6 @@ mod tests {
         let probability_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
         assert_float64_column(probability_array, &expected_probabilities, "probability");
     }
-
-
     
     #[test]
     fn test_groups_to_arrow() {
