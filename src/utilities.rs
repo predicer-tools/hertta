@@ -1,13 +1,13 @@
 use crate::input_data;
 
-use std::sync::{Arc};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use arrow::array::{Array, StringArray, Float64Array, Int32Array, ArrayRef};
 
 
 //POISTETTAVA
 
-pub async fn update_all_ts_data(optimization_data: Arc<Mutex<input_data::OptimizationData>>) {
+pub async fn _update_all_ts_data(optimization_data: Arc<Mutex<input_data::OptimizationData>>) {
     let mut data = optimization_data.lock().await;
     if let Some(ref mut model_data) = data.model_data {
         let temporals_t = &model_data.temporals.t;
@@ -228,42 +228,6 @@ pub fn _combine_vectors(vector1: Vec<String>, vector2: Vec<f64>) -> Result<Vec<(
 ///
 pub fn _is_valid_http_header_value(value: &str) -> bool {
     value.is_ascii() && !value.chars().any(|ch| ch.is_control())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /* 
-    #[test]
-    fn test_combine_vectors_success() {
-        let vector1 = vec!["a".to_string(), "b".to_string()];
-        let vector2 = vec![1.0, 2.0];
-
-        assert!(combine_vectors(vector1, vector2).is_ok());
-        assert_eq!(solution_vector, vec![("a".to_string(), 1.0), ("b".to_string(), 2.0)]);
-    }
-    
-
-    #[test]
-    fn test_combine_vectors_different_length() {
-        let vector1 = vec!["a".to_string()];
-        let vector2 = vec![1.0, 2.0];
-
-        assert!(combine_vectors(vector1, vector2).is_err());
-    }
-
-    #[test]
-    fn test_combine_vectors_empty() {
-        let mut solution_vector = Vec::new();
-        let vector1: Vec<String> = Vec::new();
-        let vector2: Vec<f64> = Vec::new();
-
-        assert!(combine_vectors(&mut solution_vector, vector1, vector2).is_ok());
-        assert!(solution_vector.is_empty());
-    }
-
-    */
 }
 
 

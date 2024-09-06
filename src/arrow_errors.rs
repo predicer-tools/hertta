@@ -1,8 +1,5 @@
-use std::fmt::{self};
-use warp::reject::Reject;
-use std::error::Error;
+
 use arrow::error::ArrowError;
-use serde::{Serialize, Deserialize};
 use thiserror::Error;
 use std::io;
 
@@ -36,14 +33,14 @@ pub enum FileReadError {
 }
 
 impl FileReadError {
-    pub fn open_error(err: io::Error) -> Self {
+    pub fn _open_error(err: io::Error) -> Self {
         FileReadError::IoError {
             operation: "open".to_string(),
             source: err,
         }
     }
 
-    pub fn read_error(err: io::Error) -> Self {
+    pub fn _read_error(err: io::Error) -> Self {
         FileReadError::IoError {
             operation: "read".to_string(),
             source: err,

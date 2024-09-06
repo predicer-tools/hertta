@@ -10,38 +10,21 @@ mod arrow_errors;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, AUTHORIZATION};
 use serde_json::json;
 use serde_json;
-use std::num::NonZeroUsize;
-use tokio::task::JoinHandle;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::error::Error;
 use std::process::Command;
-use std::net::TcpStream;
-use serde_json::error::Error as SerdeError;
-use regex::Regex;
-
-use arrow::ipc::writer::StreamWriter;
-use arrow_ipc::reader::StreamReader;
 use arrow::record_batch::RecordBatch;
-use std::io::BufWriter;
 use zmq;
-use std::thread;
-use std::env;
-use std::time;
 use std::process::ExitStatus;
-use serde_json::Value;
-use std::io::{self, Read, Write, BufRead, BufReader};
+use std::io::Read;
 use std::fs::File;
 use serde_json::from_str;
 use arrow::array::{Array, StringArray, Float64Array, Int32Array, ArrayRef};
-use std::sync::{Arc, Mutex as StdMutex};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use warp::Filter;
-use tokio::io::{AsyncBufReadExt, BufReader as AsyncBufReader};
 use chrono::{Timelike, FixedOffset, Utc, Duration as ChronoDuration};
-use std::time::Duration;
-use tokio::time::sleep;
 use input_data::{OptimizationData, InputData};
 
 //use std::time::{SystemTime, UNIX_EPOCH};
@@ -357,7 +340,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let tx_clone = Arc::clone(&tx);
             tokio::spawn(async move {
                 let optimization_data = optimization_data.clone(); // Cloning the data to avoid ownership issues
-                let mut tx = tx_clone.lock().await;
+                let tx = tx_clone.lock().await;
                 if tx.send(optimization_data).await.is_err() {
                     eprintln!("Failed to send optimization data");
                 }

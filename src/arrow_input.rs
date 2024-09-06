@@ -1,21 +1,18 @@
 use crate::arrow_errors;
-use arrow_errors::{DataConversionError, FileReadError};
+use arrow_errors::DataConversionError;
 use crate::input_data::InputData;
 use crate::input_data;
-use crate::errors;
 use arrow::array::{StringArray, Float64Array, Int32Array, Int64Array, BooleanArray, ArrayRef, Array};
-use arrow::{datatypes::{DataType, Field, Schema, SchemaRef}, error::ArrowError, record_batch::RecordBatch};
+use arrow::{datatypes::{DataType, Field, Schema}, error::ArrowError, record_batch::RecordBatch};
 use std::sync::Arc;
 use std::collections::{HashMap, BTreeMap};
 use std::error::Error;
-use std::collections::HashSet;
 use prettytable::{Table, Row, Cell};
 use arrow_ipc::writer::StreamWriter;
-use log::info;
+//use log::info;
 use std::collections::BTreeSet;
-use linked_hash_map::LinkedHashMap;
 
-pub fn print_record_batches(batches: &HashMap<String, RecordBatch>) -> Result<(), Box<dyn Error>> {
+pub fn _print_record_batches(batches: &HashMap<String, RecordBatch>) -> Result<(), Box<dyn Error>> {
     for (name, batch) in batches {
         println!("Batch: {}", name);
 
@@ -652,7 +649,7 @@ pub fn node_diffusion_to_arrow(input_data: &InputData) -> Result<RecordBatch, Ar
     }
 
     // Add the float columns to the RecordBatch
-    for (key, val) in float_columns_data {
+    for (_key, val) in float_columns_data {
         columns.push(Arc::new(Float64Array::from(val)) as ArrayRef);
     }
 
@@ -1606,7 +1603,7 @@ pub fn bid_slots_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowEr
     // Check if bid_slots has data
     let has_bid_slots = !bid_slots.is_empty();
 
-    if (has_bid_slots) {
+    if has_bid_slots {
         // If there are bid_slots, collect the time_steps from each BidSlot
         for bid_slot in bid_slots.values() {
             timestamps.extend(bid_slot.time_steps.clone());
@@ -2086,6 +2083,7 @@ pub fn check_timestamps_match(
     Ok(())
 }
 
+/* 
 #[derive(Debug)]
 pub struct DataFrame {
     schema: SchemaRef,
@@ -2146,6 +2144,7 @@ impl DataFrame {
         }
     }
 }
+*/
 
 #[cfg(test)]
 mod test_logger {

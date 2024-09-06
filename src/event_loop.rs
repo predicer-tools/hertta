@@ -4,19 +4,16 @@ use crate::utilities;
 
 
 use tokio::time::{self, Duration};
-use tokio::sync::{Mutex};
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::Mutex;
+use tokio::sync::mpsc;
 use std::error::Error;
 use std::sync::Arc;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use crate::arrow_input;
 use arrow::ipc::reader::StreamReader;
-use arrow::record_batch::RecordBatch;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::time::sleep;
 use tokio::task::JoinHandle;
-use async_std::task;
 use chrono::{DateTime, Utc};
 use crate::input_data::OptimizationData;
 use zmq::Context;
@@ -148,7 +145,7 @@ pub async fn optimization_task(mut zmq_rx: mpsc::Receiver<OptimizationData>) {
                                         // Wait for acknowledgment from the client
                                         let ack_result = responder.recv_string(receive_flags);
                                         match ack_result {
-                                            Ok(ack) => {
+                                            Ok(_ack) => {
                                                 println!("Received acknowledgment for batch: {}", key);
                                             }
                                             Err(e) => {
@@ -645,8 +642,7 @@ async fn fetch_electricity_prices(start_time: String, end_time: String, country:
 }
 
 pub fn create_and_update_elec_price_data(optimization_data: &mut OptimizationData, price_series: &BTreeMap<String, f64>) {
-    if let Some(time_data) = &optimization_data.time_data {
-        let series = &time_data.series;
+    if let Some(_time_data) = &optimization_data.time_data {
 
         // Generating modified TimeSeriesData for original, up, and down price scenarios
         let original_ts_data = Some(create_modified_price_series_data(&price_series, 1.0)); // No modification for the original

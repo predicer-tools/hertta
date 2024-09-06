@@ -196,7 +196,7 @@ function main()
         println("Key: $key")
         println(df)
     end
-    """
+    
     
     input_data = Predicer.compile_input_data(system_data, timeseries_data, temporals)
     mc, input_data = Predicer.generate_model(input_data)
@@ -233,7 +233,7 @@ function main()
         ZMQ.close(push_socket)
     end
 
-    """
+    
 
     # Send Quit command to the server
     ZMQ.send(socket, "Quit")

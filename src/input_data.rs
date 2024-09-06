@@ -1,8 +1,7 @@
 
-use crate::errors;
+//use crate::errors;
 use crate::utilities;
 
-use std::collections::HashMap;
 use serde::{self, Serialize, Deserialize, Deserializer, Serializer};
 use chrono::{DateTime, FixedOffset};
 use std::collections::BTreeMap;
@@ -323,7 +322,7 @@ impl TimeSeriesData {
 
 // Implement a function to create the TimeSeries
 impl TimeSeries {
-    fn new(scenario: String, series: BTreeMap<String, f64>) -> TimeSeries {
+    fn _new(scenario: String, series: BTreeMap<String, f64>) -> TimeSeries {
         TimeSeries { scenario, series }
     }
 }
@@ -345,7 +344,7 @@ unsafe impl Send for DataTable {}
 unsafe impl Sync for DataTable {}
 
 impl DataTable {
-    pub fn from_record_batch(batch: Arc<RecordBatch>) -> Self {
+    pub fn _from_record_batch(batch: Arc<RecordBatch>) -> Self {
         let columns = batch
             .schema()
             .fields()
