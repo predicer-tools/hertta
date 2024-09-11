@@ -616,8 +616,6 @@ async fn fetch_electricity_prices(start_time: String, end_time: String, country:
 
     // Fetch the response
     let response = client.get(&url).header("accept", "application/json").send().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
-
-    // Attempt to print the raw response text for debugging before parsing
     let response_text = response.text().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
     // Deserialize the response text into a HashMap
@@ -631,10 +629,14 @@ async fn fetch_electricity_prices(start_time: String, end_time: String, country:
     let mut series = BTreeMap::new();
     for entry in country_data {
         if let (Some(&timestamp), Some(&price)) = (entry.get("timestamp"), entry.get("price")) {
-            let timestamp_str = DateTime::<Utc>::from_utc(chrono::NaiveDateTime::from_timestamp(timestamp as i64, 0), Utc)
-                .format("%Y-%m-%dT%H:00:00Z")
-                .to_string();
-            series.insert(timestamp_str, price * 1.0); // Convert from EUR/MWh to cents/kWh if needed
+            if let Some(datetime) = DateTime::<Utc>::from_timestamp(timestamp as i64, 0) {
+                let timestamp_str = datetime
+                    .format("%Y-%m-%dT%H:00:00Z")
+                    .to_string();
+                series.insert(timestamp_str, price * 1.0); // Convert from EUR/MWh to cents/kWh if needed
+            } else {
+                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid timestamp")));
+            }
         }
     }
 

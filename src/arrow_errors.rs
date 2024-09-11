@@ -1,7 +1,6 @@
 
 use arrow::error::ArrowError;
 use thiserror::Error;
-use std::io;
 
 #[derive(Error, Debug)]
 pub enum DataConversionError {
@@ -19,31 +18,3 @@ pub enum DataConversionError {
     _EmptyOrDefaultInput,
 }
 
-#[derive(Error, Debug)]
-pub enum FileReadError {
-    #[error("File operation error during {operation}: {source}")]
-    IoError {
-        operation: String,
-        #[source]
-        source: io::Error,
-    },
-
-    #[error("error parsing the file: {0}")]
-    Parse(#[from] serde_yaml::Error),
-}
-
-impl FileReadError {
-    pub fn _open_error(err: io::Error) -> Self {
-        FileReadError::IoError {
-            operation: "open".to_string(),
-            source: err,
-        }
-    }
-
-    pub fn _read_error(err: io::Error) -> Self {
-        FileReadError::IoError {
-            operation: "read".to_string(),
-            source: err,
-        }
-    }
-}

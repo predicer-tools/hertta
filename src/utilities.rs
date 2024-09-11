@@ -69,9 +69,7 @@ pub async fn _update_all_ts_data(optimization_data: Arc<Mutex<input_data::Optimi
 }
 
 
-//PIDETÄÄN
-
-pub fn column_value_to_string(column: &ArrayRef, row_index: usize) -> String {
+pub fn _column_value_to_string(column: &ArrayRef, row_index: usize) -> String {
     if column.is_null(row_index) {
         return "NULL".to_string();
     }

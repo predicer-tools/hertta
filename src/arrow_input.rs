@@ -1387,7 +1387,6 @@ pub fn risk_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> 
     Ok(record_batch)
 }
 
-//NOT WORKING
 pub fn processes_cap_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     println!("processes cap");
 
@@ -1396,7 +1395,7 @@ pub fn processes_cap_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
 
     let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
     let mut columns: Vec<ArrayRef> = vec![];
-    let mut column_data: HashMap<String, Vec<Option<f64>>> = HashMap::new();
+    let mut column_data: BTreeMap<String, Vec<Option<f64>>> = BTreeMap::new();  // Changed to BTreeMap
 
     let mut has_ts_data = false;
 
@@ -1411,6 +1410,11 @@ pub fn processes_cap_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
         check_timestamps_match(&temporals.t, &process.eff_ts.ts_data)?;
 
         for topology in &process.topos {
+            // Only proceed if there is time series data for this topology
+            if topology.cap_ts.ts_data.is_empty() {
+                continue;
+            }
+
             let flow = if topology.sink == *process_name {
                 &topology.source
             } else if topology.source == *process_name {
@@ -1419,7 +1423,7 @@ pub fn processes_cap_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
                 continue;
             };
 
-            for time_series in &process.eff_ts.ts_data {
+            for time_series in &topology.cap_ts.ts_data {
                 let column_name = format!("{},{},{}", process_name, flow, time_series.scenario);
                 fields.push(Field::new(&column_name, DataType::Float64, true));
 
@@ -1443,7 +1447,7 @@ pub fn processes_cap_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
         return RecordBatch::try_new(schema, columns);
     }
 
-    // Create Arrow columns from the collected data
+    // Create Arrow columns from the collected data, preserving order
     for data in column_data.values() {
         columns.push(Arc::new(Float64Array::from(data.clone())) as ArrayRef);
     }
@@ -2083,89 +2087,11 @@ pub fn check_timestamps_match(
     Ok(())
 }
 
-/* 
-#[derive(Debug)]
-pub struct DataFrame {
-    schema: SchemaRef,
-    columns: HashMap<String, ArrayRef>,
-}
-
-impl DataFrame {
-    pub fn new(batch: &RecordBatch) -> Self {
-        let schema = batch.schema();
-        let mut columns = HashMap::new();
-        for i in 0..batch.num_columns() {
-            let field = schema.field(i);
-            columns.insert(field.name().clone(), batch.column(i).clone());
-        }
-        DataFrame {
-            schema,
-            columns,
-        }
-    }
-
-    pub fn print(&self) {
-        println!("Schema: {:?}", self.schema);
-        for (name, array) in &self.columns {
-            println!("Column: {}", name);
-            match array.data_type() {
-                arrow::datatypes::DataType::Float64 => {
-                    let arr = array.as_any().downcast_ref::<Float64Array>().unwrap();
-                    for i in 0..arr.len() {
-                        println!("  {}", arr.value(i));
-                    }
-                }
-                arrow::datatypes::DataType::Utf8 => {
-                    let arr = array.as_any().downcast_ref::<StringArray>().unwrap();
-                    for i in 0..arr.len() {
-                        println!("  {}", arr.value(i));
-                    }
-                }
-                arrow::datatypes::DataType::Int32 => {
-                    let arr = array.as_any().downcast_ref::<Int32Array>().unwrap();
-                    for i in 0..arr.len() {
-                        println!("  {}", arr.value(i));
-                    }
-                }
-                arrow::datatypes::DataType::Int64 => {
-                    let arr = array.as_any().downcast_ref::<Int64Array>().unwrap();
-                    for i in 0..arr.len() {
-                        println!("  {}", arr.value(i));
-                    }
-                }
-                arrow::datatypes::DataType::Boolean => {
-                    let arr = array.as_any().downcast_ref::<BooleanArray>().unwrap();
-                    for i in 0..arr.len() {
-                        println!("  {}", arr.value(i));
-                    }
-                }
-                _ => println!("Unsupported data type"),
-            }
-        }
-    }
-}
-*/
-
-#[cfg(test)]
-mod test_logger {
-    use std::sync::Once;
-    use env_logger;
-
-    static INIT: Once = Once::new();
-
-    pub fn init() {
-        INIT.call_once(|| {
-            env_logger::builder().is_test(true).try_init().ok();
-        });
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use arrow::array::{Array, Int32Array, StringArray, Float64Array};
     use arrow::record_batch::RecordBatch;
-    use serde_json::from_reader;
     use std::fs::File;
     use std::io::BufReader;
     use std::path::PathBuf;
@@ -2986,44 +2912,44 @@ mod tests {
         assert_float64_column(value_array, &expected_values, "value");
     }
 
-    //STILL PROBLEMS
     #[test]
     fn test_processes_cap_to_arrow() {
         let input_data = load_test_data(); // Load the test data from the provided JSON file.
-    
+        
         // Convert processes cap data to Arrow RecordBatch
         let record_batch = processes_cap_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-    
+        
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
         print_batches(&batches);
-    
+        
         // Expected result DataFrame
         let expected_t = vec![
             "2022-04-20T00:00:00+00:00",
             "2022-04-20T01:00:00+00:00",
             "2022-04-20T02:00:00+00:00",
         ];
-        let expected_hp1_elc_s1 = vec![5.0, 4.28571, 4.28571];
-        let expected_hp1_elc_s2 = vec![5.0, 4.28571, 4.28571];
-        let expected_hp1_elc_s3 = vec![5.0, 4.28571, 4.28571];
+        
+        let expected_hp1_elc_s1 = vec![5.0, 4.285714285714286, 4.285714285714286];
+        let expected_hp1_elc_s2 = vec![5.0, 4.285714285714286, 4.285714285714286];
+        let expected_hp1_elc_s3 = vec![5.0, 4.28571428571429, 4.28571428571429];
     
         // Assert 't' column
         let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
         assert_string_column(t_array, &expected_t, "t");
-    
+        
         // Assert 'hp1,elc,s1' column
         let hp1_elc_s1_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
         assert_float64_column(hp1_elc_s1_array, &expected_hp1_elc_s1, "hp1,elc,s1");
-    
+        
         // Assert 'hp1,elc,s2' column
         let hp1_elc_s2_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
         assert_float64_column(hp1_elc_s2_array, &expected_hp1_elc_s2, "hp1,elc,s2");
-    
+        
         // Assert 'hp1,elc,s3' column
         let hp1_elc_s3_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
         assert_float64_column(hp1_elc_s3_array, &expected_hp1_elc_s3, "hp1,elc,s3");
-    }
+    }    
 
     #[test]
     fn test_gen_constraints_to_arrow() {
@@ -3211,30 +3137,6 @@ mod tests {
         assert_float64_column(column_pv1_s1_s2_s3, &expected_pv1_s1_s2_s3, "pv1,s1,s2,s3");
     }
 
-    //ONGELMA
-    #[test]
-    fn test_market_fixed_to_arrow() {
-        let input_data = load_test_data(); // Load the test data from the provided JSON file.
-
-        // Convert market fixed data to Arrow RecordBatch
-        let record_batch = market_fixed_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-
-        // Print the RecordBatch for debugging
-        let batches = vec![record_batch.clone()];
-        print_batches(&batches);
-
-        // Expected result DataFrame
-        let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00", 
-            "2022-04-20T01:00:00+00:00", 
-            "2022-04-20T02:00:00+00:00"
-        ];
-
-        // Assert 't' column
-        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-        assert_string_column(t_array, &expected_t_values, "t");
-    }
-
     #[test]
     fn test_market_price_to_arrow() {
         let input_data = load_test_data(); // Load the test data from the provided JSON file.
@@ -3288,6 +3190,75 @@ mod tests {
         assert_float64_column(npe_s3_array, &expected_npe_s3, "npe,s3");
     }
     
+    #[test]
+    fn test_nodes_commodity_price_to_arrow() {
+        let input_data = load_test_data(); // Load the test data from the provided JSON file.
+
+        // Convert nodes commodity price data to Arrow RecordBatch
+        let record_batch = nodes_commodity_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
+        // Print the RecordBatch for debugging
+        let batches = vec![record_batch.clone()];
+        print_batches(&batches);
+
+        // Expected result DataFrame
+        let expected_t_values = vec![
+            "2022-04-20T00:00:00+00:00", 
+            "2022-04-20T01:00:00+00:00", 
+            "2022-04-20T02:00:00+00:00"
+        ];
+        let expected_ng_all = vec![12.0, 12.0, 12.0];
+
+        // Assert 't' column
+        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(t_array, &expected_t_values, "t");
+
+        // Assert 'ng,ALL' column
+        let ng_all_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(ng_all_array, &expected_ng_all, "ng,ALL");
+    }
+
+    #[test]
+    fn test_processes_eff_to_arrow() {
+        let input_data = load_test_data(); // Load the test data from the provided JSON file.
+
+        // Convert process efficiency data to Arrow RecordBatch
+        let record_batch = processes_eff_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
+        // Print the RecordBatch for debugging
+        let batches = vec![record_batch.clone()];
+        print_batches(&batches);
+
+        // Expected result DataFrame
+        let expected_t_values = vec![
+            "2022-04-20T00:00:00+00:00", 
+            "2022-04-20T01:00:00+00:00", 
+            "2022-04-20T02:00:00+00:00"
+        ];
+        let expected_hp1_s1 = vec![3.0, 3.5, 3.5];
+        let expected_hp1_s2 = vec![3.0, 3.5, 3.5];
+        let expected_hp1_s3 = vec![3.0, 3.5, 3.5];
+
+        // Assert 't' column
+        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_string_column(t_array, &expected_t_values, "t");
+
+        // Assert 'hp1,s1' column
+        let hp1_s1_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(hp1_s1_array, &expected_hp1_s1, "hp1,s1");
+
+        // Assert 'hp1,s2' column
+        let hp1_s2_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(hp1_s2_array, &expected_hp1_s2, "hp1,s2");
+
+        // Assert 'hp1,s3' column
+        let hp1_s3_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_float64_column(hp1_s3_array, &expected_hp1_s3, "hp1,s3");
+    }
+
+    
+    //TÄHÄN TEST_MARKET_FIXED_TO_ARROW KUNHAN SAADAAN DATAA
+
     #[test]
     fn test_market_balance_price_to_arrow() {
         let input_data = load_test_data(); // Load the test data from the provided JSON file.

@@ -357,7 +357,7 @@ impl DataTable {
         for row_index in 0..batch.num_rows() {
             let mut row = Vec::new();
             for column in batch.columns() {
-                let value = utilities::column_value_to_string(column, row_index);
+                let value = utilities::_column_value_to_string(column, row_index);
                 row.push(value);
             }
             data.push(row);

@@ -211,6 +211,7 @@ function main()
         
         # Print dataframe for inspection
         println("DataFrame for type $type:")
+        println(df)
         
         # Serialize dataframe to Arrow buffer
         buffer = IOBuffer()

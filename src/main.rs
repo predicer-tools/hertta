@@ -14,18 +14,16 @@ use reqwest::Client;
 use std::collections::HashMap;
 use std::error::Error;
 use std::process::Command;
-use arrow::record_batch::RecordBatch;
 use zmq;
 use std::process::ExitStatus;
 use std::io::Read;
 use std::fs::File;
 use serde_json::from_str;
-use arrow::array::{Array, StringArray, Float64Array, Int32Array, ArrayRef};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use warp::Filter;
 use chrono::{Timelike, FixedOffset, Utc, Duration as ChronoDuration};
-use input_data::{OptimizationData, InputData};
+use input_data::{OptimizationData, InputData, DataTable};
 
 //use std::time::{SystemTime, UNIX_EPOCH};
 //use tokio::join;
@@ -192,60 +190,6 @@ pub fn print_data_table(data_table: &DataTable) {
             print!("{:<20}", cell);
         }
         println!();
-    }
-}
-
-
-#[derive(Debug)]
-pub struct DataTable {
-    pub columns: Vec<String>,
-    pub data: Vec<Vec<String>>,
-}
-
-impl DataTable {
-    pub fn from_record_batch(batch: &RecordBatch) -> Self {
-        let columns = batch
-            .schema()
-            .fields()
-            .iter()
-            .map(|field| field.name().clone())
-            .collect::<Vec<_>>();
-
-        let mut data = Vec::new();
-
-        for row_index in 0..batch.num_rows() {
-            let mut row = Vec::new();
-            for column in batch.columns() {
-                let value = column_value_to_string(column, row_index);
-                row.push(value);
-            }
-            data.push(row);
-        }
-
-        DataTable { columns, data }
-    }
-}
-
-
-pub fn column_value_to_string(column: &ArrayRef, row_index: usize) -> String {
-    if column.is_null(row_index) {
-        return "NULL".to_string();
-    }
-
-    match column.data_type() {
-        arrow::datatypes::DataType::Utf8 => {
-            let array = column.as_any().downcast_ref::<StringArray>().unwrap();
-            array.value(row_index).to_string()
-        }
-        arrow::datatypes::DataType::Float64 => {
-            let array = column.as_any().downcast_ref::<Float64Array>().unwrap();
-            array.value(row_index).to_string()
-        }
-        arrow::datatypes::DataType::Int32 => {
-            let array = column.as_any().downcast_ref::<Int32Array>().unwrap();
-            array.value(row_index).to_string()
-        }
-        _ => "Unsupported type".to_string(),
     }
 }
 
