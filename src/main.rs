@@ -140,16 +140,6 @@ pub fn find_available_port() -> u16 {
     listener.local_addr().unwrap().port()
 }
 
-// Function to start the Julia process locally
-pub fn start_julia_local() -> Result<ExitStatus, std::io::Error> {
-    let push_port = find_available_port();
-    std::env::set_var("PUSH_PORT", push_port.to_string());
-
-    let mut julia_command = Command::new("C:\\Users\\enessi\\AppData\\Local\\Microsoft\\WindowsApps\\julia.exe");
-    julia_command.arg("--project=C:\\users\\enessi\\Documents\\hertta-kaikki\\hertta-addon\\hertta");
-    julia_command.arg("C:\\users\\enessi\\Documents\\hertta-kaikki\\hertta-addon\\hertta\\src\\Pr_ArrowConnection.jl");
-    julia_command.status()  // Ensure this line returns the status
-}
 /* 
 pub fn receive_data(endpoint: &str, zmq_context: &zmq::Context, data_store: &Arc<Mutex<Vec<DataTable>>>) -> Result<(), Box<dyn Error>> {
     let receiver = zmq_context.socket(zmq::PULL)?;
