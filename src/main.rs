@@ -272,7 +272,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 input_data_batch: None,
             };
 
-            println!("Created OptimizationData: {:?}", optimization_data);
+            //println!("Created OptimizationData: {:?}", optimization_data);
 
             let (tx, rx) = mpsc::channel::<OptimizationData>(32);
             let tx = Arc::new(Mutex::new(tx));

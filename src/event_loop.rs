@@ -209,7 +209,7 @@ pub async fn data_conversion_task(
         let mut updated_data = optimization_data_arc.lock().await;
 
         // Print the updated data for debugging
-        println!("Updated OptimizationData: {:?}", *updated_data);
+        //println!("Updated OptimizationData: {:?}", *updated_data);
 
         if let Some(model_data) = &updated_data.model_data {
             match arrow_input::create_and_serialize_record_batches(model_data) {
