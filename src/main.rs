@@ -6,6 +6,8 @@ mod input_data;
 mod utilities;
 
 use chrono::{Duration as ChronoDuration, FixedOffset, Timelike, Utc};
+use clap::Parser;
+use hertta::settings::{make_settings, make_settings_file_path, map_from_environment_variables};
 use input_data::{DataTable, InputData, OptimizationData};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Client;
@@ -14,19 +16,36 @@ use serde_json::from_str;
 use serde_json::json;
 use std::collections::HashMap;
 use std::error::Error;
-use std::fs::File;
-use std::io::Read;
+use std::fs::{create_dir_all, File};
+use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::process::Command;
-use std::process::ExitStatus;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use warp::Filter;
 use zmq;
 
-//use std::time::{SystemTime, UNIX_EPOCH};
-//use tokio::join;
-//use warp::reject::Reject;
-//use chrono::{Utc, Duration as ChronoDuration, TimeZone, Timelike};
+#[derive(Parser)]
+#[command(version, about, long_about = None)]
+struct CommandLineArgs {
+    #[arg(long, help = "write settings file and exit")]
+    write_settings: bool,
+}
+
+fn write_default_settings_to_file(settings_file_path: &PathBuf) -> Result<(), Box<dyn Error>> {
+    match settings_file_path.parent() {
+        Some(settings_dir) => create_dir_all(settings_dir)?,
+        None => return Err("settings file should have a parent directory".into()),
+    };
+    let mut default_settings = make_settings(&map_from_environment_variables(), &PathBuf::new())?;
+    if default_settings.julia_exec.is_none() {
+        default_settings.julia_exec = Some(String::new());
+    }
+    let serialized_settings = toml::to_string_pretty(&default_settings)?;
+    let mut settings_file = File::create(settings_file_path)?;
+    settings_file.write_all(&serialized_settings.into_bytes())?;
+    Ok(())
+}
 
 /// This function is used to make post request to Home Assistant in the Hertta development phase
 ///
@@ -223,6 +242,13 @@ pub fn run_python_script() -> Result<(), Box<dyn Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let args = CommandLineArgs::parse();
+    if args.write_settings {
+        let settings_file_path = make_settings_file_path();
+        write_default_settings_to_file(&settings_file_path)?;
+        println!("Settings written to {}", settings_file_path.display());
+        return Ok(());
+    }
     // Define a route with query parameters for optimization
     let optimize_route = warp::path("optimize")
         .and(warp::post())

@@ -14,6 +14,14 @@ pub struct Settings {
     pub julia_project: String,
 }
 
+pub fn map_from_environment_variables() -> HashMap<String, String> {
+    let mut map = HashMap::<String, String>::new();
+    for (key, value) in env::vars() {
+        map.insert(key, value);
+    }
+    map
+}
+
 pub fn make_settings_file_path() -> PathBuf {
     directories::ProjectDirs::from("", "", "Hertta")
         .expect("system should have a home directory")
