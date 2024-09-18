@@ -1,9 +1,8 @@
 use crate::input_data;
 
+use arrow::array::{Array, ArrayRef, Float64Array, Int32Array, StringArray};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use arrow::array::{Array, StringArray, Float64Array, Int32Array, ArrayRef};
-
 
 //POISTETTAVA
 
@@ -11,7 +10,8 @@ pub async fn _update_all_ts_data(optimization_data: Arc<Mutex<input_data::Optimi
     let mut data = optimization_data.lock().await;
     if let Some(ref mut model_data) = data.model_data {
         let temporals_t = &model_data.temporals.t;
-        let default_ts_data = input_data::TimeSeriesData::from_temporals(temporals_t, "default_scenario".to_string());
+        let default_ts_data =
+            input_data::TimeSeriesData::from_temporals(temporals_t, "default_scenario".to_string());
         println!("Default TS Data: {:?}", default_ts_data);
 
         for process in model_data.processes.values_mut() {
@@ -68,7 +68,6 @@ pub async fn _update_all_ts_data(optimization_data: Arc<Mutex<input_data::Optimi
     }
 }
 
-
 pub fn _column_value_to_string(column: &ArrayRef, row_index: usize) -> String {
     if column.is_null(row_index) {
         return "NULL".to_string();
@@ -115,7 +114,9 @@ pub fn check_series(ts_data: &input_data::TimeSeries, temporals_t: &[String], co
     }
 }
 
-pub async fn check_ts_data_against_temporals(optimization_data: Arc<Mutex<input_data::OptimizationData>>) {
+pub async fn check_ts_data_against_temporals(
+    optimization_data: Arc<Mutex<input_data::OptimizationData>>,
+) {
     let data = optimization_data.lock().await;
     if let Some(model_data) = &data.model_data {
         let temporals_t = &model_data.temporals.t;
@@ -145,7 +146,14 @@ pub async fn check_ts_data_against_temporals(optimization_data: Arc<Mutex<input_
 
         for node_diffusion in &model_data.node_diffusion {
             for ts_data in &node_diffusion.coefficient.ts_data {
-                check_series(&ts_data, temporals_t, &format!("diffusion {}-{}", node_diffusion.node1, node_diffusion.node2));
+                check_series(
+                    &ts_data,
+                    temporals_t,
+                    &format!(
+                        "diffusion {}-{}",
+                        node_diffusion.node1, node_diffusion.node2
+                    ),
+                );
             }
         }
 
@@ -191,7 +199,7 @@ pub fn _print_tuple_vector(v: &Vec<(String, f64)>) {
 /// # Arguments
 ///
 /// - `solution_vector`: A mutable reference to the vector that will store the combined tuples.
-///   This vector is cleared at the beginning of the function to ensure it only contains the 
+///   This vector is cleared at the beginning of the function to ensure it only contains the
 ///   combined results.
 /// - `vector1`: A vector of `String` elements, each representing the first element of the tuple.
 /// - `vector2`: A vector of `f64` elements, each representing the second element of the tuple.
@@ -200,16 +208,19 @@ pub fn _print_tuple_vector(v: &Vec<(String, f64)>) {
 ///
 /// Returns an `Err` with a string message if `vector1` and `vector2` have different lengths.
 ///
-pub fn _combine_vectors(vector1: Vec<String>, vector2: Vec<f64>) -> Result<Vec<(String, f64)>, String> {
+pub fn _combine_vectors(
+    vector1: Vec<String>,
+    vector2: Vec<f64>,
+) -> Result<Vec<(String, f64)>, String> {
     if vector1.len() != vector2.len() {
         return Err("Vectors have different lengths".to_string());
     }
 
-    let combined_vector: Vec<(String, f64)> = vector1.into_iter().zip(vector2.into_iter()).collect();
+    let combined_vector: Vec<(String, f64)> =
+        vector1.into_iter().zip(vector2.into_iter()).collect();
 
     Ok(combined_vector)
 }
-
 
 /// Checks if a string is a valid HTTP header value.
 ///
@@ -227,5 +238,3 @@ pub fn _combine_vectors(vector1: Vec<String>, vector2: Vec<f64>) -> Result<Vec<(
 pub fn _is_valid_http_header_value(value: &str) -> bool {
     value.is_ascii() && !value.chars().any(|ch| ch.is_control())
 }
-
-

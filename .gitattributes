@@ -1,3 +1,6 @@
+*.jl text
+*.py text
 *.rs text
 *.toml rext
-*.lock text
+*.yaml text
+Cargo.lock text eol=lf

@@ -1,23 +1,20 @@
-
 use crate::input_data;
 use crate::utilities;
 
-
-use tokio::time::{self, Duration};
-use tokio::sync::Mutex;
-use tokio::sync::mpsc;
-use std::error::Error;
-use std::sync::Arc;
+use crate::arrow_input;
+use crate::input_data::OptimizationData;
+use arrow::ipc::reader::StreamReader;
+use chrono::{DateTime, Utc};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use crate::arrow_input;
-use arrow::ipc::reader::StreamReader;
-use tokio::time::sleep;
+use std::error::Error;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use chrono::{DateTime, Utc};
-use crate::input_data::OptimizationData;
+use tokio::time::sleep;
+use tokio::time::{self, Duration};
 use zmq::Context;
-
 
 pub async fn event_loop(mut rx: mpsc::Receiver<input_data::OptimizationData>) {
     let (tx_weather, rx_weather) = mpsc::channel::<OptimizationData>(32);
@@ -78,11 +75,11 @@ pub async fn event_loop(mut rx: mpsc::Receiver<input_data::OptimizationData>) {
     });
 }
 
-use std::process::ExitStatus;
-use std::process::Command;
-use tokio::net::TcpListener;
 use std::env;
 use std::io;
+use std::process::Command;
+use std::process::ExitStatus;
+use tokio::net::TcpListener;
 
 pub async fn find_available_port() -> Result<u16, io::Error> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -106,10 +103,8 @@ pub async fn run_julia_process() -> Result<ExitStatus, io::Error> {
     start_julia_local().await
 }
 
-
 use std::thread;
 pub async fn optimization_task(mut zmq_rx: mpsc::Receiver<OptimizationData>) {
-
     let zmq_context = zmq::Context::new();
     let responder = zmq_context.socket(zmq::REP).unwrap();
     assert!(responder.bind("tcp://*:5555").is_ok());
@@ -133,7 +128,7 @@ pub async fn optimization_task(mut zmq_rx: mpsc::Receiver<OptimizationData>) {
 
                             if let Some(data) = zmq_rx.recv().await {
                                 if let Some(batches) = data.input_data_batch {
-                                                            // Send all serialized batches
+                                    // Send all serialized batches
                                     for (key, buffer) in batches {
                                         println!("Sending batch: {}", key);
                                         if let Err(e) = responder.send(buffer, send_flags) {
@@ -146,10 +141,16 @@ pub async fn optimization_task(mut zmq_rx: mpsc::Receiver<OptimizationData>) {
                                         let ack_result = responder.recv_string(receive_flags);
                                         match ack_result {
                                             Ok(_ack) => {
-                                                println!("Received acknowledgment for batch: {}", key);
+                                                println!(
+                                                    "Received acknowledgment for batch: {}",
+                                                    key
+                                                );
                                             }
                                             Err(e) => {
-                                                eprintln!("Failed to receive acknowledgment: {:?}", e);
+                                                eprintln!(
+                                                    "Failed to receive acknowledgment: {:?}",
+                                                    e
+                                                );
                                                 is_running = false;
                                                 break;
                                             }
@@ -164,11 +165,15 @@ pub async fn optimization_task(mut zmq_rx: mpsc::Receiver<OptimizationData>) {
                                 }
                             }
                         } else if command.starts_with("Take this!") {
-                            let endpoint = command.strip_prefix("Take this! ").expect("cannot decipher endpoint");
-                            responder.send("ready to receive", send_flags).expect("failed to confirm readiness for input");
+                            let endpoint = command
+                                .strip_prefix("Take this! ")
+                                .expect("cannot decipher endpoint");
+                            responder
+                                .send("ready to receive", send_flags)
+                                .expect("failed to confirm readiness for input");
                             //receive_data(endpoint, &zmq_context);
                             if let Err(e) = receive_data(endpoint, &zmq_context, &data_store) {
-                            eprintln!("Failed to receive data: {:?}", e);
+                                eprintln!("Failed to receive data: {:?}", e);
                             }
                         } else if command == "Quit" {
                             println!("Received request to quit");
@@ -186,13 +191,11 @@ pub async fn optimization_task(mut zmq_rx: mpsc::Receiver<OptimizationData>) {
             }
         }
     }
-
 }
-
 
 pub async fn data_conversion_task(
     mut rx: mpsc::Receiver<OptimizationData>,
-    tx: mpsc::Sender<OptimizationData>
+    tx: mpsc::Sender<OptimizationData>,
 ) {
     while let Some(optimization_data) = rx.recv().await {
         let optimization_data_arc = Arc::new(Mutex::new(optimization_data.clone()));
@@ -229,18 +232,23 @@ pub async fn data_conversion_task(
     }
 }
 
-pub fn receive_data(endpoint: &str, zmq_context: &zmq::Context, _data_store: &Arc<Mutex<Vec<input_data::DataTable>>>) -> Result<(), Box<dyn Error>> {
+pub fn receive_data(
+    endpoint: &str,
+    zmq_context: &zmq::Context,
+    _data_store: &Arc<Mutex<Vec<input_data::DataTable>>>,
+) -> Result<(), Box<dyn Error>> {
     let receiver = zmq_context.socket(zmq::PULL)?;
     receiver.connect(endpoint)?;
     let flags = 0;
 
     let pull_result = receiver.recv_bytes(flags)?;
-    let reader = StreamReader::try_new(pull_result.as_slice(), None).expect("Failed to construct Arrow reader");
+    let reader = StreamReader::try_new(pull_result.as_slice(), None)
+        .expect("Failed to construct Arrow reader");
 
     for record_batch_result in reader {
         let _record_batch = record_batch_result.expect("Failed to read record batch");
         //let data_table = input_data::DataTable::from_record_batch(&record_batch);
-        
+
         //let mut data_store = data_store.lock().unwrap();
         //data_store.push(data_table);
     }
@@ -263,9 +271,11 @@ async fn _send_serialized_batches(
     Ok(())
 }
 
-async fn update_model_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mpsc::Sender<OptimizationData>) {
+async fn update_model_data_task(
+    mut rx: mpsc::Receiver<OptimizationData>,
+    tx: mpsc::Sender<OptimizationData>,
+) {
     while let Some(mut optimization_data) = rx.recv().await {
-        
         // Conditionally update temporals to model data
         if optimization_data.fetch_time_data {
             if let Err(e) = update_timeseries(&mut optimization_data) {
@@ -301,8 +311,11 @@ async fn update_model_data_task(mut rx: mpsc::Receiver<OptimizationData>, tx: mp
 
 fn update_timeseries(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
     // Check if time_data is available
-    let time_data = optimization_data.time_data.as_ref().ok_or("Time data is not available.")?;
-    
+    let time_data = optimization_data
+        .time_data
+        .as_ref()
+        .ok_or("Time data is not available.")?;
+
     // Check if model_data is available and update timeseries
     if let Some(model_data) = &mut optimization_data.model_data {
         model_data.temporals.t = time_data.series.clone();
@@ -312,7 +325,7 @@ fn update_timeseries(optimization_data: &mut OptimizationData) -> Result<(), &'s
     }
 }
 
-/* 
+/*
 fn update_gen_constraints(optimization_data: &mut OptimizationData)  -> Result<(), &'static str> {
 
     if let Some(time_data) = &optimization_data.time_data {
@@ -328,7 +341,7 @@ fn update_gen_constraints(optimization_data: &mut OptimizationData)  -> Result<(
 }
     */
 
-/* 
+/*
 pub fn update_interior_air_initial_state(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
     // Check if sensor_data is Some
     if let Some(sensor_data) = &optimization_data.sensor_data {
@@ -361,12 +374,16 @@ pub fn update_interior_air_initial_state(optimization_data: &mut OptimizationDat
 }
 */
 
-
-pub fn update_npe_market_prices(optimization_data: &mut input_data::OptimizationData) -> Result<(), &'static str> {
+pub fn update_npe_market_prices(
+    optimization_data: &mut input_data::OptimizationData,
+) -> Result<(), &'static str> {
     // Check if ElectricityPriceData is Some
     if let Some(electricity_price_data) = &optimization_data.elec_price_data {
         // Ensure model_data is available and contains the "npe" market
-        let model_data = optimization_data.model_data.as_mut().ok_or("Model data is not available.")?;
+        let model_data = optimization_data
+            .model_data
+            .as_mut()
+            .ok_or("Model data is not available.")?;
         let markets = &mut model_data.markets;
 
         // Find the market named "npe"
@@ -392,7 +409,7 @@ pub fn update_npe_market_prices(optimization_data: &mut input_data::Optimization
     }
 }
 
-/* 
+/*
 async fn update_token_in_optimization_data(optimization_data: &mut OptimizationData) -> Result<(), io::Error> {
     let token = fs::read_to_string("config/token.txt")?;
 
@@ -413,7 +430,7 @@ async fn update_token_in_optimization_data(optimization_data: &mut OptimizationD
 }
 */
 
-/* 
+/*
 async fn create_time_data_task(
     mut rx: mpsc::Receiver<OptimizationData>,
     tx: mpsc::Sender<OptimizationData>,
@@ -433,7 +450,7 @@ async fn create_time_data_task(
                             end_time,
                             series,
                         });
-                        
+
                     },
                     Err(e) => {
                         eprintln!("Error generating hourly timestamps: {}", e);
@@ -457,57 +474,60 @@ async fn create_time_data_task(
 }
     */
 
+async fn fetch_weather_data_task(
+    mut rx: mpsc::Receiver<OptimizationData>,
+    tx: mpsc::Sender<OptimizationData>,
+) {
+    loop {
+        tokio::select! {
+            Some(mut optimization_data) = rx.recv() => {
+                if !optimization_data.fetch_weather_data {
+                    // If fetch_weather_data is false, directly forward the data to the next task
+                    if tx.send(optimization_data).await.is_err() {
+                        eprintln!("Failed to send optimization data from weather task without processing");
+                    }
+                    continue;
+                }
 
-    async fn fetch_weather_data_task(
-        mut rx: mpsc::Receiver<OptimizationData>,
-        tx: mpsc::Sender<OptimizationData>
-    ) {
-        loop {
-            tokio::select! {
-                Some(mut optimization_data) = rx.recv() => {
-                    if !optimization_data.fetch_weather_data {
-                        // If fetch_weather_data is false, directly forward the data to the next task
-                        if tx.send(optimization_data).await.is_err() {
-                            eprintln!("Failed to send optimization data from weather task without processing");
-                        }
-                        continue;
+                if let Some(time_data) = &optimization_data.time_data {
+                    let location = optimization_data.location.clone().unwrap_or_default();
+
+                    // Format start_time and end_time to the desired string representation
+                    let start_time_formatted = time_data.start_time.format("%Y-%m-%dT%H:00:00Z").to_string();
+                    let end_time_formatted = time_data.end_time.format("%Y-%m-%dT%H:00:00Z").to_string();
+
+                    // Fetch weather data using the formatted times
+                    match fetch_weather_data(start_time_formatted, end_time_formatted, location).await {
+                        Ok(weather_values) => {
+                            // Create and update WeatherData
+                            create_and_update_weather_data(&mut optimization_data, &weather_values);
+                        },
+                        Err(e) => eprintln!("fetch_weather_data_task: Failed to fetch weather data: {}", e),
                     }
-    
-                    if let Some(time_data) = &optimization_data.time_data {
-                        let location = optimization_data.location.clone().unwrap_or_default();
-    
-                        // Format start_time and end_time to the desired string representation
-                        let start_time_formatted = time_data.start_time.format("%Y-%m-%dT%H:00:00Z").to_string();
-                        let end_time_formatted = time_data.end_time.format("%Y-%m-%dT%H:00:00Z").to_string();
-    
-                        // Fetch weather data using the formatted times
-                        match fetch_weather_data(start_time_formatted, end_time_formatted, location).await {
-                            Ok(weather_values) => {
-                                // Create and update WeatherData
-                                create_and_update_weather_data(&mut optimization_data, &weather_values);
-                            },
-                            Err(e) => eprintln!("fetch_weather_data_task: Failed to fetch weather data: {}", e),
-                        }
-    
-                        // Attempt to send the updated optimization data back
-                        if tx.send(optimization_data).await.is_err() {
-                            eprintln!("Failed to send updated optimization data from weather task");
-                        }
-                    } else {
-                        eprintln!("fetch_weather_data_task: Time data is missing.");
+
+                    // Attempt to send the updated optimization data back
+                    if tx.send(optimization_data).await.is_err() {
+                        eprintln!("Failed to send updated optimization data from weather task");
                     }
-                },
-                else => break,
-            }
+                } else {
+                    eprintln!("fetch_weather_data_task: Time data is missing.");
+                }
+            },
+            else => break,
         }
     }
-    
+}
 
-pub fn update_outside_node_inflow(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
+pub fn update_outside_node_inflow(
+    optimization_data: &mut OptimizationData,
+) -> Result<(), &'static str> {
     // Check if weather_data is Some
     if let Some(weather_data) = &optimization_data.weather_data {
         // Ensure model_data is available and contains the "outside" node
-        let model_data = optimization_data.model_data.as_mut().ok_or("Model data is not available.")?;
+        let model_data = optimization_data
+            .model_data
+            .as_mut()
+            .ok_or("Model data is not available.")?;
         let nodes = &mut model_data.nodes;
 
         // Find the node named "outside"
@@ -556,7 +576,9 @@ pub fn create_and_update_weather_data(optimization_data: &mut OptimizationData, 
 }
 
 // Function to create TimeSeriesData with scenarios "s1" and "s2" using paired series
-fn create_time_series_data_with_scenarios(paired_series: BTreeMap<String, f64>) -> input_data::TimeSeriesData {
+fn create_time_series_data_with_scenarios(
+    paired_series: BTreeMap<String, f64>,
+) -> input_data::TimeSeriesData {
     // Create TimeSeries instances for scenarios "s1" and "s2" with the same series data
     let time_series_s1 = input_data::TimeSeries {
         scenario: "s1".to_string(),
@@ -575,67 +597,107 @@ fn create_time_series_data_with_scenarios(paired_series: BTreeMap<String, f64>) 
 }
 
 pub fn pair_timeseries_with_values(series: &[String], values: &[f64]) -> BTreeMap<String, f64> {
-    series.iter().zip(values.iter())
+    series
+        .iter()
+        .zip(values.iter())
         .map(|(timestamp, &value)| (timestamp.clone(), value))
         .collect()
 }
 
-
-
-async fn fetch_weather_data(start_time: String, end_time: String, place: String) -> Result<Vec<f64>, Box<dyn std::error::Error + Send + Sync>> {
+async fn fetch_weather_data(
+    start_time: String,
+    end_time: String,
+    place: String,
+) -> Result<Vec<f64>, Box<dyn std::error::Error + Send + Sync>> {
     //println!("Fetching weather data for place: {}, start time: {}, end time: {}", place, start_time, end_time);
 
     let client = reqwest::Client::new();
-    let url = format!("http://localhost:8001/get_weather_data?start_time={}&end_time={}&place={}", start_time, end_time, place);
+    let url = format!(
+        "http://localhost:8001/get_weather_data?start_time={}&end_time={}&place={}",
+        start_time, end_time, place
+    );
 
-    let response = client.get(&url).send().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
     //println!("Response status: {}", response.status());
 
-    let response_body = response.text().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+    let response_body = response
+        .text()
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
     //println!("Raw response body: {}", response_body);
 
     match serde_json::from_str::<input_data::WeatherDataResponse>(&response_body) {
         Ok(fmi_data) => {
             //println!("Deserialized Weather Data: {:?}", fmi_data.weather_values);
             // Convert temperatures from Celsius to Kelvin
-            let temperatures_in_kelvin: Vec<f64> = fmi_data.weather_values.iter().map(|&celsius| celsius + 273.15).collect();
+            let temperatures_in_kelvin: Vec<f64> = fmi_data
+                .weather_values
+                .iter()
+                .map(|&celsius| celsius + 273.15)
+                .collect();
             //println!("Temperatures in Kelvin: {:?}", temperatures_in_kelvin);
             Ok(temperatures_in_kelvin)
-        },
+        }
         Err(e) => {
             eprintln!("Error deserializing response body: {}", e);
             Err(Box::new(e))
-        },
+        }
     }
 }
 
-async fn fetch_electricity_prices(start_time: String, end_time: String, country: String) -> Result<BTreeMap<String, f64>, Box<dyn std::error::Error + Send + Sync>> {
+async fn fetch_electricity_prices(
+    start_time: String,
+    end_time: String,
+    country: String,
+) -> Result<BTreeMap<String, f64>, Box<dyn std::error::Error + Send + Sync>> {
     let client = reqwest::Client::new();
-    let url = format!("https://dashboard.elering.ee/api/nps/price?start={}&end={}", start_time, end_time);
+    let url = format!(
+        "https://dashboard.elering.ee/api/nps/price?start={}&end={}",
+        start_time, end_time
+    );
 
     // Fetch the response
-    let response = client.get(&url).header("accept", "application/json").send().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
-    let response_text = response.text().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+    let response = client
+        .get(&url)
+        .header("accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+    let response_text = response
+        .text()
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
     // Deserialize the response text into a HashMap
-    let api_response: HashMap<String, Vec<HashMap<String, f64>>> = serde_json::from_str(&response_text).map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+    let api_response: HashMap<String, Vec<HashMap<String, f64>>> =
+        serde_json::from_str(&response_text)
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
     // Extract only the prices for the specified country
-    let country_data = api_response.get(&country)
-        .ok_or_else(|| Box::new(std::io::Error::new(std::io::ErrorKind::NotFound, "Country data not found")) as Box<dyn std::error::Error + Send + Sync>)?;
+    let country_data = api_response.get(&country).ok_or_else(|| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Country data not found",
+        )) as Box<dyn std::error::Error + Send + Sync>
+    })?;
 
     // Convert the prices to the desired format and collect them in BTreeMap
     let mut series = BTreeMap::new();
     for entry in country_data {
         if let (Some(&timestamp), Some(&price)) = (entry.get("timestamp"), entry.get("price")) {
             if let Some(datetime) = DateTime::<Utc>::from_timestamp(timestamp as i64, 0) {
-                let timestamp_str = datetime
-                    .format("%Y-%m-%dT%H:00:00Z")
-                    .to_string();
+                let timestamp_str = datetime.format("%Y-%m-%dT%H:00:00Z").to_string();
                 series.insert(timestamp_str, price * 1.0); // Convert from EUR/MWh to cents/kWh if needed
             } else {
-                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid timestamp")));
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Invalid timestamp",
+                )));
             }
         }
     }
@@ -643,9 +705,11 @@ async fn fetch_electricity_prices(start_time: String, end_time: String, country:
     Ok(series)
 }
 
-pub fn create_and_update_elec_price_data(optimization_data: &mut OptimizationData, price_series: &BTreeMap<String, f64>) {
+pub fn create_and_update_elec_price_data(
+    optimization_data: &mut OptimizationData,
+    price_series: &BTreeMap<String, f64>,
+) {
     if let Some(_time_data) = &optimization_data.time_data {
-
         // Generating modified TimeSeriesData for original, up, and down price scenarios
         let original_ts_data = Some(create_modified_price_series_data(&price_series, 1.0)); // No modification for the original
         let up_price_ts_data = Some(create_modified_price_series_data(&price_series, 1.1)); // Increase by 10%
@@ -676,7 +740,8 @@ pub fn create_modified_price_series_data(
     multiplier: f64,
 ) -> input_data::TimeSeriesData {
     // Create a modified series by multiplying each price by the multiplier
-    let modified_series: BTreeMap<String, f64> = original_series.iter()
+    let modified_series: BTreeMap<String, f64> = original_series
+        .iter()
         .map(|(timestamp, price)| (timestamp.clone(), price * multiplier))
         .collect();
 
@@ -697,7 +762,7 @@ pub fn create_modified_price_series_data(
     }
 }
 
-/* 
+/*
 async fn fetch_entsoe_electricity_prices(
     start_time: String,
     end_time: String,
@@ -707,7 +772,7 @@ async fn fetch_entsoe_electricity_prices(
     println!("Fetching electricity price data for country: {}, start time: {}, end time: {}", country, start_time, end_time);
 
     let client = Client::new();
-    let url = format!("https://transparency.entsoe.eu/api?documentType=A44&in_Domain={}&out_Domain={}&periodStart={}&periodEnd={}", 
+    let url = format!("https://transparency.entsoe.eu/api?documentType=A44&in_Domain={}&out_Domain={}&periodStart={}&periodEnd={}",
                       country, country, start_time, end_time);
 
     let response = client.get(&url)
@@ -733,11 +798,9 @@ async fn fetch_entsoe_electricity_prices(
 }
     */
 
-
-
 async fn fetch_elec_price_task(
     mut rx: mpsc::Receiver<OptimizationData>,
-    tx: mpsc::Sender<OptimizationData>
+    tx: mpsc::Sender<OptimizationData>,
 ) {
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
 
@@ -753,22 +816,33 @@ async fn fetch_elec_price_task(
                 continue;
             }
 
-            if let (Some(country), Some(time_data)) = (&optimization_data.country, &optimization_data.time_data) {
+            if let (Some(country), Some(time_data)) =
+                (&optimization_data.country, &optimization_data.time_data)
+            {
                 // Convert start_time and end_time to strings in the format "%Y-%m-%dT%H:00:00Z"
-                let start_time_str = time_data.start_time.format("%Y-%m-%dT%H:00:00Z").to_string();
+                let start_time_str = time_data
+                    .start_time
+                    .format("%Y-%m-%dT%H:00:00Z")
+                    .to_string();
                 let end_time_str = time_data.end_time.format("%Y-%m-%dT%H:00:00Z").to_string();
 
-                match fetch_electricity_prices(start_time_str, end_time_str, country.clone()).await {
+                match fetch_electricity_prices(start_time_str, end_time_str, country.clone()).await
+                {
                     Ok(prices) => {
                         //println!("Fetched electricity prices for country '{}': {:?}", country, prices);
                         create_and_update_elec_price_data(&mut optimization_data, &prices);
                         if tx.send(optimization_data).await.is_err() {
-                            eprintln!("Failed to send updated optimization data in electricity prices");
+                            eprintln!(
+                                "Failed to send updated optimization data in electricity prices"
+                            );
                         }
-                    },
+                    }
                     Err(e) => {
-                        eprintln!("Failed to fetch electricity price data for country '{}': {:?}", country, e);
-                    },
+                        eprintln!(
+                            "Failed to fetch electricity price data for country '{}': {:?}",
+                            country, e
+                        );
+                    }
                 }
             } else {
                 if optimization_data.country.is_none() {
@@ -784,4 +858,3 @@ async fn fetch_elec_price_task(
         }
     }
 }
-    

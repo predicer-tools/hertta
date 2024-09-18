@@ -1,4 +1,3 @@
-
 use arrow::error::ArrowError;
 use thiserror::Error;
 
@@ -17,4 +16,3 @@ pub enum DataConversionError {
     #[error("Empty or default input found for crucial parameters")]
     _EmptyOrDefaultInput,
 }
-
