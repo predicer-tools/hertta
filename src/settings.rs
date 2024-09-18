@@ -3,7 +3,7 @@ use config::{Config, ConfigError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const JULIA_EXEC_FIELD: &str = "julia_exec";
 const JULIA_PROJECT_FIELD: &str = "julia_project";
@@ -72,9 +72,34 @@ fn julia_exec_from(path_variable: &str) -> Option<PathBuf> {
     None
 }
 
+pub fn validate_settings(settings: &Settings) -> Result<(), String> {
+    match &settings.julia_exec {
+        Some(path) => {
+            if !Path::new(path).exists() {
+                return Err(format!("invalid path to Julia executable '{}'", path));
+            }
+        }
+        None => {
+            return Err(String::from(
+                "Julia executable not found in PATH or settings file",
+            ))
+        }
+    }
+    if settings.julia_project != "@" {
+        if !Path::new(&settings.julia_project).exists() {
+            return Err(format!(
+                "invalid Julia project '{}'",
+                &settings.julia_project
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error;
     use std::ffi::OsStr;
     use std::fs::File;
     use std::path::Path;
@@ -147,5 +172,41 @@ mod tests {
                 .map(String::from)
         );
         assert_eq!(settings.julia_project, "@");
+    }
+    #[test]
+    fn invalid_julia_exec_is_caught() -> Result<(), Box<dyn Error>> {
+        let settings = Settings {
+            julia_exec: None,
+            julia_project: "@".to_string(),
+        };
+        match validate_settings(&settings) {
+            Ok(..) => Err("expected settings to be invalid".to_string().into()),
+            Err(error) => {
+                assert_eq!(
+                    error,
+                    "Julia executable not found in PATH or settings file".to_string()
+                );
+                Ok(())
+            }
+        }
+    }
+    #[test]
+    fn invalid_julia_project_is_caught() -> Result<(), Box<dyn Error>> {
+        let temp_julia_dir = create_temporary_julia_exe();
+        let julia_path_string = julia_exec_path_from(&temp_julia_dir)
+            .to_str()
+            .expect("path should be convertible to string")
+            .to_string();
+        let settings = Settings {
+            julia_exec: Some(julia_path_string),
+            julia_project: String::new(),
+        };
+        match validate_settings(&settings) {
+            Ok(..) => Err("expected settings to be invalid".to_string().into()),
+            Err(error) => {
+                assert_eq!(error, "invalid Julia project ''".to_string());
+                Ok(())
+            }
+        }
     }
 }
