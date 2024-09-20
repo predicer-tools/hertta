@@ -3,11 +3,11 @@ mod arrow_input;
 mod errors;
 mod event_loop;
 mod input_data;
+mod settings;
 mod utilities;
 
 use chrono::{Duration as ChronoDuration, FixedOffset, Timelike, Utc};
 use clap::Parser;
-use hertta::settings::{make_settings, make_settings_file_path, map_from_environment_variables};
 use input_data::{DataTable, InputData, OptimizationData};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Client;
@@ -37,10 +37,8 @@ fn write_default_settings_to_file(settings_file_path: &PathBuf) -> Result<(), Bo
         Some(settings_dir) => create_dir_all(settings_dir)?,
         None => return Err("settings file should have a parent directory".into()),
     };
-    let mut default_settings = make_settings(&map_from_environment_variables(), &PathBuf::new())?;
-    if default_settings.julia_exec.is_none() {
-        default_settings.julia_exec = Some(String::new());
-    }
+    let default_settings =
+        settings::make_settings(&settings::map_from_environment_variables(), &PathBuf::new())?;
     let serialized_settings = toml::to_string_pretty(&default_settings)?;
     let mut settings_file = File::create(settings_file_path)?;
     settings_file.write_all(&serialized_settings.into_bytes())?;
@@ -244,7 +242,7 @@ pub fn run_python_script() -> Result<(), Box<dyn Error>> {
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = CommandLineArgs::parse();
     if args.write_settings {
-        let settings_file_path = make_settings_file_path();
+        let settings_file_path = settings::make_settings_file_path();
         write_default_settings_to_file(&settings_file_path)?;
         println!("Settings written to {}", settings_file_path.display());
         return Ok(());
@@ -292,13 +290,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     input_data_batch: None,
                 };
 
-                //println!("Created OptimizationData: {:?}", optimization_data);
-
+                let settings = settings::make_settings(
+                    &settings::map_from_environment_variables(),
+                    &settings::make_settings_file_path(),
+                )
+                .expect("failed to make settings");
+                match settings::validate_settings(&settings) {
+                    Ok(..) => (),
+                    Err(error) => panic!("{}", error),
+                };
                 let (tx, rx) = mpsc::channel::<OptimizationData>(32);
                 let tx = Arc::new(Mutex::new(tx));
-
                 tokio::spawn(async move {
-                    event_loop::event_loop(rx).await;
+                    event_loop::event_loop(settings, rx).await;
                 });
 
                 let tx_clone = Arc::clone(&tx);

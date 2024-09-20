@@ -3,15 +3,61 @@ use config::{Config, ConfigError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
+use std::path;
 use std::path::{Path, PathBuf};
 
-const JULIA_EXEC_FIELD: &str = "julia_exec";
-const JULIA_PROJECT_FIELD: &str = "julia_project";
+pub const JULIA_EXEC_FIELD: &str = "julia_exec";
+pub const PREDICER_RUNNER_PROJECT_FIELD: &str = "predicer_runner_project";
+pub const PREDICER_PROJECT_FIELD: &str = "predicer_project";
+pub const JULIA_DEFAULT_PROJECT: &str = "@";
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Settings {
-    pub julia_exec: Option<String>,
-    pub julia_project: String,
+    pub julia_exec: String,
+    pub predicer_runner_project: String,
+    #[serde(default = "default_predicer_project")]
+    pub predicer_project: String,
+    #[serde(skip, default = "default_predicer_runner_script")]
+    pub predicer_runner_script: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            julia_exec: String::new(),
+            predicer_runner_project: JULIA_DEFAULT_PROJECT.to_string(),
+            predicer_project: default_predicer_project(),
+            predicer_runner_script: default_predicer_runner_script(),
+        }
+    }
+}
+
+fn default_predicer_project_path() -> PathBuf {
+    PathBuf::from("Predicer")
+}
+
+fn default_predicer_project() -> String {
+    path_to_string(
+        &path::absolute(default_predicer_project_path())
+            .expect("failed to resolve current directory"),
+    )
+}
+
+fn default_predicer_runner_path() -> PathBuf {
+    ["src", "Pr_ArrowConnection.jl"].iter().collect::<PathBuf>()
+}
+
+fn default_predicer_runner_script() -> String {
+    default_predicer_runner_path()
+        .to_str()
+        .expect("predicer runner script path contains unknown characters")
+        .to_string()
+}
+
+fn path_to_string(path: &PathBuf) -> String {
+    path.to_str()
+        .expect("path should be valid string")
+        .to_string()
 }
 
 pub fn map_from_environment_variables() -> HashMap<String, String> {
@@ -23,7 +69,7 @@ pub fn map_from_environment_variables() -> HashMap<String, String> {
 }
 
 pub fn make_settings_file_path() -> PathBuf {
-    directories::ProjectDirs::from("", "", "Hertta")
+    directories::ProjectDirs::from("", "", "hertta")
         .expect("system should have a home directory")
         .preference_dir()
         .join("settings.toml")
@@ -33,14 +79,19 @@ fn make_config_builder(
     environment_variables: &HashMap<String, String>,
 ) -> ConfigBuilder<DefaultState> {
     let config = Config::builder()
-        .set_default(JULIA_PROJECT_FIELD, "@")
-        .expect("key should be convertible to string");
+        .set_default(PREDICER_RUNNER_PROJECT_FIELD, JULIA_DEFAULT_PROJECT)
+        .expect("failed to add default Julia project to config builder");
     let julia_exec_from_path = environment_variables
         .get("PATH")
-        .and_then(|paths| julia_exec_from(&paths).and_then(|path| path.to_str().map(String::from)));
-    config
+        .map_or_else(String::new, |paths| {
+            julia_exec_from(&paths).map_or_else(String::new, |path| path_to_string(&path))
+        });
+    let config = config
         .set_default(JULIA_EXEC_FIELD, julia_exec_from_path)
-        .expect("key should be convertible to string")
+        .expect("failed to add default Julia executable to config builder");
+    config
+        .set_default(PREDICER_PROJECT_FIELD, default_predicer_project())
+        .expect("failed to add default Predicer project to config builder")
 }
 
 pub fn make_settings(
@@ -52,7 +103,7 @@ pub fn make_settings(
         config::File::new(
             settings_file_path
                 .to_str()
-                .expect("file path should be convertible to string"),
+                .expect("invalid settings file path"),
             config::FileFormat::Toml,
         )
         .required(false),
@@ -73,25 +124,37 @@ fn julia_exec_from(path_variable: &str) -> Option<PathBuf> {
 }
 
 pub fn validate_settings(settings: &Settings) -> Result<(), String> {
-    match &settings.julia_exec {
-        Some(path) => {
-            if !Path::new(path).exists() {
-                return Err(format!("invalid path to Julia executable '{}'", path));
-            }
-        }
-        None => {
-            return Err(String::from(
-                "Julia executable not found in PATH or settings file",
-            ))
-        }
+    if settings.julia_exec.is_empty() {
+        return Err(String::from(
+            "Julia executable not found in PATH or settings file",
+        ));
     }
-    if settings.julia_project != "@" {
-        if !Path::new(&settings.julia_project).exists() {
+    let julia_exec_path = Path::new(&settings.julia_exec);
+    if !julia_exec_path.exists() || !julia_exec_path.is_file() {
+        return Err(format!(
+            "invalid path to Julia executable '{}'",
+            &settings.julia_exec
+        ));
+    }
+    if settings.predicer_runner_project != JULIA_DEFAULT_PROJECT {
+        if !Path::new(&settings.predicer_runner_project).exists() {
             return Err(format!(
-                "invalid Julia project '{}'",
-                &settings.julia_project
+                "invalid Predicer runner project '{}'",
+                &settings.predicer_runner_project
             ));
         }
+    }
+    if !Path::new(&settings.predicer_project).exists() {
+        return Err(format!(
+            "invalid path to Predicer project '{}'",
+            settings.predicer_project
+        ));
+    }
+    if !Path::new(&settings.predicer_runner_script).exists() {
+        return Err(format!(
+            "invalid path to Predicer runner script '{}'",
+            &settings.predicer_runner_script
+        ));
     }
     Ok(())
 }
@@ -103,7 +166,8 @@ mod tests {
     use std::ffi::OsStr;
     use std::fs::File;
     use std::path::Path;
-    use tempfile::{tempdir, TempDir};
+    use tempfile;
+    use tempfile::TempDir;
 
     #[test]
     fn settings_file_name_is_correct() {
@@ -112,7 +176,8 @@ mod tests {
     }
 
     fn create_temporary_julia_exe() -> TempDir {
-        let temp_dir = tempdir().expect("temporary directory creation should be possible");
+        let temp_dir =
+            tempfile::tempdir().expect("temporary directory creation should be possible");
         let julia_exec_path = julia_exec_path_from(&temp_dir);
         File::create(&julia_exec_path).expect("file creation should succeed");
         temp_dir
@@ -151,8 +216,13 @@ mod tests {
     fn default_settings_when_nothing_is_provided() {
         let settings =
             make_settings(&HashMap::new(), &PathBuf::new()).expect("settings should work fine");
-        assert_eq!(settings.julia_exec, None);
-        assert_eq!(settings.julia_project, "@");
+        assert!(settings.julia_exec.is_empty());
+        assert_eq!(settings.predicer_runner_project, JULIA_DEFAULT_PROJECT);
+        assert_eq!(settings.predicer_project, default_predicer_project());
+        assert_eq!(
+            settings.predicer_runner_script,
+            default_predicer_runner_script()
+        );
     }
     #[test]
     fn default_settings_when_julia_is_in_path() {
@@ -167,18 +237,18 @@ mod tests {
             .expect("settings should work fine");
         assert_eq!(
             settings.julia_exec,
-            julia_exec_path_from(&temp_julia_dir)
-                .to_str()
-                .map(String::from)
+            path_to_string(&julia_exec_path_from(&temp_julia_dir))
         );
-        assert_eq!(settings.julia_project, "@");
+        assert_eq!(settings.predicer_runner_project, JULIA_DEFAULT_PROJECT);
+        assert_eq!(settings.predicer_project, default_predicer_project());
+        assert_eq!(
+            settings.predicer_runner_script,
+            default_predicer_runner_script()
+        );
     }
     #[test]
-    fn invalid_julia_exec_is_caught() -> Result<(), Box<dyn Error>> {
-        let settings = Settings {
-            julia_exec: None,
-            julia_project: "@".to_string(),
-        };
+    fn non_existent_julia_exec_is_caught() -> Result<(), Box<dyn Error>> {
+        let settings = Settings::default();
         match validate_settings(&settings) {
             Ok(..) => Err("expected settings to be invalid".to_string().into()),
             Err(error) => {
@@ -191,20 +261,65 @@ mod tests {
         }
     }
     #[test]
-    fn invalid_julia_project_is_caught() -> Result<(), Box<dyn Error>> {
-        let temp_julia_dir = create_temporary_julia_exe();
-        let julia_path_string = julia_exec_path_from(&temp_julia_dir)
-            .to_str()
-            .expect("path should be convertible to string")
-            .to_string();
-        let settings = Settings {
-            julia_exec: Some(julia_path_string),
-            julia_project: String::new(),
-        };
+    fn julia_exec_pointint_to_directory_is_caught() -> Result<(), Box<dyn Error>> {
+        let mut settings = Settings::default();
+        let temp_dir = tempfile::tempdir().expect("failed to create temporary directory");
+        settings.julia_exec = path_to_string(&PathBuf::from(temp_dir.path()));
         match validate_settings(&settings) {
             Ok(..) => Err("expected settings to be invalid".to_string().into()),
             Err(error) => {
-                assert_eq!(error, "invalid Julia project ''".to_string());
+                assert_eq!(
+                    error,
+                    format!("invalid path to Julia executable '{}'", settings.julia_exec)
+                );
+                Ok(())
+            }
+        }
+    }
+    #[test]
+    fn invalid_predicer_runner_project_is_caught() -> Result<(), Box<dyn Error>> {
+        let temp_julia_dir = create_temporary_julia_exe();
+        let julia_path_string = path_to_string(&julia_exec_path_from(&temp_julia_dir));
+        let mut settings = Settings::default();
+        settings.julia_exec = julia_path_string;
+        settings.predicer_runner_project = String::new();
+        match validate_settings(&settings) {
+            Ok(..) => Err("expected settings to be invalid".to_string().into()),
+            Err(error) => {
+                assert_eq!(error, "invalid Predicer runner project ''".to_string());
+                Ok(())
+            }
+        }
+    }
+    #[test]
+    fn invalid_predicer_project_is_caughs() -> Result<(), Box<dyn Error>> {
+        let temp_julia_dir = create_temporary_julia_exe();
+        let julia_path_string = path_to_string(&julia_exec_path_from(&temp_julia_dir));
+        let mut settings = Settings::default();
+        settings.julia_exec = julia_path_string;
+        settings.predicer_project = String::new();
+        match validate_settings(&settings) {
+            Ok(..) => Err("expected settings to be invalid".to_string().into()),
+            Err(error) => {
+                assert_eq!(error, "invalid path to Predicer project ''".to_string());
+                Ok(())
+            }
+        }
+    }
+    #[test]
+    fn invalid_predicer_runner_script_is_caught() -> Result<(), Box<dyn Error>> {
+        let temp_julia_dir = create_temporary_julia_exe();
+        let julia_path_string = path_to_string(&julia_exec_path_from(&temp_julia_dir));
+        let mut settings = Settings::default();
+        settings.julia_exec = julia_path_string;
+        settings.predicer_runner_script = String::new();
+        match validate_settings(&settings) {
+            Ok(..) => Err("expected settings to be invalid".to_string().into()),
+            Err(error) => {
+                assert_eq!(
+                    error,
+                    "invalid path to Predicer runner script ''".to_string()
+                );
                 Ok(())
             }
         }

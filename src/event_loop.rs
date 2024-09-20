@@ -1,8 +1,8 @@
-use crate::input_data;
-use crate::utilities;
-
 use crate::arrow_input;
+use crate::input_data;
 use crate::input_data::OptimizationData;
+use crate::settings::Settings;
+use crate::utilities;
 use arrow::ipc::reader::StreamReader;
 use chrono::{DateTime, Utc};
 use std::collections::BTreeMap;
@@ -16,7 +16,7 @@ use tokio::time::sleep;
 use tokio::time::{self, Duration};
 use zmq::Context;
 
-pub async fn event_loop(mut rx: mpsc::Receiver<input_data::OptimizationData>) {
+pub async fn event_loop(settings: Settings, mut rx: mpsc::Receiver<input_data::OptimizationData>) {
     let (tx_weather, rx_weather) = mpsc::channel::<OptimizationData>(32);
     let (tx_elec, rx_elec) = mpsc::channel::<OptimizationData>(32);
     let (tx_update, rx_update) = mpsc::channel::<OptimizationData>(32);
@@ -60,9 +60,15 @@ pub async fn event_loop(mut rx: mpsc::Receiver<input_data::OptimizationData>) {
         }
     });
 
-    // Spawn the Julia process task
     tokio::spawn(async move {
-        match run_julia_process().await {
+        match start_julia_local(
+            &settings.julia_exec,
+            &settings.predicer_runner_project,
+            &settings.predicer_project,
+            &settings.predicer_runner_script,
+        )
+        .await
+        {
             Ok(status) => {
                 if !status.success() {
                     eprintln!("Julia process failed with status: {:?}", status);
@@ -87,20 +93,25 @@ pub async fn find_available_port() -> Result<u16, io::Error> {
     Ok(port)
 }
 
-pub async fn start_julia_local() -> Result<ExitStatus, io::Error> {
+pub async fn start_julia_local(
+    julia_exec: &String,
+    predicer_runner_project: &String,
+    predicer_project: &String,
+    predicer_runner_script: &String,
+) -> Result<ExitStatus, io::Error> {
     let push_port = find_available_port().await?;
     env::set_var("PUSH_PORT", push_port.to_string());
-
-    let status = Command::new("C:\\Users\\enessi\\AppData\\Local\\Microsoft\\WindowsApps\\julia.exe")
-        .arg("--project=C:\\users\\enessi\\Documents\\hertta-kaikki\\hertta-addon\\hertta")
-        .arg("C:\\users\\enessi\\Documents\\hertta-kaikki\\hertta-addon\\hertta\\src\\Pr_ArrowConnection.jl")
+    println!("starting Julia from {}", julia_exec);
+    println!("using Julia project {}", predicer_runner_project);
+    println!("using Predicer in {}", predicer_project);
+    println!("Predicer script in {}", predicer_runner_script);
+    let status = Command::new(julia_exec)
+        .arg(format!("--project={}", predicer_runner_project))
+        .arg(predicer_runner_script)
+        .arg(predicer_runner_project)
+        .arg("predicer project")
         .status()?;
-
     Ok(status)
-}
-
-pub async fn run_julia_process() -> Result<ExitStatus, io::Error> {
-    start_julia_local().await
 }
 
 use std::thread;
