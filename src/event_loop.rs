@@ -102,14 +102,13 @@ pub async fn start_julia_local(
     let push_port = find_available_port().await?;
     env::set_var("PUSH_PORT", push_port.to_string());
     println!("starting Julia from {}", julia_exec);
-    println!("using Julia project {}", predicer_runner_project);
+    println!("Predicer runner script in {}", predicer_runner_script);
+    println!("using project in {}", predicer_runner_project);
     println!("using Predicer in {}", predicer_project);
-    println!("Predicer script in {}", predicer_runner_script);
     let status = Command::new(julia_exec)
         .arg(format!("--project={}", predicer_runner_project))
         .arg(predicer_runner_script)
-        .arg(predicer_runner_project)
-        .arg("predicer project")
+        .arg(predicer_project)
         .status()?;
     Ok(status)
 }

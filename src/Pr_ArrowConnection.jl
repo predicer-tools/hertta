@@ -1,9 +1,7 @@
 import Pkg
 
-script_project_path = ARGS[1]
-predicer_project_path = ARGS[2]
+predicer_project_path = ARGS[1]
 
-Pkg.activate(script_project_path)
 Pkg.instantiate()
 Pkg.add("Arrow")
 Pkg.add("ZMQ")

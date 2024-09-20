@@ -16,9 +16,10 @@ use serde_json::from_str;
 use serde_json::json;
 use std::collections::HashMap;
 use std::error::Error;
-use std::fs::{create_dir_all, File};
+use std::fs;
+use std::fs::File;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
@@ -34,7 +35,7 @@ struct CommandLineArgs {
 
 fn write_default_settings_to_file(settings_file_path: &PathBuf) -> Result<(), Box<dyn Error>> {
     match settings_file_path.parent() {
-        Some(settings_dir) => create_dir_all(settings_dir)?,
+        Some(settings_dir) => fs::create_dir_all(settings_dir)?,
         None => return Err("settings file should have a parent directory".into()),
     };
     let default_settings =
@@ -247,6 +248,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         println!("Settings written to {}", settings_file_path.display());
         return Ok(());
     }
+    let settings = settings::make_settings(
+        &settings::map_from_environment_variables(),
+        &settings::make_settings_file_path(),
+    )?;
+    if !settings.predicer_runner_project.is_empty() {
+        fs::create_dir_all(Path::new(&settings.predicer_runner_project))?;
+    }
+    settings::validate_settings(&settings)?;
     // Define a route with query parameters for optimization
     let optimize_route = warp::path("optimize")
         .and(warp::post())
