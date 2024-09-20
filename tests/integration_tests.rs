@@ -1,4 +1,4 @@
-/* 
+/*
 
 use hertta::weather_data::get_weather_data;
 

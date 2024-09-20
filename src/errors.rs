@@ -1,13 +1,13 @@
+use arrow::error::ArrowError;
+use serde::{Deserialize, Serialize};
+use std::error::Error;
 use std::fmt::{self};
 use warp::reject::Reject;
-use std::error::Error;
-use arrow::error::ArrowError;
-use serde::{Serialize, Deserialize};
 
 /// A custom error type for representing errors from Julia.
 ///
 /// This struct is used to encapsulate errors that occur within the Julia environment when
-/// interfacing with Rust. 
+/// interfacing with Rust.
 ///
 #[derive(Debug)]
 pub struct JuliaError(pub String);
@@ -23,8 +23,8 @@ impl Reject for JuliaError {}
 
 /// Represents errors that occur during the control and execution of various processes.
 ///
-/// This struct encapsulates errors specific to process control and execution, providing a 
-/// consistent way to handle such errors in Rust code. It is useful for signaling issues that 
+/// This struct encapsulates errors specific to process control and execution, providing a
+/// consistent way to handle such errors in Rust code. It is useful for signaling issues that
 /// arise during operations like controlling the devices etc.
 ///
 
@@ -117,7 +117,9 @@ pub struct TaskError {
 
 impl TaskError {
     pub fn _new(msg: &str) -> TaskError {
-        TaskError { message: msg.to_string() }
+        TaskError {
+            message: msg.to_string(),
+        }
     }
 }
 

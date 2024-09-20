@@ -1,14 +1,13 @@
-
 //use crate::errors;
 use crate::utilities;
 
-use serde::{self, Serialize, Deserialize, Deserializer, Serializer};
-use chrono::{DateTime, FixedOffset};
-use std::collections::BTreeMap;
 use arrow::record_batch::RecordBatch;
-use std::sync::Arc;
+use chrono::{DateTime, FixedOffset};
 use serde::de::{self, MapAccess, Visitor};
+use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct OptimizationData {
@@ -52,8 +51,7 @@ pub struct Temporals {
     pub dtf: f64,
     pub is_variable_dt: bool,
     pub variable_dt: Vec<(String, f64)>,
-    pub ts_format: String, 
-    
+    pub ts_format: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -99,7 +97,7 @@ pub struct Process {
     pub cf: TimeSeriesData,
     pub eff_ts: TimeSeriesData,
     pub eff_ops: Vec<String>,
-    pub eff_fun: Vec<(f64,f64)>
+    pub eff_fun: Vec<(f64, f64)>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -133,7 +131,7 @@ pub struct NodeHistory {
 pub struct Market {
     pub name: String,
     pub m_type: String,
-    pub node: String, 
+    pub node: String,
     pub processgroup: String,
     pub direction: String,
     pub realisation: TimeSeriesData,
@@ -186,7 +184,9 @@ where
         type Value = BTreeMap<(String, String), f64>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a map with string keys formatted as tuple (String, String) and float values")
+            formatter.write_str(
+                "a map with string keys formatted as tuple (String, String) and float values",
+            )
         }
 
         fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
@@ -214,7 +214,9 @@ where
     deserializer.deserialize_map(PricesVisitor)
 }
 
-fn deserialize_market_price_allocation<'de, D>(deserializer: D) -> Result<BTreeMap<(String, String), (String, String)>, D::Error>
+fn deserialize_market_price_allocation<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<(String, String), (String, String)>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -240,7 +242,9 @@ where
                     .map(String::from)
                     .collect::<Vec<_>>();
                 if key.len() != 2 || value.len() != 2 {
-                    return Err(de::Error::custom("invalid key format for market_price_allocation"));
+                    return Err(de::Error::custom(
+                        "invalid key format for market_price_allocation",
+                    ));
                 }
                 map.insert(
                     (key[0].clone(), key[1].clone()),
@@ -309,16 +313,12 @@ impl TimeSeriesData {
         for time in temporals_t {
             series.insert(time.clone(), 1.0);
         }
-        let time_series = TimeSeries {
-            scenario,
-            series,
-        };
+        let time_series = TimeSeries { scenario, series };
         TimeSeriesData {
             ts_data: vec![time_series],
         }
     }
 }
-
 
 // Implement a function to create the TimeSeries
 impl TimeSeries {
@@ -379,7 +379,6 @@ pub struct WeatherDataResponse {
     pub weather_values: Vec<f64>,
 }
 
-
 // Serialization function for DateTime<FixedOffset>
 fn serialize<S>(date: &DateTime<FixedOffset>, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -395,7 +394,8 @@ where
     D: Deserializer<'de>,
 {
     let s = String::deserialize(deserializer)?;
-    s.parse::<DateTime<FixedOffset>>().map_err(serde::de::Error::custom)
+    s.parse::<DateTime<FixedOffset>>()
+        .map_err(serde::de::Error::custom)
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

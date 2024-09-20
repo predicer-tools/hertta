@@ -1,14 +1,20 @@
 use crate::arrow_errors;
-use arrow_errors::DataConversionError;
-use crate::input_data::InputData;
 use crate::input_data;
-use arrow::array::{StringArray, Float64Array, Int32Array, Int64Array, BooleanArray, ArrayRef, Array};
-use arrow::{datatypes::{DataType, Field, Schema}, error::ArrowError, record_batch::RecordBatch};
-use std::sync::Arc;
-use std::collections::{HashMap, BTreeMap};
-use std::error::Error;
-use prettytable::{Table, Row, Cell};
+use crate::input_data::InputData;
+use arrow::array::{
+    Array, ArrayRef, BooleanArray, Float64Array, Int32Array, Int64Array, StringArray,
+};
+use arrow::{
+    datatypes::{DataType, Field, Schema},
+    error::ArrowError,
+    record_batch::RecordBatch,
+};
+use arrow_errors::DataConversionError;
 use arrow_ipc::writer::StreamWriter;
+use prettytable::{Cell, Row, Table};
+use std::collections::{BTreeMap, HashMap};
+use std::error::Error;
+use std::sync::Arc;
 //use log::info;
 use std::collections::BTreeSet;
 
@@ -17,8 +23,11 @@ pub fn _print_record_batches(batches: &HashMap<String, RecordBatch>) -> Result<(
         println!("Batch: {}", name);
 
         let mut table = Table::new();
-        
-        let header: Vec<Cell> = batch.schema().fields().iter()
+
+        let header: Vec<Cell> = batch
+            .schema()
+            .fields()
+            .iter()
             .map(|field| Cell::new(&field.name()))
             .collect();
         table.add_row(Row::new(header));
@@ -27,15 +36,15 @@ pub fn _print_record_batches(batches: &HashMap<String, RecordBatch>) -> Result<(
 
         for row_idx in 0..num_rows {
             let mut row = Vec::new();
-            
+
             for col_idx in 0..batch.num_columns() {
                 let column = batch.column(col_idx);
-                
+
                 let cell_value = match column.data_type() {
                     DataType::Utf8 => {
                         let string_array = column.as_any().downcast_ref::<StringArray>().unwrap();
                         string_array.value(row_idx).to_string()
-                    },
+                    }
                     DataType::Float64 => {
                         let float_array = column.as_any().downcast_ref::<Float64Array>().unwrap();
                         if float_array.is_null(row_idx) {
@@ -43,7 +52,7 @@ pub fn _print_record_batches(batches: &HashMap<String, RecordBatch>) -> Result<(
                         } else {
                             float_array.value(row_idx).to_string()
                         }
-                    },
+                    }
                     DataType::Boolean => {
                         let bool_array = column.as_any().downcast_ref::<BooleanArray>().unwrap();
                         if bool_array.is_null(row_idx) {
@@ -51,8 +60,8 @@ pub fn _print_record_batches(batches: &HashMap<String, RecordBatch>) -> Result<(
                         } else {
                             bool_array.value(row_idx).to_string()
                         }
-                    },
-                    _ => "Unsupported data type".to_string()
+                    }
+                    _ => "Unsupported data type".to_string(),
                 };
 
                 row.push(Cell::new(&cell_value));
@@ -87,41 +96,82 @@ pub fn create_record_batches(
     input_data: &InputData,
 ) -> Result<Vec<(String, RecordBatch)>, Box<dyn std::error::Error + Send + Sync>> {
     let mut batches = Vec::new();
-    
+
     batches.push(("temps".to_string(), temps_to_arrow(&input_data)?));
     batches.push(("setup".to_string(), inputdatasetup_to_arrow(&input_data)?));
     batches.push(("nodes".to_string(), nodes_to_arrow(&input_data)?));
     batches.push(("processes".to_string(), processes_to_arrow(&input_data)?));
     batches.push(("groups".to_string(), groups_to_arrow(&input_data)?));
-    batches.push(("process_topology".to_string(), process_topos_to_arrow(&input_data)?));
-    batches.push(("node_history".to_string(), node_histories_to_arrow(&input_data)?));
+    batches.push((
+        "process_topology".to_string(),
+        process_topos_to_arrow(&input_data)?,
+    ));
+    batches.push((
+        "node_history".to_string(),
+        node_histories_to_arrow(&input_data)?,
+    ));
     batches.push(("node_delay".to_string(), node_delays_to_arrow(&input_data)?));
-    batches.push(("node_diffusion".to_string(), node_diffusion_to_arrow(&input_data)?));
-    batches.push(("inflow_blocks".to_string(), inflow_blocks_to_arrow(&input_data)?));
+    batches.push((
+        "node_diffusion".to_string(),
+        node_diffusion_to_arrow(&input_data)?,
+    ));
+    batches.push((
+        "inflow_blocks".to_string(),
+        inflow_blocks_to_arrow(&input_data)?,
+    ));
     batches.push(("markets".to_string(), markets_to_arrow(&input_data)?));
-    batches.push(("reserve_realisation".to_string(), market_realisation_to_arrow(&input_data)?));
-    batches.push(("reserve_activation_price".to_string(), market_reserve_activation_price_to_arrow(&input_data)?));
+    batches.push((
+        "reserve_realisation".to_string(),
+        market_realisation_to_arrow(&input_data)?,
+    ));
+    batches.push((
+        "reserve_activation_price".to_string(),
+        market_reserve_activation_price_to_arrow(&input_data)?,
+    ));
     batches.push(("scenarios".to_string(), scenarios_to_arrow(&input_data)?));
-    batches.push(("efficiencies".to_string(), processes_eff_fun_to_arrow(&input_data)?));
-    batches.push(("reserve_type".to_string(), reserve_type_to_arrow(&input_data)?));
+    batches.push((
+        "efficiencies".to_string(),
+        processes_eff_fun_to_arrow(&input_data)?,
+    ));
+    batches.push((
+        "reserve_type".to_string(),
+        reserve_type_to_arrow(&input_data)?,
+    ));
     batches.push(("risk".to_string(), risk_to_arrow(&input_data)?));
     batches.push(("cap_ts".to_string(), processes_cap_to_arrow(&input_data)?));
-    batches.push(("gen_constraint".to_string(), gen_constraints_to_arrow(&input_data)?));
-    batches.push(("constraints".to_string(), constraints_to_arrow(&input_data)?));
+    batches.push((
+        "gen_constraint".to_string(),
+        gen_constraints_to_arrow(&input_data)?,
+    ));
+    batches.push((
+        "constraints".to_string(),
+        constraints_to_arrow(&input_data)?,
+    ));
     batches.push(("bid_slots".to_string(), bid_slots_to_arrow(&input_data)?));
     batches.push(("cf".to_string(), processes_cf_to_arrow(&input_data)?));
     batches.push(("inflow".to_string(), nodes_inflow_to_arrow(&input_data)?));
-    batches.push(("market_prices".to_string(), market_price_to_arrow(&input_data)?));
-    batches.push(("price".to_string(), nodes_commodity_price_to_arrow(&input_data)?));
+    batches.push((
+        "market_prices".to_string(),
+        market_price_to_arrow(&input_data)?,
+    ));
+    batches.push((
+        "price".to_string(),
+        nodes_commodity_price_to_arrow(&input_data)?,
+    ));
     batches.push(("eff_ts".to_string(), processes_eff_to_arrow(&input_data)?));
     batches.push(("fixed_ts".to_string(), market_fixed_to_arrow(&input_data)?));
-    batches.push(("balance_prices".to_string(), market_balance_price_to_arrow(&input_data)?));
+    batches.push((
+        "balance_prices".to_string(),
+        market_balance_price_to_arrow(&input_data)?,
+    ));
 
     Ok(batches)
 }
 
 // Function to serialize the batch to a buffer
-pub fn serialize_batch_to_buffer(batch: &RecordBatch) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+pub fn serialize_batch_to_buffer(
+    batch: &RecordBatch,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let schema = batch.schema();
     let schema_ref: &Schema = schema.as_ref();
     let mut buffer: Vec<u8> = Vec::new();
@@ -223,7 +273,9 @@ pub fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, Da
 
     // Check for logical errors in input before creating arrays
     if parameters.len() != values.len() {
-        return Err(DataConversionError::InvalidInput("Mismatched parameters and values lengths".to_string()));
+        return Err(DataConversionError::InvalidInput(
+            "Mismatched parameters and values lengths".to_string(),
+        ));
     }
 
     let parameter_array = Arc::new(StringArray::from(parameters)) as ArrayRef;
@@ -322,8 +374,10 @@ pub fn nodes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError>
     let in_maxs_array = Arc::new(Float64Array::from(in_maxs)) as ArrayRef;
     let out_maxs_array = Arc::new(Float64Array::from(out_maxs)) as ArrayRef;
     let initial_states_array = Arc::new(Float64Array::from(initial_states)) as ArrayRef;
-    let state_loss_proportionals_array = Arc::new(Float64Array::from(state_loss_proportionals)) as ArrayRef;
-    let scenario_independent_states_array = Arc::new(BooleanArray::from(scenario_independent_states)) as ArrayRef;
+    let state_loss_proportionals_array =
+        Arc::new(Float64Array::from(state_loss_proportionals)) as ArrayRef;
+    let scenario_independent_states_array =
+        Arc::new(BooleanArray::from(scenario_independent_states)) as ArrayRef;
     let is_temps_array = Arc::new(BooleanArray::from(is_temps)) as ArrayRef;
     let t_e_conversions_array = Arc::new(Float64Array::from(t_e_conversions)) as ArrayRef;
     let residual_values_array = Arc::new(Float64Array::from(residual_values)) as ArrayRef;
@@ -353,7 +407,6 @@ pub fn nodes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError>
 
     Ok(record_batch)
 }
-
 
 pub fn processes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     //println!("processes");
@@ -436,7 +489,8 @@ pub fn processes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowEr
     let max_onlines_array = Arc::new(Float64Array::from(max_onlines)) as ArrayRef;
     let max_offlines_array = Arc::new(Float64Array::from(max_offlines)) as ArrayRef;
     let initial_states_array = Arc::new(BooleanArray::from(initial_states)) as ArrayRef;
-    let scenario_independent_onlines_array = Arc::new(BooleanArray::from(scenario_independent_onlines)) as ArrayRef;
+    let scenario_independent_onlines_array =
+        Arc::new(BooleanArray::from(scenario_independent_onlines)) as ArrayRef;
     let delays_array = Arc::new(BooleanArray::from(delays)) as ArrayRef; // New array for delays
 
     let record_batch = RecordBatch::try_new(
@@ -495,11 +549,7 @@ pub fn groups_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError
 
     let record_batch = RecordBatch::try_new(
         Arc::new(schema),
-        vec![
-            types_array,
-            entities_array,
-            group_names_array,
-        ],
+        vec![types_array, entities_array, group_names_array],
     )?;
 
     Ok(record_batch)
@@ -598,7 +648,6 @@ pub fn process_topos_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
     record_batch
 }
 
-
 pub fn node_diffusion_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     //println!("diffusion");
     let node_diffusions = &input_data.node_diffusion;
@@ -625,7 +674,10 @@ pub fn node_diffusion_to_arrow(input_data: &InputData) -> Result<RecordBatch, Ar
     // Populate the columns from the NodeDiffusion Vec
     for node_diffusion in node_diffusions {
         for ts in &node_diffusion.coefficient.ts_data {
-            let column_name = format!("{},{},{}", node_diffusion.node1, node_diffusion.node2, ts.scenario);
+            let column_name = format!(
+                "{},{},{}",
+                node_diffusion.node1, node_diffusion.node2, ts.scenario
+            );
 
             fields.push(Field::new(&column_name, DataType::Float64, true));
 
@@ -658,7 +710,6 @@ pub fn node_diffusion_to_arrow(input_data: &InputData) -> Result<RecordBatch, Ar
     // Create the RecordBatch using these arrays and the schema
     RecordBatch::try_new(schema, columns)
 }
-
 
 // Function to convert node histories to Arrow RecordBatch
 pub fn node_histories_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
@@ -745,7 +796,6 @@ pub fn node_histories_to_arrow(input_data: &InputData) -> Result<RecordBatch, Ar
     Ok(record_batch)
 }
 
-
 pub fn node_delays_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     //println!("delays");
     let node_delays = &input_data.node_delay;
@@ -771,7 +821,13 @@ pub fn node_delays_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arrow
         // Create the RecordBatch using these arrays and the schema
         return RecordBatch::try_new(
             Arc::new(schema),
-            vec![node1_array, node2_array, delay_array, min_flow_array, max_flow_array],
+            vec![
+                node1_array,
+                node2_array,
+                delay_array,
+                min_flow_array,
+                max_flow_array,
+            ],
         );
     }
 
@@ -801,7 +857,13 @@ pub fn node_delays_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arrow
     // Create the RecordBatch using these arrays and the schema
     RecordBatch::try_new(
         Arc::new(schema),
-        vec![node1_array, node2_array, delay_array, min_flow_array, max_flow_array],
+        vec![
+            node1_array,
+            node2_array,
+            delay_array,
+            min_flow_array,
+            max_flow_array,
+        ],
     )
 }
 
@@ -841,36 +903,49 @@ pub fn inflow_blocks_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
     }
 
     let scenario_names: Vec<String> = scenario_names.keys().cloned().collect(); // Extract scenario names in lexicographical order
-    let common_timestamps = common_timestamps.ok_or_else(|| ArrowError::ComputeError("No timestamps found".to_string()))?;
+    let common_timestamps = common_timestamps
+        .ok_or_else(|| ArrowError::ComputeError("No timestamps found".to_string()))?;
 
     // Create the schema with the `t` column and additional columns based on inflow blocks
     let mut fields: Vec<Field> = vec![Field::new("t", DataType::Int64, false)]; // `t` as running number
 
     for block in inflow_blocks.values() {
         // Add the block name, node (e.g., "b1,dh_sto") column
-        fields.push(Field::new(&format!("{},{}", block.name, block.node), DataType::Utf8, false));
-        
+        fields.push(Field::new(
+            &format!("{},{}", block.name, block.node),
+            DataType::Utf8,
+            false,
+        ));
+
         // Add scenario columns (e.g., "b1,s1", "b1,s2", ...) in lexicographical order
         for scenario in &scenario_names {
-            fields.push(Field::new(&format!("{},{}", block.name, scenario), DataType::Float64, false));
+            fields.push(Field::new(
+                &format!("{},{}", block.name, scenario),
+                DataType::Float64,
+                false,
+            ));
         }
     }
 
     // Running number for the `t` column
-    let t_values: Vec<i64> = (1..=common_timestamps.len() as i64).collect(); 
+    let t_values: Vec<i64> = (1..=common_timestamps.len() as i64).collect();
 
     let mut start_times: BTreeMap<String, Vec<String>> = BTreeMap::new(); // Use BTreeMap to preserve ordering
     let mut scenario_values: BTreeMap<String, BTreeMap<String, Vec<f64>>> = BTreeMap::new(); // Use BTreeMap to preserve ordering
 
     // Initialize data structures for each block and scenario
     for block in inflow_blocks.values() {
-        start_times.entry(block.name.clone()).or_insert_with(Vec::new);
+        start_times
+            .entry(block.name.clone())
+            .or_insert_with(Vec::new);
 
         let mut scenario_map = BTreeMap::new(); // Use BTreeMap for scenarios to preserve order
         for scenario in &scenario_names {
             scenario_map.insert(scenario.clone(), vec![]);
         }
-        scenario_values.entry(block.name.clone()).or_insert(scenario_map);
+        scenario_values
+            .entry(block.name.clone())
+            .or_insert(scenario_map);
     }
 
     // Populate the vectors for each inflow block and its scenarios
@@ -909,9 +984,7 @@ pub fn inflow_blocks_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
     for block in inflow_blocks.values() {
         // Create column for `block.name,block.node` (e.g., "b1,dh_sto")
         let start_times_array: ArrayRef = Arc::new(StringArray::from(
-            start_times
-                .remove(&block.name)
-                .unwrap_or_else(Vec::new),
+            start_times.remove(&block.name).unwrap_or_else(Vec::new),
         ));
         columns.push(start_times_array);
 
@@ -933,7 +1006,6 @@ pub fn inflow_blocks_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
     // Create the RecordBatch using these arrays and the schema
     RecordBatch::try_new(schema, columns)
 }
-
 
 pub fn markets_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     //println!("markets");
@@ -1044,13 +1116,18 @@ pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch
     let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
     for market in &market_names {
         for scenario in &scenario_names {
-            fields.push(Field::new(&format!("{},{}", market, scenario), DataType::Float64, true));
+            fields.push(Field::new(
+                &format!("{},{}", market, scenario),
+                DataType::Float64,
+                true,
+            ));
         }
     }
 
     // Initialize a vector for the timestamps and data columns
     let timestamps: Vec<String> = temporals.t.clone();
-    let mut scenario_values: BTreeMap<String, BTreeMap<String, BTreeMap<String, Option<f64>>>> = BTreeMap::new();
+    let mut scenario_values: BTreeMap<String, BTreeMap<String, BTreeMap<String, Option<f64>>>> =
+        BTreeMap::new();
 
     // Validate timestamps
     for market in markets.values() {
@@ -1058,7 +1135,9 @@ pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch
     }
 
     // Handle the case where there are no realisation data
-    let has_realisation_data = markets.values().any(|market| !market.realisation.ts_data.is_empty());
+    let has_realisation_data = markets
+        .values()
+        .any(|market| !market.realisation.ts_data.is_empty());
     if !has_realisation_data {
         // Initialize scenario values with None
         for market in &market_names {
@@ -1077,7 +1156,8 @@ pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch
         for market in markets.values() {
             for ts in &market.realisation.ts_data {
                 for (timestamp, value) in &ts.series {
-                    let entry = scenario_values.entry(market.name.clone())
+                    let entry = scenario_values
+                        .entry(market.name.clone())
                         .or_insert_with(BTreeMap::new)
                         .entry(ts.scenario.clone())
                         .or_insert_with(BTreeMap::new);
@@ -1089,9 +1169,13 @@ pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch
 
     // Ensure all scenario_values have entries for all timestamps
     for market in &market_names {
-        let market_map = scenario_values.entry(market.clone()).or_insert_with(BTreeMap::new);
+        let market_map = scenario_values
+            .entry(market.clone())
+            .or_insert_with(BTreeMap::new);
         for scenario in &scenario_names {
-            let scenario_map = market_map.entry(scenario.clone()).or_insert_with(BTreeMap::new);
+            let scenario_map = market_map
+                .entry(scenario.clone())
+                .or_insert_with(BTreeMap::new);
             for timestamp in &timestamps {
                 scenario_map.entry(timestamp.clone()).or_insert(None);
             }
@@ -1104,7 +1188,15 @@ pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch
 
     for market in market_names {
         for scenario in &scenario_names {
-            let values = timestamps.iter().map(|timestamp| scenario_values[&market][scenario].get(timestamp).cloned().unwrap_or(None)).collect::<Vec<Option<f64>>>();
+            let values = timestamps
+                .iter()
+                .map(|timestamp| {
+                    scenario_values[&market][scenario]
+                        .get(timestamp)
+                        .cloned()
+                        .unwrap_or(None)
+                })
+                .collect::<Vec<Option<f64>>>();
             columns.push(Arc::new(Float64Array::from(values)) as ArrayRef);
         }
     }
@@ -1116,7 +1208,9 @@ pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch
     RecordBatch::try_new(schema, columns)
 }
 
-pub fn market_reserve_activation_price_to_arrow(input_data: &input_data::InputData) -> Result<RecordBatch, ArrowError> {
+pub fn market_reserve_activation_price_to_arrow(
+    input_data: &input_data::InputData,
+) -> Result<RecordBatch, ArrowError> {
     //println!("market reserve");
     let markets = &input_data.markets;
     let temporals = &input_data.temporals;
@@ -1140,13 +1234,18 @@ pub fn market_reserve_activation_price_to_arrow(input_data: &input_data::InputDa
     let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
     for market in &market_names {
         for scenario in &scenario_names {
-            fields.push(Field::new(&format!("{},{}", market, scenario), DataType::Float64, true));
+            fields.push(Field::new(
+                &format!("{},{}", market, scenario),
+                DataType::Float64,
+                true,
+            ));
         }
     }
 
     // Initialize a vector for the timestamps and data columns
     let timestamps: Vec<String> = temporals.t.clone();
-    let mut scenario_values: BTreeMap<String, BTreeMap<String, BTreeMap<String, Option<f64>>>> = BTreeMap::new();
+    let mut scenario_values: BTreeMap<String, BTreeMap<String, BTreeMap<String, Option<f64>>>> =
+        BTreeMap::new();
 
     // Validate timestamps
     for market in markets.values() {
@@ -1154,7 +1253,9 @@ pub fn market_reserve_activation_price_to_arrow(input_data: &input_data::InputDa
     }
 
     // Handle the case where there are no reserve_activation_price data
-    let has_reserve_activation_price_data = markets.values().any(|market| !market.reserve_activation_price.ts_data.is_empty());
+    let has_reserve_activation_price_data = markets
+        .values()
+        .any(|market| !market.reserve_activation_price.ts_data.is_empty());
     if !has_reserve_activation_price_data {
         // Initialize scenario values with None
         for market in &market_names {
@@ -1173,7 +1274,8 @@ pub fn market_reserve_activation_price_to_arrow(input_data: &input_data::InputDa
         for market in markets.values() {
             for ts in &market.reserve_activation_price.ts_data {
                 for (timestamp, value) in &ts.series {
-                    let entry = scenario_values.entry(market.name.clone())
+                    let entry = scenario_values
+                        .entry(market.name.clone())
                         .or_insert_with(BTreeMap::new)
                         .entry(ts.scenario.clone())
                         .or_insert_with(BTreeMap::new);
@@ -1185,9 +1287,13 @@ pub fn market_reserve_activation_price_to_arrow(input_data: &input_data::InputDa
 
     // Ensure all scenario_values have entries for all timestamps
     for market in &market_names {
-        let market_map = scenario_values.entry(market.clone()).or_insert_with(BTreeMap::new);
+        let market_map = scenario_values
+            .entry(market.clone())
+            .or_insert_with(BTreeMap::new);
         for scenario in &scenario_names {
-            let scenario_map = market_map.entry(scenario.clone()).or_insert_with(BTreeMap::new);
+            let scenario_map = market_map
+                .entry(scenario.clone())
+                .or_insert_with(BTreeMap::new);
             for timestamp in &timestamps {
                 scenario_map.entry(timestamp.clone()).or_insert(None);
             }
@@ -1199,7 +1305,15 @@ pub fn market_reserve_activation_price_to_arrow(input_data: &input_data::InputDa
     let mut columns: Vec<ArrayRef> = vec![timestamps_array];
     for market in &market_names {
         for scenario in &scenario_names {
-            let values = timestamps.iter().map(|timestamp| scenario_values[market][scenario].get(timestamp).cloned().unwrap_or(None)).collect::<Vec<Option<f64>>>();
+            let values = timestamps
+                .iter()
+                .map(|timestamp| {
+                    scenario_values[market][scenario]
+                        .get(timestamp)
+                        .cloned()
+                        .unwrap_or(None)
+                })
+                .collect::<Vec<Option<f64>>>();
             columns.push(Arc::new(Float64Array::from(values)) as ArrayRef);
         }
     }
@@ -1246,10 +1360,8 @@ pub fn scenarios_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowEr
     }
 
     // Create the RecordBatch using these arrays
-    let record_batch = RecordBatch::try_new(
-        Arc::new(schema),
-        vec![names_array, probabilities_array],
-    )?;
+    let record_batch =
+        RecordBatch::try_new(Arc::new(schema), vec![names_array, probabilities_array])?;
 
     Ok(record_batch)
 }
@@ -1259,7 +1371,8 @@ pub fn processes_eff_fun_to_arrow(input_data: &InputData) -> Result<RecordBatch,
     let processes = &input_data.processes;
 
     // Determine the maximum length of eff_fun across all processes that actually have data
-    let max_length = processes.values()
+    let max_length = processes
+        .values()
         .filter(|p| !p.eff_fun.is_empty()) // Only consider processes with actual efficiency data
         .map(|p| p.eff_fun.len())
         .max()
@@ -1339,10 +1452,7 @@ pub fn reserve_type_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
     let ramp_factor_array: ArrayRef = Arc::new(Float64Array::from(ramp_factors));
 
     // Create the RecordBatch using these arrays and the schema
-    RecordBatch::try_new(
-        Arc::new(schema),
-        vec![type_array, ramp_factor_array],
-    )
+    RecordBatch::try_new(Arc::new(schema), vec![type_array, ramp_factor_array])
 }
 
 pub fn risk_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
@@ -1379,10 +1489,7 @@ pub fn risk_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> 
     let value_array: ArrayRef = Arc::new(Float64Array::from(values));
 
     // Create the RecordBatch using these arrays and the schema
-    let record_batch = RecordBatch::try_new(
-        Arc::new(schema),
-        vec![parameter_array, value_array],
-    )?;
+    let record_batch = RecordBatch::try_new(Arc::new(schema), vec![parameter_array, value_array])?;
 
     Ok(record_batch)
 }
@@ -1395,7 +1502,7 @@ pub fn processes_cap_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
 
     let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
     let mut columns: Vec<ArrayRef> = vec![];
-    let mut column_data: BTreeMap<String, Vec<Option<f64>>> = BTreeMap::new();  // Changed to BTreeMap
+    let mut column_data: BTreeMap<String, Vec<Option<f64>>> = BTreeMap::new(); // Changed to BTreeMap
 
     let mut has_ts_data = false;
 
@@ -1427,7 +1534,11 @@ pub fn processes_cap_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
                 let column_name = format!("{},{},{}", process_name, flow, time_series.scenario);
                 fields.push(Field::new(&column_name, DataType::Float64, true));
 
-                let series_data: Vec<Option<f64>> = time_series.series.iter().map(|(_, value)| Some(*value)).collect();
+                let series_data: Vec<Option<f64>> = time_series
+                    .series
+                    .iter()
+                    .map(|(_, value)| Some(*value))
+                    .collect();
 
                 if !series_data.is_empty() {
                     column_data.insert(column_name, series_data);
@@ -1464,7 +1575,7 @@ pub fn gen_constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, A
 
     let temporals = &input_data.temporals;
     let gen_constraints = &input_data.gen_constraints;
-    
+
     let mut fields: Vec<Field> = Vec::new();
     let mut column_data: BTreeMap<String, Vec<Option<f64>>> = BTreeMap::new();
     let timestamps: Vec<Option<String>> = temporals.t.iter().map(|t| Some(t.clone())).collect();
@@ -1476,15 +1587,20 @@ pub fn gen_constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, A
         for ts in &gen_constraint.constant.ts_data {
             let col_name = format!("{},{}", constraint_name, ts.scenario);
             fields.push(Field::new(&col_name, DataType::Float64, true));
-            let series_data: Vec<Option<f64>> = ts.series.iter().map(|(_, value)| Some(*value)).collect();
+            let series_data: Vec<Option<f64>> =
+                ts.series.iter().map(|(_, value)| Some(*value)).collect();
 
             // Check if the series data timestamps match temporals.t
             if ts.series.len() != temporals.t.len() {
-                return Err(ArrowError::ComputeError("Timeseries length mismatch".to_string()));
+                return Err(ArrowError::ComputeError(
+                    "Timeseries length mismatch".to_string(),
+                ));
             }
             for (i, (timestamp, _)) in ts.series.iter().enumerate() {
                 if &temporals.t[i] != timestamp {
-                    return Err(ArrowError::ComputeError("Timeseries mismatch in temporal data".to_string()));
+                    return Err(ArrowError::ComputeError(
+                        "Timeseries mismatch in temporal data".to_string(),
+                    ));
                 }
             }
 
@@ -1503,17 +1619,25 @@ pub fn gen_constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, A
                 } else {
                     format!("{},{}", factor.var_tuple.0, factor.var_tuple.1)
                 };
-                let col_name = format!("{},{},{}", constraint_name, var_tuple_component, ts.scenario);
+                let col_name = format!(
+                    "{},{},{}",
+                    constraint_name, var_tuple_component, ts.scenario
+                );
                 fields.push(Field::new(&col_name, DataType::Float64, true));
-                let series_data: Vec<Option<f64>> = ts.series.iter().map(|(_, value)| Some(*value)).collect();
+                let series_data: Vec<Option<f64>> =
+                    ts.series.iter().map(|(_, value)| Some(*value)).collect();
 
                 // Check if the series data timestamps match temporals.t
                 if ts.series.len() != temporals.t.len() {
-                    return Err(ArrowError::ComputeError("Timeseries length mismatch".to_string()));
+                    return Err(ArrowError::ComputeError(
+                        "Timeseries length mismatch".to_string(),
+                    ));
                 }
                 for (i, (timestamp, _)) in ts.series.iter().enumerate() {
                     if &temporals.t[i] != timestamp {
-                        return Err(ArrowError::ComputeError("Timeseries mismatch in temporal data".to_string()));
+                        return Err(ArrowError::ComputeError(
+                            "Timeseries mismatch in temporal data".to_string(),
+                        ));
                     }
                 }
 
@@ -1534,11 +1658,18 @@ pub fn gen_constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, A
     }
 
     // Create the timestamp column
-    let timestamp_column: ArrayRef = Arc::new(StringArray::from(timestamps.iter().flatten().cloned().collect::<Vec<String>>()));
+    let timestamp_column: ArrayRef = Arc::new(StringArray::from(
+        timestamps
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<String>>(),
+    ));
     columns.push(timestamp_column);
 
     // Create other columns from the collected column_data
-    for field in &fields[1..] { // Skip the timestamp field
+    for field in &fields[1..] {
+        // Skip the timestamp field
         if let Some(col_data) = column_data.remove(field.name()) {
             let col_array = Float64Array::from(col_data);
             columns.push(Arc::new(col_array) as ArrayRef);
@@ -1695,7 +1826,11 @@ pub fn processes_cf_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
     // Validate and collect timestamps, and create fields for each time series
     for process in processes.values() {
         for ts in &process.cf.ts_data {
-            fields.push(Field::new(&format!("{},{}", process.name, ts.scenario), DataType::Float64, true));
+            fields.push(Field::new(
+                &format!("{},{}", process.name, ts.scenario),
+                DataType::Float64,
+                true,
+            ));
         }
     }
 
@@ -1733,7 +1868,8 @@ pub fn market_fixed_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
     let markets = &input_data.markets;
 
     // Gather all timestamps and sort them
-    let mut all_timestamps: Vec<String> = markets.values()
+    let mut all_timestamps: Vec<String> = markets
+        .values()
         .flat_map(|market| market.fixed.iter().map(|(t, _)| t.clone()))
         .collect();
     all_timestamps.sort();
@@ -1761,13 +1897,19 @@ pub fn market_fixed_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
 
     // Create the schema
     let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
-    fields.extend(markets.keys().map(|name| Field::new(name, DataType::Float64, true)));
+    fields.extend(
+        markets
+            .keys()
+            .map(|name| Field::new(name, DataType::Float64, true)),
+    );
 
     // Create the columns
     let timestamp_array: ArrayRef = Arc::new(StringArray::from(all_timestamps));
     let mut columns: Vec<ArrayRef> = vec![timestamp_array];
     for market_name in markets.keys() {
-        let column_data = columns_data.remove(market_name).expect("Market data should be present");
+        let column_data = columns_data
+            .remove(market_name)
+            .expect("Market data should be present");
         let column_array: ArrayRef = Arc::new(Float64Array::from(column_data));
         columns.push(column_array);
     }
@@ -1784,7 +1926,9 @@ pub fn market_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
 
     // Ensure temporals_t is not empty
     if temporals_t.is_empty() {
-        return Err(ArrowError::InvalidArgumentError("Temporals timestamps are empty".to_string()));
+        return Err(ArrowError::InvalidArgumentError(
+            "Temporals timestamps are empty".to_string(),
+        ));
     }
 
     // Check if the timestamps in market price data match temporals_t
@@ -1858,7 +2002,9 @@ pub fn market_balance_price_to_arrow(input_data: &InputData) -> Result<RecordBat
 
     // Ensure temporals_t is not empty
     if temporals_t.is_empty() {
-        return Err(ArrowError::InvalidArgumentError("Temporals timestamps are empty".to_string()));
+        return Err(ArrowError::InvalidArgumentError(
+            "Temporals timestamps are empty".to_string(),
+        ));
     }
 
     // Check if the timestamps in market price data match temporals_t
@@ -1919,7 +2065,6 @@ pub fn market_balance_price_to_arrow(input_data: &InputData) -> Result<RecordBat
     Ok(record_batch)
 }
 
-
 // This function converts a HashMap<String, Node> of inflow TimeSeriesData to an Arrow RecordBatch
 pub fn nodes_inflow_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     //println!("nodes inflow");
@@ -1928,7 +2073,9 @@ pub fn nodes_inflow_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
 
     // Ensure temporals_t is not empty
     if temporals_t.is_empty() {
-        return Err(ArrowError::InvalidArgumentError("Temporals timestamps are empty".to_string()));
+        return Err(ArrowError::InvalidArgumentError(
+            "Temporals timestamps are empty".to_string(),
+        ));
     }
 
     let mut fields = vec![Field::new("t", DataType::Utf8, false)];
@@ -1942,16 +2089,15 @@ pub fn nodes_inflow_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
 
     // Collect inflow data for each node and scenario
     for (node_name, node) in nodes {
-        if node.inflow.ts_data.is_empty() || node.inflow.ts_data.iter().all(|ts| ts.series.is_empty()) {
+        if node.inflow.ts_data.is_empty()
+            || node.inflow.ts_data.iter().all(|ts| ts.series.is_empty())
+        {
             continue;
         }
 
         // Check if the timestamps in node inflow data match temporals_t
         if let Err(e) = check_timestamps_match(temporals_t, &node.inflow.ts_data) {
-            println!(
-                "Timestamp mismatch in node '{}'. Error: {}",
-                node_name, e
-            );
+            println!("Timestamp mismatch in node '{}'. Error: {}", node_name, e);
             return Err(e);
         }
 
@@ -1964,14 +2110,18 @@ pub fn nodes_inflow_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
             fields.push(Field::new(&column_name, DataType::Float64, true));
 
             // Prepare values and ensure they have the same length as the timestamps
-            let values: Vec<Option<f64>> = timestamps.iter().map(|t| {
-                ts.series.get(t).copied()
-            }).collect();
+            let values: Vec<Option<f64>> = timestamps
+                .iter()
+                .map(|t| ts.series.get(t).copied())
+                .collect();
 
             if values.len() != common_length {
                 return Err(ArrowError::InvalidArgumentError(format!(
                     "Inconsistent data length for node '{}', scenario '{}': expected {}, got {}",
-                    node_name, ts.scenario, common_length, values.len()
+                    node_name,
+                    ts.scenario,
+                    common_length,
+                    values.len()
                 )));
             }
 
@@ -1993,7 +2143,9 @@ pub fn nodes_commodity_price_to_arrow(input_data: &InputData) -> Result<RecordBa
 
     // Ensure temporals_t is not empty
     if temporals_t.is_empty() {
-        return Err(ArrowError::InvalidArgumentError("Temporals timestamps are empty".to_string()));
+        return Err(ArrowError::InvalidArgumentError(
+            "Temporals timestamps are empty".to_string(),
+        ));
     }
 
     // Check if the timestamps in node cost data match temporals_t
@@ -2021,11 +2173,15 @@ pub fn nodes_commodity_price_to_arrow(input_data: &InputData) -> Result<RecordBa
             let column_name = format!("{},{}", node_name, ts.scenario);
             fields.push(Field::new(&column_name, DataType::Float64, true));
 
-            let values: Vec<Option<f64>> = ts.series.iter().map(|(_, value)| Some(*value)).collect();
+            let values: Vec<Option<f64>> =
+                ts.series.iter().map(|(_, value)| Some(*value)).collect();
             if values.len() != common_length {
                 return Err(ArrowError::InvalidArgumentError(format!(
                     "Inconsistent data length for node '{}', scenario '{}': expected {}, got {}",
-                    node_name, ts.scenario, common_length, values.len()
+                    node_name,
+                    ts.scenario,
+                    common_length,
+                    values.len()
                 )));
             }
 
@@ -2041,14 +2197,15 @@ pub fn nodes_commodity_price_to_arrow(input_data: &InputData) -> Result<RecordBa
 }
 
 pub fn processes_eff_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    
     //println!("processes eff");
     let processes = &input_data.processes;
     let temporals_t = &input_data.temporals.t;
 
     // Ensure temporals_t is not empty
     if temporals_t.is_empty() {
-        return Err(ArrowError::InvalidArgumentError("Temporals timestamps are empty".to_string()));
+        return Err(ArrowError::InvalidArgumentError(
+            "Temporals timestamps are empty".to_string(),
+        ));
     }
 
     // Check if the timestamps in process efficiency data match temporals_t
@@ -2077,7 +2234,10 @@ pub fn processes_eff_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
             if values.len() != common_length {
                 return Err(ArrowError::InvalidArgumentError(format!(
                     "Inconsistent data length for process '{}', scenario '{}': expected {}, got {}",
-                    process_name, time_series.scenario, common_length, values.len()
+                    process_name,
+                    time_series.scenario,
+                    common_length,
+                    values.len()
                 )));
             }
 
@@ -2115,7 +2275,9 @@ pub fn check_timestamps_match(
     for ts in ts_data {
         let ts_timestamps: Vec<String> = ts.series.keys().cloned().collect();
         if ts_timestamps != *temporals_t {
-            return Err(ArrowError::InvalidArgumentError("Timestamps do not match temporals.t".to_string()));
+            return Err(ArrowError::InvalidArgumentError(
+                "Timestamps do not match temporals.t".to_string(),
+            ));
         }
     }
     Ok(())
@@ -2124,7 +2286,7 @@ pub fn check_timestamps_match(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Array, Int32Array, StringArray, Float64Array};
+    use arrow::array::{Array, Float64Array, Int32Array, StringArray};
     use arrow::record_batch::RecordBatch;
     use std::fs::File;
     use std::io::BufReader;
@@ -2146,7 +2308,7 @@ mod tests {
                 print!("{:<20}\t", field.name());
             }
             println!();
-    
+
             // Print rows
             for row in 0..batch.num_rows() {
                 for column in batch.columns() {
@@ -2166,193 +2328,265 @@ mod tests {
                 println!();
             }
         }
-    }    
+    }
 
     fn assert_boolean_column(array: &BooleanArray, expected_values: &[bool], column_name: &str) {
         for (i, expected) in expected_values.iter().enumerate() {
-            assert_eq!(array.value(i), *expected, "Mismatch at row {}, column '{}'", i, column_name);
+            assert_eq!(
+                array.value(i),
+                *expected,
+                "Mismatch at row {}, column '{}'",
+                i,
+                column_name
+            );
         }
     }
-    
+
     fn assert_float64_column(array: &Float64Array, expected_values: &[f64], column_name: &str) {
         for (i, expected) in expected_values.iter().enumerate() {
-            assert_eq!(array.value(i), *expected, "Mismatch at row {}, column '{}'", i, column_name);
+            assert_eq!(
+                array.value(i),
+                *expected,
+                "Mismatch at row {}, column '{}'",
+                i,
+                column_name
+            );
         }
     }
-    
+
     fn assert_int64_column(array: &Int64Array, expected_values: &[i64], column_name: &str) {
         for (i, expected) in expected_values.iter().enumerate() {
-            assert_eq!(array.value(i), *expected, "Mismatch at row {}, column '{}'", i, column_name);
+            assert_eq!(
+                array.value(i),
+                *expected,
+                "Mismatch at row {}, column '{}'",
+                i,
+                column_name
+            );
         }
     }
 
     fn assert_string_column(array: &StringArray, expected_values: &[&str], column_name: &str) {
         for (i, expected) in expected_values.iter().enumerate() {
-            assert_eq!(array.value(i), *expected, "Mismatch at row {}, column '{}'", i, column_name);
+            assert_eq!(
+                array.value(i),
+                *expected,
+                "Mismatch at row {}, column '{}'",
+                i,
+                column_name
+            );
         }
-    }    
-    
+    }
 
     #[test]
     fn test_processes_to_arrow() {
         let input_data = load_test_data();
-    
+
         // Print all processes in the BTreeMap
         for (process_name, process) in &input_data.processes {
             println!("Process Name: {}", process_name);
             println!("Process: {:?}", process);
         }
-    
+
         // Convert processes to Arrow RecordBatch
-        let record_batch = processes_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-    
+        let record_batch =
+            processes_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
         print_batches(&batches);
-    
+
         // Expected result DataFrame
         let expected_process_names = vec![
-            "dh_source_out", "dh_sto_charge", "dh_sto_discharge", "dh_tra", "hp1", "ngchp", "p2x1", "pv1"
+            "dh_source_out",
+            "dh_sto_charge",
+            "dh_sto_discharge",
+            "dh_tra",
+            "hp1",
+            "ngchp",
+            "p2x1",
+            "pv1",
         ];
-        let expected_is_cf = vec![
-            false, false, false, false, false, false, false, true
-        ];
-        let expected_is_cf_fix = vec![
-            false, false, false, false, false, false, false, true
-        ];
-        let expected_is_online = vec![
-            false, false, false, false, false, true, false, false
-        ];
-        let expected_is_res = vec![
-            false, false, false, false, true, true, true, false
-        ];
-        let expected_conversion = vec![
-            2, 1, 1, 2, 1, 1, 1, 1
-        ];
-        let expected_eff = vec![
-            1.0, 0.99, 0.99, 0.99, 3.0, 0.9, 0.7, 1.0
-        ];
-        let expected_load_min = vec![
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.0, 0.0
-        ];
-        let expected_load_max = vec![
-            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0
-        ];
-        let expected_start_cost = vec![
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-        ];
-        let expected_min_online = vec![
-            0.0, 0.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0
-        ];
-        let expected_min_offline = vec![
-            0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0
-        ];
-        let expected_max_online = vec![
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-        ];
-        let expected_max_offline = vec![
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-        ];
-        let expected_initial_state = vec![
-            false, false, false, false, false, true, false, false
-        ];
-        let expected_scenario_independent_online = vec![
-            false, false, false, false, false, true, false, false
-        ];
-        let expected_delay = vec![
-            false, false, false, false, false, false, false, false
-        ];
-    
+        let expected_is_cf = vec![false, false, false, false, false, false, false, true];
+        let expected_is_cf_fix = vec![false, false, false, false, false, false, false, true];
+        let expected_is_online = vec![false, false, false, false, false, true, false, false];
+        let expected_is_res = vec![false, false, false, false, true, true, true, false];
+        let expected_conversion = vec![2, 1, 1, 2, 1, 1, 1, 1];
+        let expected_eff = vec![1.0, 0.99, 0.99, 0.99, 3.0, 0.9, 0.7, 1.0];
+        let expected_load_min = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.0, 0.0];
+        let expected_load_max = vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
+        let expected_start_cost = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let expected_min_online = vec![0.0, 0.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0];
+        let expected_min_offline = vec![0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0];
+        let expected_max_online = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let expected_max_offline = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let expected_initial_state = vec![false, false, false, false, false, true, false, false];
+        let expected_scenario_independent_online =
+            vec![false, false, false, false, false, true, false, false];
+        let expected_delay = vec![false, false, false, false, false, false, false, false];
+
         // Assert process names
-        let process_names_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let process_names_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         for (i, expected) in expected_process_names.iter().enumerate() {
-            assert_eq!(process_names_array.value(i), *expected, "Mismatch at row {}, column 'process'", i);
+            assert_eq!(
+                process_names_array.value(i),
+                *expected,
+                "Mismatch at row {}, column 'process'",
+                i
+            );
         }
-    
+
         // Assert other columns
         assert_boolean_column(
-            record_batch.column(1).as_any().downcast_ref::<BooleanArray>().unwrap(),
+            record_batch
+                .column(1)
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .unwrap(),
             &expected_is_cf,
             "is_cf",
         );
         assert_boolean_column(
-            record_batch.column(2).as_any().downcast_ref::<BooleanArray>().unwrap(),
+            record_batch
+                .column(2)
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .unwrap(),
             &expected_is_cf_fix,
             "is_cf_fix",
         );
         assert_boolean_column(
-            record_batch.column(3).as_any().downcast_ref::<BooleanArray>().unwrap(),
+            record_batch
+                .column(3)
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .unwrap(),
             &expected_is_online,
             "is_online",
         );
         assert_boolean_column(
-            record_batch.column(4).as_any().downcast_ref::<BooleanArray>().unwrap(),
+            record_batch
+                .column(4)
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .unwrap(),
             &expected_is_res,
             "is_res",
         );
         assert_int64_column(
-            record_batch.column(5).as_any().downcast_ref::<Int64Array>().unwrap(),
+            record_batch
+                .column(5)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap(),
             &expected_conversion,
             "conversion",
         );
         assert_float64_column(
-            record_batch.column(6).as_any().downcast_ref::<Float64Array>().unwrap(),
+            record_batch
+                .column(6)
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap(),
             &expected_eff,
             "eff",
         );
         assert_float64_column(
-            record_batch.column(7).as_any().downcast_ref::<Float64Array>().unwrap(),
+            record_batch
+                .column(7)
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap(),
             &expected_load_min,
             "load_min",
         );
         assert_float64_column(
-            record_batch.column(8).as_any().downcast_ref::<Float64Array>().unwrap(),
+            record_batch
+                .column(8)
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap(),
             &expected_load_max,
             "load_max",
         );
         assert_float64_column(
-            record_batch.column(9).as_any().downcast_ref::<Float64Array>().unwrap(),
+            record_batch
+                .column(9)
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap(),
             &expected_start_cost,
             "start_cost",
         );
         assert_float64_column(
-            record_batch.column(10).as_any().downcast_ref::<Float64Array>().unwrap(),
+            record_batch
+                .column(10)
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap(),
             &expected_min_online,
             "min_online",
         );
         assert_float64_column(
-            record_batch.column(11).as_any().downcast_ref::<Float64Array>().unwrap(),
+            record_batch
+                .column(11)
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap(),
             &expected_min_offline,
             "min_offline",
         );
         assert_float64_column(
-            record_batch.column(12).as_any().downcast_ref::<Float64Array>().unwrap(),
+            record_batch
+                .column(12)
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap(),
             &expected_max_online,
             "max_online",
         );
         assert_float64_column(
-            record_batch.column(13).as_any().downcast_ref::<Float64Array>().unwrap(),
+            record_batch
+                .column(13)
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap(),
             &expected_max_offline,
             "max_offline",
         );
         assert_boolean_column(
-            record_batch.column(14).as_any().downcast_ref::<BooleanArray>().unwrap(),
+            record_batch
+                .column(14)
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .unwrap(),
             &expected_initial_state,
             "initial_state",
         );
         assert_boolean_column(
-            record_batch.column(15).as_any().downcast_ref::<BooleanArray>().unwrap(),
+            record_batch
+                .column(15)
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .unwrap(),
             &expected_scenario_independent_online,
             "scenario_independent_online",
         );
         assert_boolean_column(
-            record_batch.column(16).as_any().downcast_ref::<BooleanArray>().unwrap(),
+            record_batch
+                .column(16)
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .unwrap(),
             &expected_delay,
             "delay",
         );
     }
 
-    
     #[test]
     fn test_groups_to_arrow() {
         let input_data = load_test_data();
@@ -2371,34 +2605,45 @@ mod tests {
         print_batches(&batches);
 
         // Expected result DataFrame
-        let expected_types = vec![
-            "node", "process", "process", "process"
-        ];
-        let expected_entities = vec![
-            "elc", "ngchp", "hp1", "p2x1"
-        ];
-        let expected_group_names = vec![
-            "elc_res", "p1", "p1", "p1"
-        ];
+        let expected_types = vec!["node", "process", "process", "process"];
+        let expected_entities = vec!["elc", "ngchp", "hp1", "p2x1"];
+        let expected_group_names = vec!["elc_res", "p1", "p1", "p1"];
 
         // Helper function to assert string column values
         fn assert_string_column(array: &StringArray, expected_values: &[&str], column_name: &str) {
             for (i, expected) in expected_values.iter().enumerate() {
-                assert_eq!(array.value(i), *expected, "Mismatch at row {}, column '{}'", i, column_name);
+                assert_eq!(
+                    array.value(i),
+                    *expected,
+                    "Mismatch at row {}, column '{}'",
+                    i,
+                    column_name
+                );
             }
         }
 
         // Assert columns
-        let types_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let types_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(types_array, &expected_types, "type");
 
-        let entities_array = record_batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+        let entities_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(entities_array, &expected_entities, "entity");
 
-        let group_names_array = record_batch.column(2).as_any().downcast_ref::<StringArray>().unwrap();
+        let group_names_array = record_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(group_names_array, &expected_group_names, "group");
     }
-
 
     #[test]
     fn test_process_topos_to_arrow() {
@@ -2406,15 +2651,29 @@ mod tests {
         let input_data = load_test_data();
 
         // Convert the input data to a RecordBatch
-        let record_batch = process_topos_to_arrow(&input_data).expect("Failed to create RecordBatch");
+        let record_batch =
+            process_topos_to_arrow(&input_data).expect("Failed to create RecordBatch");
 
         // Use the existing print_batches function to print the generated Arrow table
         print_batches(&[record_batch.clone()]);
 
         // Expected values
         let expected_processes = vec![
-            "dh_source_out", "dh_sto_charge", "dh_sto_charge", "dh_sto_discharge", "dh_sto_discharge",
-            "dh_tra", "dh_tra", "hp1", "hp1", "ngchp", "ngchp", "ngchp", "p2x1", "p2x1", "pv1",
+            "dh_source_out",
+            "dh_sto_charge",
+            "dh_sto_charge",
+            "dh_sto_discharge",
+            "dh_sto_discharge",
+            "dh_tra",
+            "dh_tra",
+            "hp1",
+            "hp1",
+            "ngchp",
+            "ngchp",
+            "ngchp",
+            "p2x1",
+            "p2x1",
+            "pv1",
         ];
 
         let expected_source_sinks = vec![
@@ -2423,46 +2682,114 @@ mod tests {
         ];
 
         let expected_nodes = vec![
-            "dh", "dh", "dh_sto", "dh_sto", "dh", "dh", "dh2", "elc", "dh", "ng", "dh", "elc", "elc", "h2", "elc",
+            "dh", "dh", "dh_sto", "dh_sto", "dh", "dh", "dh2", "elc", "dh", "ng", "dh", "elc",
+            "elc", "h2", "elc",
         ];
 
         let expected_conversion_coeffs = vec![1.0; 15];
-        let expected_capacities = vec![1000.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 5.0, 15.0, 20.0, 10.0, 8.0, 10.0, 7.0, 5.0];
-        let expected_vom_costs = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 15.0, 0.5, 3.0, 0.0, 0.0, 15.0, 1.0, 0.5];
-        let expected_ramp_ups = vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0];
-        let expected_ramp_downs = vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0];
+        let expected_capacities = vec![
+            1000.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 5.0, 15.0, 20.0, 10.0, 8.0, 10.0, 7.0, 5.0,
+        ];
+        let expected_vom_costs = vec![
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 15.0, 0.5, 3.0, 0.0, 0.0, 15.0, 1.0, 0.5,
+        ];
+        let expected_ramp_ups = vec![
+            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0,
+        ];
+        let expected_ramp_downs = vec![
+            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0,
+        ];
         let expected_initial_loads = vec![0.6; 15];
         let expected_initial_flows = vec![0.6; 15];
 
         // Get columns from RecordBatch
-        let processes_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-        let source_sinks_array = record_batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
-        let nodes_array = record_batch.column(2).as_any().downcast_ref::<StringArray>().unwrap();
-        let conversion_coeffs_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
-        let capacities_array = record_batch.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
-        let vom_costs_array = record_batch.column(5).as_any().downcast_ref::<Float64Array>().unwrap();
-        let ramp_ups_array = record_batch.column(6).as_any().downcast_ref::<Float64Array>().unwrap();
-        let ramp_downs_array = record_batch.column(7).as_any().downcast_ref::<Float64Array>().unwrap();
-        let initial_loads_array = record_batch.column(8).as_any().downcast_ref::<Float64Array>().unwrap();
-        let initial_flows_array = record_batch.column(9).as_any().downcast_ref::<Float64Array>().unwrap();
+        let processes_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let source_sinks_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let nodes_array = record_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let conversion_coeffs_array = record_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let capacities_array = record_batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let vom_costs_array = record_batch
+            .column(5)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let ramp_ups_array = record_batch
+            .column(6)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let ramp_downs_array = record_batch
+            .column(7)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let initial_loads_array = record_batch
+            .column(8)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let initial_flows_array = record_batch
+            .column(9)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
 
         // Assertions for each column
         assert_eq!(processes_array.len(), expected_processes.len());
         for (i, expected_value) in expected_processes.iter().enumerate() {
-            assert_eq!(processes_array.value(i), *expected_value, "Mismatch at row {} in 'process' column", i);
+            assert_eq!(
+                processes_array.value(i),
+                *expected_value,
+                "Mismatch at row {} in 'process' column",
+                i
+            );
         }
 
         assert_eq!(source_sinks_array.len(), expected_source_sinks.len());
         for (i, expected_value) in expected_source_sinks.iter().enumerate() {
-            assert_eq!(source_sinks_array.value(i), *expected_value, "Mismatch at row {} in 'source_sink' column", i);
+            assert_eq!(
+                source_sinks_array.value(i),
+                *expected_value,
+                "Mismatch at row {} in 'source_sink' column",
+                i
+            );
         }
 
         assert_eq!(nodes_array.len(), expected_nodes.len());
         for (i, expected_value) in expected_nodes.iter().enumerate() {
-            assert_eq!(nodes_array.value(i), *expected_value, "Mismatch at row {} in 'node' column", i);
+            assert_eq!(
+                nodes_array.value(i),
+                *expected_value,
+                "Mismatch at row {} in 'node' column",
+                i
+            );
         }
 
-        assert_float64_column(conversion_coeffs_array, &expected_conversion_coeffs, "conversion_coeff");
+        assert_float64_column(
+            conversion_coeffs_array,
+            &expected_conversion_coeffs,
+            "conversion_coeff",
+        );
         assert_float64_column(capacities_array, &expected_capacities, "capacity");
         assert_float64_column(vom_costs_array, &expected_vom_costs, "vom_cost");
         assert_float64_column(ramp_ups_array, &expected_ramp_ups, "ramp_up");
@@ -2482,7 +2809,8 @@ mod tests {
         }
 
         // Convert node histories to Arrow RecordBatch
-        let record_batch = node_histories_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+        let record_batch =
+            node_histories_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
@@ -2500,39 +2828,83 @@ mod tests {
         // Helper function to assert string column values
         fn assert_string_column(array: &StringArray, expected_values: &[&str], column_name: &str) {
             for (i, expected) in expected_values.iter().enumerate() {
-                assert_eq!(array.value(i), *expected, "Mismatch at row {}, column '{}'", i, column_name);
+                assert_eq!(
+                    array.value(i),
+                    *expected,
+                    "Mismatch at row {}, column '{}'",
+                    i,
+                    column_name
+                );
             }
         }
 
         // Helper function to assert float column values
         fn assert_float_column(array: &Float64Array, expected_values: &[f64], column_name: &str) {
             for (i, expected) in expected_values.iter().enumerate() {
-                assert!((array.value(i) - *expected).abs() < f64::EPSILON, "Mismatch at row {}, column '{}'", i, column_name);
+                assert!(
+                    (array.value(i) - *expected).abs() < f64::EPSILON,
+                    "Mismatch at row {}, column '{}'",
+                    i,
+                    column_name
+                );
             }
         }
 
         // Assert columns
-        let t_array = record_batch.column(0).as_any().downcast_ref::<Int32Array>().unwrap();
+        let t_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
         for (i, expected) in expected_t_values.iter().enumerate() {
-            assert_eq!(t_array.value(i), *expected, "Mismatch at row {}, column 't'", i);
+            assert_eq!(
+                t_array.value(i),
+                *expected,
+                "Mismatch at row {}, column 't'",
+                i
+            );
         }
 
-        let timestamp_s1_array = record_batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+        let timestamp_s1_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(timestamp_s1_array, &expected_timestamp_s1, "dh_source,t,s1");
 
-        let value_s1_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        let value_s1_array = record_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float_column(value_s1_array, &expected_value_s1, "dh_source,s1");
 
-        let timestamp_s2_array = record_batch.column(3).as_any().downcast_ref::<StringArray>().unwrap();
+        let timestamp_s2_array = record_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(timestamp_s2_array, &expected_timestamp_s2, "dh_source,t,s2");
 
-        let value_s2_array = record_batch.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
+        let value_s2_array = record_batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float_column(value_s2_array, &expected_value_s2, "dh_source,s2");
 
-        let timestamp_s3_array = record_batch.column(5).as_any().downcast_ref::<StringArray>().unwrap();
+        let timestamp_s3_array = record_batch
+            .column(5)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(timestamp_s3_array, &expected_timestamp_s3, "dh_source,t,s3");
 
-        let value_s3_array = record_batch.column(6).as_any().downcast_ref::<Float64Array>().unwrap();
+        let value_s3_array = record_batch
+            .column(6)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float_column(value_s3_array, &expected_value_s3, "dh_source,s3");
     }
 
@@ -2555,35 +2927,80 @@ mod tests {
         let expected_max_flow = vec![1000.0];
 
         // Get columns from the RecordBatch
-        let node1_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-        let node2_array = record_batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
-        let delay_t_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
-        let min_flow_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
-        let max_flow_array = record_batch.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
+        let node1_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let node2_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let delay_t_array = record_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let min_flow_array = record_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let max_flow_array = record_batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
 
         // Validate the 'node1' column
         for (i, expected_value) in expected_node1.iter().enumerate() {
-            assert_eq!(node1_array.value(i), *expected_value, "Mismatch at row {} in 'node1' column", i);
+            assert_eq!(
+                node1_array.value(i),
+                *expected_value,
+                "Mismatch at row {} in 'node1' column",
+                i
+            );
         }
 
         // Validate the 'node2' column
         for (i, expected_value) in expected_node2.iter().enumerate() {
-            assert_eq!(node2_array.value(i), *expected_value, "Mismatch at row {} in 'node2' column", i);
+            assert_eq!(
+                node2_array.value(i),
+                *expected_value,
+                "Mismatch at row {} in 'node2' column",
+                i
+            );
         }
 
         // Validate the 'delay_t' column
         for (i, expected_value) in expected_delay_t.iter().enumerate() {
-            assert_eq!(delay_t_array.value(i), *expected_value, "Mismatch at row {} in 'delay_t' column", i);
+            assert_eq!(
+                delay_t_array.value(i),
+                *expected_value,
+                "Mismatch at row {} in 'delay_t' column",
+                i
+            );
         }
 
         // Validate the 'min_flow' column
         for (i, expected_value) in expected_min_flow.iter().enumerate() {
-            assert_eq!(min_flow_array.value(i), *expected_value, "Mismatch at row {} in 'min_flow' column", i);
+            assert_eq!(
+                min_flow_array.value(i),
+                *expected_value,
+                "Mismatch at row {} in 'min_flow' column",
+                i
+            );
         }
 
         // Validate the 'max_flow' column
         for (i, expected_value) in expected_max_flow.iter().enumerate() {
-            assert_eq!(max_flow_array.value(i), *expected_value, "Mismatch at row {} in 'max_flow' column", i);
+            assert_eq!(
+                max_flow_array.value(i),
+                *expected_value,
+                "Mismatch at row {} in 'max_flow' column",
+                i
+            );
         }
     }
 
@@ -2597,14 +3014,19 @@ mod tests {
         }
 
         // Convert node diffusion to Arrow RecordBatch
-        let record_batch = node_diffusion_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+        let record_batch =
+            node_diffusion_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
         print_batches(&batches);
 
         // Expected result DataFrame
-        let expected_t_values = vec!["2022-04-20T00:00:00+00:00", "2022-04-20T01:00:00+00:00", "2022-04-20T02:00:00+00:00"];
+        let expected_t_values = vec![
+            "2022-04-20T00:00:00+00:00",
+            "2022-04-20T01:00:00+00:00",
+            "2022-04-20T02:00:00+00:00",
+        ];
         let expected_value_s1 = vec![0.02, 0.02, 0.02];
         let expected_value_s2 = vec![0.02, 0.02, 0.02];
         let expected_value_s3 = vec![0.02, 0.02, 0.02];
@@ -2612,50 +3034,78 @@ mod tests {
         // Helper function to assert string column values
         fn assert_string_column(array: &StringArray, expected_values: &[&str], column_name: &str) {
             for (i, expected) in expected_values.iter().enumerate() {
-                assert_eq!(array.value(i), *expected, "Mismatch at row {}, column '{}'", i, column_name);
+                assert_eq!(
+                    array.value(i),
+                    *expected,
+                    "Mismatch at row {}, column '{}'",
+                    i,
+                    column_name
+                );
             }
         }
 
         // Helper function to assert float column values
         fn assert_float_column(array: &Float64Array, expected_values: &[f64], column_name: &str) {
             for (i, expected) in expected_values.iter().enumerate() {
-                assert!((array.value(i) - *expected).abs() < f64::EPSILON, "Mismatch at row {}, column '{}'", i, column_name);
+                assert!(
+                    (array.value(i) - *expected).abs() < f64::EPSILON,
+                    "Mismatch at row {}, column '{}'",
+                    i,
+                    column_name
+                );
             }
         }
 
         // Assert 't' column
-        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let t_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(t_array, &expected_t_values, "t");
 
         // Assert 'dh_sto,ambience,s1' column
-        let value_s1_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        let value_s1_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float_column(value_s1_array, &expected_value_s1, "dh_sto,ambience,s1");
 
         // Assert 'dh_sto,ambience,s2' column
-        let value_s2_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        let value_s2_array = record_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float_column(value_s2_array, &expected_value_s2, "dh_sto,ambience,s2");
 
         // Assert 'dh_sto,ambience,s3' column
-        let value_s3_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        let value_s3_array = record_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float_column(value_s3_array, &expected_value_s3, "dh_sto,ambience,s3");
     }
 
     #[test]
     fn test_inflow_blocks_to_arrow() {
         let input_data = load_test_data(); // Load the test data from the provided JSON file.
-    
+
         // Print all inflow blocks for debugging
         for inflow_block in &input_data.inflow_blocks {
             println!("Inflow Block: {:?}", inflow_block);
         }
-    
+
         // Convert inflow blocks to Arrow RecordBatch
-        let record_batch = inflow_blocks_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-    
+        let record_batch =
+            inflow_blocks_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
         print_batches(&batches);
-    
+
         // Expected result DataFrame
         let expected_t_values = vec![1, 2, 3];
         let expected_b1_dh_sto = vec![
@@ -2666,44 +3116,71 @@ mod tests {
         let expected_b1_s1 = vec![-2.0, 1.0, 2.0];
         let expected_b1_s2 = vec![-3.0, 2.0, 2.0];
         let expected_b1_s3 = vec![-4.0, 3.0, 2.0];
-    
+
         // Assert 't' column (running numbers)
-        let t_array = record_batch.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
-        assert_int64_column(t_array, &expected_t_values.iter().map(|&x| x as i64).collect::<Vec<i64>>(), "t");
-    
+        let t_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert_int64_column(
+            t_array,
+            &expected_t_values
+                .iter()
+                .map(|&x| x as i64)
+                .collect::<Vec<i64>>(),
+            "t",
+        );
+
         // Assert 'b1,dh_sto' column (timestamps)
-        let b1_dh_sto_array = record_batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+        let b1_dh_sto_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(b1_dh_sto_array, &expected_b1_dh_sto, "b1,dh_sto");
-    
+
         // Assert 'b1,s1' column
-        let b1_s1_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        let b1_s1_array = record_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(b1_s1_array, &expected_b1_s1, "b1,s1");
-    
+
         // Assert 'b1,s2' column
-        let b1_s2_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        let b1_s2_array = record_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(b1_s2_array, &expected_b1_s2, "b1,s2");
-    
+
         // Assert 'b1,s3' column
-        let b1_s3_array = record_batch.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
+        let b1_s3_array = record_batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(b1_s3_array, &expected_b1_s3, "b1,s3");
-    }    
+    }
 
     #[test]
     fn test_markets_to_arrow() {
         let input_data = load_test_data(); // Load the test data from the provided JSON file.
-    
+
         // Print all markets for debugging
         for market in &input_data.markets {
             println!("Market: {:?}", market);
         }
-    
+
         // Convert markets to Arrow RecordBatch
         let record_batch = markets_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-    
+
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
         print_batches(&batches);
-    
+
         // Expected result DataFrame based on the lexicographical order from BTreeMap
         let expected_market = vec!["fcr_up", "npe"];
         let expected_market_type = vec!["reserve", "energy"];
@@ -2716,39 +3193,83 @@ mod tests {
         let expected_min_bid = vec![0.0, 0.0];
         let expected_max_bid = vec![0.0, 0.0];
         let expected_fee = vec![0.0, 0.0];
-    
+
         // Assert columns in the correct order
-        let market_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let market_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(market_array, &expected_market, "market");
-    
-        let market_type_array = record_batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+
+        let market_type_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(market_type_array, &expected_market_type, "market_type");
-    
-        let node_array = record_batch.column(2).as_any().downcast_ref::<StringArray>().unwrap();
+
+        let node_array = record_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(node_array, &expected_node, "node");
-    
-        let processgroup_array = record_batch.column(3).as_any().downcast_ref::<StringArray>().unwrap();
+
+        let processgroup_array = record_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(processgroup_array, &expected_processgroup, "processgroup");
-    
-        let direction_array = record_batch.column(4).as_any().downcast_ref::<StringArray>().unwrap();
+
+        let direction_array = record_batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(direction_array, &expected_direction, "direction");
-    
-        let reserve_type_array = record_batch.column(6).as_any().downcast_ref::<StringArray>().unwrap();
+
+        let reserve_type_array = record_batch
+            .column(6)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(reserve_type_array, &expected_reserve_type, "reserve_type");
-    
-        let is_bid_array = record_batch.column(7).as_any().downcast_ref::<BooleanArray>().unwrap();
+
+        let is_bid_array = record_batch
+            .column(7)
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .unwrap();
         assert_boolean_column(is_bid_array, &expected_is_bid, "is_bid");
-    
-        let is_limited_array = record_batch.column(8).as_any().downcast_ref::<BooleanArray>().unwrap();
+
+        let is_limited_array = record_batch
+            .column(8)
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .unwrap();
         assert_boolean_column(is_limited_array, &expected_is_limited, "is_limited");
-    
-        let min_bid_array = record_batch.column(9).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        let min_bid_array = record_batch
+            .column(9)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(min_bid_array, &expected_min_bid, "min_bid");
-    
-        let max_bid_array = record_batch.column(10).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        let max_bid_array = record_batch
+            .column(10)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(max_bid_array, &expected_max_bid, "max_bid");
-    
-        let fee_array = record_batch.column(11).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        let fee_array = record_batch
+            .column(11)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(fee_array, &expected_fee, "fee");
     }
 
@@ -2762,7 +3283,8 @@ mod tests {
         }
 
         // Convert market realisation data to Arrow RecordBatch
-        let record_batch = market_realisation_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+        let record_batch =
+            market_realisation_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
@@ -2770,28 +3292,44 @@ mod tests {
 
         // Expected result DataFrame
         let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00", 
-            "2022-04-20T01:00:00+00:00", 
-            "2022-04-20T02:00:00+00:00"
+            "2022-04-20T00:00:00+00:00",
+            "2022-04-20T01:00:00+00:00",
+            "2022-04-20T02:00:00+00:00",
         ];
         let expected_fcr_up_s1 = vec![0.27, 0.27, 0.27];
         let expected_fcr_up_s2 = vec![0.27, 0.27, 0.29];
         let expected_fcr_up_s3 = vec![0.27, 0.27, 0.31];
 
         // Assert 't' column (timestamps)
-        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let t_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(t_array, &expected_t_values, "t");
 
         // Assert 'fcr_up,s1' column
-        let fcr_up_s1_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        let fcr_up_s1_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(fcr_up_s1_array, &expected_fcr_up_s1, "fcr_up,s1");
 
         // Assert 'fcr_up,s2' column
-        let fcr_up_s2_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        let fcr_up_s2_array = record_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(fcr_up_s2_array, &expected_fcr_up_s2, "fcr_up,s2");
 
         // Assert 'fcr_up,s3' column
-        let fcr_up_s3_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        let fcr_up_s3_array = record_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(fcr_up_s3_array, &expected_fcr_up_s3, "fcr_up,s3");
     }
 
@@ -2800,7 +3338,8 @@ mod tests {
         let input_data = load_test_data(); // Assuming this loads data similar to what was described
 
         // Convert reserve activation prices to Arrow RecordBatch
-        let record_batch = market_reserve_activation_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+        let record_batch = market_reserve_activation_price_to_arrow(&input_data)
+            .expect("Failed to convert to RecordBatch");
 
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
@@ -2817,29 +3356,45 @@ mod tests {
         let expected_fcr_up_s3 = vec![1.0, 2.0, 3.0];
 
         // Assert 't' column (timestamps)
-        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let t_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(t_array, &expected_t_values, "t");
 
         // Assert 'fcr_up,s1' column
-        let fcr_up_s1_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        let fcr_up_s1_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(fcr_up_s1_array, &expected_fcr_up_s1, "fcr_up,s1");
 
         // Assert 'fcr_up,s2' column
-        let fcr_up_s2_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        let fcr_up_s2_array = record_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(fcr_up_s2_array, &expected_fcr_up_s2, "fcr_up,s2");
 
         // Assert 'fcr_up,s3' column
-        let fcr_up_s3_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        let fcr_up_s3_array = record_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(fcr_up_s3_array, &expected_fcr_up_s3, "fcr_up,s3");
     }
 
-
-        #[test]
+    #[test]
     fn test_scenarios_to_arrow() {
         let input_data = load_test_data(); // Load the test data from the provided JSON file.
 
         // Convert scenarios to Arrow RecordBatch
-        let record_batch = scenarios_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+        let record_batch =
+            scenarios_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
@@ -2850,60 +3405,94 @@ mod tests {
         let expected_probabilities = vec![0.4, 0.3, 0.3];
 
         // Assert 'name' column
-        let name_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let name_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(name_array, &expected_names, "name");
 
         // Assert 'probability' column
-        let probability_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        let probability_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(probability_array, &expected_probabilities, "probability");
     }
 
     #[test]
     fn test_processes_eff_fun_to_arrow() {
         let input_data = load_test_data(); // Load the test data from the provided JSON file.
-    
+
         // Convert processes efficiency functions to Arrow RecordBatch
-        let record_batch = processes_eff_fun_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-    
+        let record_batch =
+            processes_eff_fun_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
         print_batches(&batches);
-    
+
         // Expected result DataFrame
         let expected_process = vec!["ngchp,op", "ngchp,eff"];
-        let expected_column_1 = vec![0.4, 0.8]; 
+        let expected_column_1 = vec![0.4, 0.8];
         let expected_column_2 = vec![0.6, 0.78];
         let expected_column_3 = vec![0.8, 0.75];
         let expected_column_4 = vec![0.9, 0.7];
         let expected_column_5 = vec![1.0, 0.65];
-    
+
         // Assert 'process' column
-        let process_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let process_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(process_array, &expected_process, "process");
-    
+
         // Assert each dynamic column for efficiency function
-        let column_1 = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        let column_1 = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_1, &expected_column_1, "1");
-    
-        let column_2 = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        let column_2 = record_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_2, &expected_column_2, "2");
-    
-        let column_3 = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        let column_3 = record_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_3, &expected_column_3, "3");
-    
-        let column_4 = record_batch.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        let column_4 = record_batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_4, &expected_column_4, "4");
-    
-        let column_5 = record_batch.column(5).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        let column_5 = record_batch
+            .column(5)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_5, &expected_column_5, "5");
     }
-    
+
     #[test]
     fn test_reserve_type_to_arrow() {
         let input_data = load_test_data(); // Load the test data from the provided JSON file.
 
         // Convert reserve types to Arrow RecordBatch
-        let record_batch = reserve_type_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+        let record_batch =
+            reserve_type_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
@@ -2914,11 +3503,19 @@ mod tests {
         let expected_ramp_factor = vec![1.0];
 
         // Assert 'reserve_type' column
-        let reserve_type_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let reserve_type_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(reserve_type_array, &expected_reserve_type, "reserve_type");
 
         // Assert 'ramp_factor' column
-        let ramp_factor_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        let ramp_factor_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(ramp_factor_array, &expected_ramp_factor, "ramp_factor");
     }
 
@@ -2938,69 +3535,95 @@ mod tests {
         let expected_values = vec![0.1, 0.2];
 
         // Assert 'parameter' column
-        let parameter_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let parameter_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(parameter_array, &expected_parameters, "parameter");
 
         // Assert 'value' column
-        let value_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        let value_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(value_array, &expected_values, "value");
     }
 
     #[test]
     fn test_processes_cap_to_arrow() {
         let input_data = load_test_data(); // Load the test data from the provided JSON file.
-        
+
         // Convert processes cap data to Arrow RecordBatch
-        let record_batch = processes_cap_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-        
+        let record_batch =
+            processes_cap_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
         print_batches(&batches);
-        
+
         // Expected result DataFrame
         let expected_t = vec![
             "2022-04-20T00:00:00+00:00",
             "2022-04-20T01:00:00+00:00",
             "2022-04-20T02:00:00+00:00",
         ];
-        
+
         let expected_hp1_elc_s1 = vec![5.0, 4.285714285714286, 4.285714285714286];
         let expected_hp1_elc_s2 = vec![5.0, 4.285714285714286, 4.285714285714286];
         let expected_hp1_elc_s3 = vec![5.0, 4.28571428571429, 4.28571428571429];
-    
+
         // Assert 't' column
-        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let t_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(t_array, &expected_t, "t");
-        
+
         // Assert 'hp1,elc,s1' column
-        let hp1_elc_s1_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        let hp1_elc_s1_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(hp1_elc_s1_array, &expected_hp1_elc_s1, "hp1,elc,s1");
-        
+
         // Assert 'hp1,elc,s2' column
-        let hp1_elc_s2_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        let hp1_elc_s2_array = record_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(hp1_elc_s2_array, &expected_hp1_elc_s2, "hp1,elc,s2");
-        
+
         // Assert 'hp1,elc,s3' column
-        let hp1_elc_s3_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        let hp1_elc_s3_array = record_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(hp1_elc_s3_array, &expected_hp1_elc_s3, "hp1,elc,s3");
-    }    
+    }
 
     #[test]
     fn test_gen_constraints_to_arrow() {
         let input_data = load_test_data(); // Load the test data from the provided JSON file.
-    
+
         // Convert gen constraints to Arrow RecordBatch
-        let record_batch = gen_constraints_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-    
+        let record_batch =
+            gen_constraints_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
         print_batches(&batches);
-    
+
         // Expected result DataFrame
         let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00", 
-            "2022-04-20T01:00:00+00:00", 
-            "2022-04-20T02:00:00+00:00"
+            "2022-04-20T00:00:00+00:00",
+            "2022-04-20T01:00:00+00:00",
+            "2022-04-20T02:00:00+00:00",
         ];
         let expected_c1_s1 = vec![0.0, 0.0, 0.0];
         let expected_c1_s2 = vec![0.0, 0.0, 0.0];
@@ -3017,64 +3640,153 @@ mod tests {
         let expected_c3_dh_sto_s1 = vec![256.0, 256.0, 256.0];
         let expected_c3_dh_sto_s2 = vec![256.0, 256.0, 256.0];
         let expected_c3_dh_sto_s3 = vec![256.0, 256.0, 256.0];
-    
+
         // Assert 't' column
-        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let t_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(t_array, &expected_t_values, "t");
-    
+
         // Assert other columns in lexicographical order
-        let column_c1_s1 = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        let column_c1_s1 = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_c1_s1, &expected_c1_s1, "c1,s1");
-    
-        let column_c1_s2 = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        let column_c1_s2 = record_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_c1_s2, &expected_c1_s2, "c1,s2");
-    
-        let column_c1_s3 = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        let column_c1_s3 = record_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_c1_s3, &expected_c1_s3, "c1,s3");
-    
-        let column_c1_ngchp_elc_s1 = record_batch.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
-        assert_float64_column(column_c1_ngchp_elc_s1, &expected_c1_ngchp_elc_s1, "c1,ngchp,elc,s1");
-    
-        let column_c1_ngchp_elc_s2 = record_batch.column(5).as_any().downcast_ref::<Float64Array>().unwrap();
-        assert_float64_column(column_c1_ngchp_elc_s2, &expected_c1_ngchp_elc_s2, "c1,ngchp,elc,s2");
-    
-        let column_c1_ngchp_elc_s3 = record_batch.column(6).as_any().downcast_ref::<Float64Array>().unwrap();
-        assert_float64_column(column_c1_ngchp_elc_s3, &expected_c1_ngchp_elc_s3, "c1,ngchp,elc,s3");
-    
-        let column_c1_ngchp_dh_s1 = record_batch.column(7).as_any().downcast_ref::<Float64Array>().unwrap();
-        assert_float64_column(column_c1_ngchp_dh_s1, &expected_c1_ngchp_dh_s1, "c1,ngchp,dh,s1");
-    
-        let column_c1_ngchp_dh_s2 = record_batch.column(8).as_any().downcast_ref::<Float64Array>().unwrap();
-        assert_float64_column(column_c1_ngchp_dh_s2, &expected_c1_ngchp_dh_s2, "c1,ngchp,dh,s2");
-    
-        let column_c1_ngchp_dh_s3 = record_batch.column(9).as_any().downcast_ref::<Float64Array>().unwrap();
-        assert_float64_column(column_c1_ngchp_dh_s3, &expected_c1_ngchp_dh_s3, "c1,ngchp,dh,s3");
-    
-        let column_c2_dh_sto_s1 = record_batch.column(10).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        let column_c1_ngchp_elc_s1 = record_batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        assert_float64_column(
+            column_c1_ngchp_elc_s1,
+            &expected_c1_ngchp_elc_s1,
+            "c1,ngchp,elc,s1",
+        );
+
+        let column_c1_ngchp_elc_s2 = record_batch
+            .column(5)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        assert_float64_column(
+            column_c1_ngchp_elc_s2,
+            &expected_c1_ngchp_elc_s2,
+            "c1,ngchp,elc,s2",
+        );
+
+        let column_c1_ngchp_elc_s3 = record_batch
+            .column(6)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        assert_float64_column(
+            column_c1_ngchp_elc_s3,
+            &expected_c1_ngchp_elc_s3,
+            "c1,ngchp,elc,s3",
+        );
+
+        let column_c1_ngchp_dh_s1 = record_batch
+            .column(7)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        assert_float64_column(
+            column_c1_ngchp_dh_s1,
+            &expected_c1_ngchp_dh_s1,
+            "c1,ngchp,dh,s1",
+        );
+
+        let column_c1_ngchp_dh_s2 = record_batch
+            .column(8)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        assert_float64_column(
+            column_c1_ngchp_dh_s2,
+            &expected_c1_ngchp_dh_s2,
+            "c1,ngchp,dh,s2",
+        );
+
+        let column_c1_ngchp_dh_s3 = record_batch
+            .column(9)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        assert_float64_column(
+            column_c1_ngchp_dh_s3,
+            &expected_c1_ngchp_dh_s3,
+            "c1,ngchp,dh,s3",
+        );
+
+        let column_c2_dh_sto_s1 = record_batch
+            .column(10)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_c2_dh_sto_s1, &expected_c2_dh_sto_s1, "c2,dh_sto,s1");
-    
-        let column_c2_dh_sto_s2 = record_batch.column(11).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        let column_c2_dh_sto_s2 = record_batch
+            .column(11)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_c2_dh_sto_s2, &expected_c2_dh_sto_s2, "c2,dh_sto,s2");
-    
-        let column_c2_dh_sto_s3 = record_batch.column(12).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        let column_c2_dh_sto_s3 = record_batch
+            .column(12)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_c2_dh_sto_s3, &expected_c2_dh_sto_s3, "c2,dh_sto,s3");
-    
-        let column_c3_dh_sto_s1 = record_batch.column(13).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        let column_c3_dh_sto_s1 = record_batch
+            .column(13)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_c3_dh_sto_s1, &expected_c3_dh_sto_s1, "c3,dh_sto,s1");
-    
-        let column_c3_dh_sto_s2 = record_batch.column(14).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        let column_c3_dh_sto_s2 = record_batch
+            .column(14)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_c3_dh_sto_s2, &expected_c3_dh_sto_s2, "c3,dh_sto,s2");
-    
-        let column_c3_dh_sto_s3 = record_batch.column(15).as_any().downcast_ref::<Float64Array>().unwrap();
+
+        let column_c3_dh_sto_s3 = record_batch
+            .column(15)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_c3_dh_sto_s3, &expected_c3_dh_sto_s3, "c3,dh_sto,s3");
     }
-    
+
     #[test]
     fn test_constraints_to_arrow() {
         let input_data = load_test_data(); // Load the test data from the provided JSON file.
 
         // Convert constraints to Arrow RecordBatch
-        let record_batch = constraints_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+        let record_batch =
+            constraints_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
@@ -3087,19 +3799,35 @@ mod tests {
         let expected_penalties = vec![0.0, 1.0, 1.0];
 
         // Assert 'name' column
-        let name_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let name_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(name_array, &expected_names, "name");
 
         // Assert 'operator' column
-        let operator_array = record_batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+        let operator_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(operator_array, &expected_operators, "operator");
 
         // Assert 'is_setpoint' column
-        let is_setpoint_array = record_batch.column(2).as_any().downcast_ref::<BooleanArray>().unwrap();
+        let is_setpoint_array = record_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .unwrap();
         assert_boolean_column(is_setpoint_array, &expected_is_setpoints, "is_setpoint");
 
         // Assert 'penalty' column
-        let penalty_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        let penalty_array = record_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(penalty_array, &expected_penalties, "penalty");
     }
 
@@ -3114,14 +3842,15 @@ mod tests {
             println!("Time Steps: {:?}", bid_slot.time_steps);
             println!("Slots: {:?}", bid_slot.slots);
             println!("Prices:");
-    
+
             for ((time, slot), price) in &bid_slot.prices {
                 println!("({}, {}) => {}", time, slot, price);
             }
         }
 
         // Convert bid slots to Arrow RecordBatch
-        let record_batch = bid_slots_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+        let record_batch =
+            bid_slots_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
@@ -3129,9 +3858,9 @@ mod tests {
 
         // Expected result DataFrame
         let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00", 
-            "2022-04-20T01:00:00+00:00", 
-            "2022-04-20T02:00:00+00:00"
+            "2022-04-20T00:00:00+00:00",
+            "2022-04-20T01:00:00+00:00",
+            "2022-04-20T02:00:00+00:00",
         ];
         let expected_npe_p0 = vec![45.0, 58.0, 55.0];
         let expected_npe_p1 = vec![45.0, 58.0, 65.0];
@@ -3139,20 +3868,40 @@ mod tests {
         let expected_npe_p3 = vec![50.0, 62.0, 91.0];
 
         // Assert 't' column
-        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let t_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(t_array, &expected_t_values, "t");
 
         // Assert other columns (in the expected order)
-        let column_npe_p0 = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        let column_npe_p0 = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_npe_p0, &expected_npe_p0, "npe,p0");
 
-        let column_npe_p1 = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        let column_npe_p1 = record_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_npe_p1, &expected_npe_p1, "npe,p1");
 
-        let column_npe_p2 = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        let column_npe_p2 = record_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_npe_p2, &expected_npe_p2, "npe,p2");
 
-        let column_npe_p3 = record_batch.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
+        let column_npe_p3 = record_batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_npe_p3, &expected_npe_p3, "npe,p3");
     }
 
@@ -3161,7 +3910,8 @@ mod tests {
         let input_data = load_test_data(); // Load the test data from the provided JSON file.
 
         // Convert processes capacity factor to Arrow RecordBatch
-        let record_batch = processes_cf_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+        let record_batch =
+            processes_cf_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
@@ -3169,37 +3919,46 @@ mod tests {
 
         // Expected result DataFrame
         let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00", 
-            "2022-04-20T01:00:00+00:00", 
-            "2022-04-20T02:00:00+00:00"
+            "2022-04-20T00:00:00+00:00",
+            "2022-04-20T01:00:00+00:00",
+            "2022-04-20T02:00:00+00:00",
         ];
         let expected_pv1_s1_s2_s3 = vec![0.0, 0.4, 0.5];
 
         // Assert 't' column
-        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let t_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(t_array, &expected_t_values, "t");
 
         // Assert the capacity factor column for 'pv1,s1,s2,s3'
-        let column_pv1_s1_s2_s3 = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        let column_pv1_s1_s2_s3 = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(column_pv1_s1_s2_s3, &expected_pv1_s1_s2_s3, "pv1,s1,s2,s3");
     }
 
     #[test]
     fn test_market_price_to_arrow() {
         let input_data = load_test_data(); // Load the test data from the provided JSON file.
-    
+
         // Convert market price data to Arrow RecordBatch
-        let record_batch = market_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-    
+        let record_batch =
+            market_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
         print_batches(&batches);
-    
+
         // Expected result DataFrame with columns in BTreeMap lexicographical order
         let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00", 
-            "2022-04-20T01:00:00+00:00", 
-            "2022-04-20T02:00:00+00:00"
+            "2022-04-20T00:00:00+00:00",
+            "2022-04-20T01:00:00+00:00",
+            "2022-04-20T02:00:00+00:00",
         ];
         let expected_fcr_up_s1 = vec![4.0, 56.0, 44.0];
         let expected_fcr_up_s2 = vec![4.0, 56.0, 52.8];
@@ -3207,42 +3966,71 @@ mod tests {
         let expected_npe_s1 = vec![48.0, 60.0, 58.0];
         let expected_npe_s2 = vec![48.0, 60.0, 87.0];
         let expected_npe_s3 = vec![48.0, 60.0, 89.0];
-    
+
         // Assert 't' column
-        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let t_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(t_array, &expected_t_values, "t");
-    
+
         // Assert 'fcr_up,s1' column
-        let fcr_up_s1_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        let fcr_up_s1_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(fcr_up_s1_array, &expected_fcr_up_s1, "fcr_up,s1");
-    
+
         // Assert 'fcr_up,s2' column
-        let fcr_up_s2_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        let fcr_up_s2_array = record_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(fcr_up_s2_array, &expected_fcr_up_s2, "fcr_up,s2");
-    
+
         // Assert 'fcr_up,s3' column
-        let fcr_up_s3_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        let fcr_up_s3_array = record_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(fcr_up_s3_array, &expected_fcr_up_s3, "fcr_up,s3");
-    
+
         // Assert 'npe,s1' column
-        let npe_s1_array = record_batch.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
+        let npe_s1_array = record_batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(npe_s1_array, &expected_npe_s1, "npe,s1");
-    
+
         // Assert 'npe,s2' column
-        let npe_s2_array = record_batch.column(5).as_any().downcast_ref::<Float64Array>().unwrap();
+        let npe_s2_array = record_batch
+            .column(5)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(npe_s2_array, &expected_npe_s2, "npe,s2");
-    
+
         // Assert 'npe,s3' column
-        let npe_s3_array = record_batch.column(6).as_any().downcast_ref::<Float64Array>().unwrap();
+        let npe_s3_array = record_batch
+            .column(6)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(npe_s3_array, &expected_npe_s3, "npe,s3");
     }
-    
+
     #[test]
     fn test_nodes_commodity_price_to_arrow() {
         let input_data = load_test_data(); // Load the test data from the provided JSON file.
 
         // Convert nodes commodity price data to Arrow RecordBatch
-        let record_batch = nodes_commodity_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+        let record_batch =
+            nodes_commodity_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
@@ -3250,18 +4038,26 @@ mod tests {
 
         // Expected result DataFrame
         let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00", 
-            "2022-04-20T01:00:00+00:00", 
-            "2022-04-20T02:00:00+00:00"
+            "2022-04-20T00:00:00+00:00",
+            "2022-04-20T01:00:00+00:00",
+            "2022-04-20T02:00:00+00:00",
         ];
         let expected_ng_all = vec![12.0, 12.0, 12.0];
 
         // Assert 't' column
-        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let t_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(t_array, &expected_t_values, "t");
 
         // Assert 'ng,ALL' column
-        let ng_all_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        let ng_all_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(ng_all_array, &expected_ng_all, "ng,ALL");
     }
 
@@ -3270,7 +4066,8 @@ mod tests {
         let input_data = load_test_data(); // Load the test data from the provided JSON file.
 
         // Convert process efficiency data to Arrow RecordBatch
-        let record_batch = processes_eff_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+        let record_batch =
+            processes_eff_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
@@ -3278,50 +4075,66 @@ mod tests {
 
         // Expected result DataFrame
         let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00", 
-            "2022-04-20T01:00:00+00:00", 
-            "2022-04-20T02:00:00+00:00"
+            "2022-04-20T00:00:00+00:00",
+            "2022-04-20T01:00:00+00:00",
+            "2022-04-20T02:00:00+00:00",
         ];
         let expected_hp1_s1 = vec![3.0, 3.5, 3.5];
         let expected_hp1_s2 = vec![3.0, 3.5, 3.5];
         let expected_hp1_s3 = vec![3.0, 3.5, 3.5];
 
         // Assert 't' column
-        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let t_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(t_array, &expected_t_values, "t");
 
         // Assert 'hp1,s1' column
-        let hp1_s1_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        let hp1_s1_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(hp1_s1_array, &expected_hp1_s1, "hp1,s1");
 
         // Assert 'hp1,s2' column
-        let hp1_s2_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        let hp1_s2_array = record_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(hp1_s2_array, &expected_hp1_s2, "hp1,s2");
 
         // Assert 'hp1,s3' column
-        let hp1_s3_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        let hp1_s3_array = record_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(hp1_s3_array, &expected_hp1_s3, "hp1,s3");
     }
 
-    
     //TÄHÄN TEST_MARKET_FIXED_TO_ARROW KUNHAN SAADAAN DATAA
 
     #[test]
     fn test_market_balance_price_to_arrow() {
         let input_data = load_test_data(); // Load the test data from the provided JSON file.
-    
+
         // Convert market balance price data to Arrow RecordBatch
-        let record_batch = market_balance_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-    
+        let record_batch =
+            market_balance_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+
         // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
         print_batches(&batches);
-    
+
         // Expected result DataFrame with columns in BTreeMap lexicographical order
         let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00", 
-            "2022-04-20T01:00:00+00:00", 
-            "2022-04-20T02:00:00+00:00"
+            "2022-04-20T00:00:00+00:00",
+            "2022-04-20T01:00:00+00:00",
+            "2022-04-20T02:00:00+00:00",
         ];
         let expected_npe_dw_s1 = vec![43.2, 54.0, 52.2];
         let expected_npe_dw_s2 = vec![43.2, 54.0, 78.3];
@@ -3329,41 +4142,69 @@ mod tests {
         let expected_npe_up_s1 = vec![52.8, 66.0, 63.8];
         let expected_npe_up_s2 = vec![52.8, 66.0, 95.7];
         let expected_npe_up_s3 = vec![52.8, 66.0, 95.7];
-    
+
         // Assert 't' column
-        let t_array = record_batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let t_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
         assert_string_column(t_array, &expected_t_values, "t");
-    
+
         // Assert 'npe,dw,s1' column
-        let npe_dw_s1_array = record_batch.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
+        let npe_dw_s1_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(npe_dw_s1_array, &expected_npe_dw_s1, "npe,dw,s1");
-    
+
         // Assert 'npe,dw,s2' column
-        let npe_dw_s2_array = record_batch.column(2).as_any().downcast_ref::<Float64Array>().unwrap();
+        let npe_dw_s2_array = record_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(npe_dw_s2_array, &expected_npe_dw_s2, "npe,dw,s2");
-    
+
         // Assert 'npe,dw,s3' column
-        let npe_dw_s3_array = record_batch.column(3).as_any().downcast_ref::<Float64Array>().unwrap();
+        let npe_dw_s3_array = record_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(npe_dw_s3_array, &expected_npe_dw_s3, "npe,dw,s3");
-    
+
         // Assert 'npe,up,s1' column
-        let npe_up_s1_array = record_batch.column(4).as_any().downcast_ref::<Float64Array>().unwrap();
+        let npe_up_s1_array = record_batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(npe_up_s1_array, &expected_npe_up_s1, "npe,up,s1");
-    
+
         // Assert 'npe,up,s2' column
-        let npe_up_s2_array = record_batch.column(5).as_any().downcast_ref::<Float64Array>().unwrap();
+        let npe_up_s2_array = record_batch
+            .column(5)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(npe_up_s2_array, &expected_npe_up_s2, "npe,up,s2");
-    
+
         // Assert 'npe,up,s3' column
-        let npe_up_s3_array = record_batch.column(6).as_any().downcast_ref::<Float64Array>().unwrap();
+        let npe_up_s3_array = record_batch
+            .column(6)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
         assert_float64_column(npe_up_s3_array, &expected_npe_up_s3, "npe,up,s3");
-    }    
-    
+    }
 
     #[test]
     fn test_inputdatasetup_to_arrow() {
         let input_data = load_test_data();
-        let record_batch = inputdatasetup_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+        let record_batch =
+            inputdatasetup_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Expected result DataFrame
         let expected_parameters = vec![
@@ -3378,16 +4219,15 @@ mod tests {
             "common_scenario_name",
         ];
 
-        let expected_values = vec![
-            "1", "1", "1", "1", "1", "10000", "10000", "2", "s_all",
-        ];
+        let expected_values = vec!["1", "1", "1", "1", "1", "10000", "10000", "2", "s_all"];
 
         // Print the RecordBatch for debugging
         let batches = vec![record_batch];
         print_batches(&batches);
 
         // Assert parameter values
-        let parameter_array = batches[0].column(0)
+        let parameter_array = batches[0]
+            .column(0)
             .as_any()
             .downcast_ref::<StringArray>()
             .unwrap();
@@ -3396,7 +4236,8 @@ mod tests {
         }
 
         // Assert value values
-        let value_array = batches[0].column(1)
+        let value_array = batches[0]
+            .column(1)
             .as_any()
             .downcast_ref::<StringArray>()
             .unwrap();
@@ -3404,6 +4245,4 @@ mod tests {
             assert_eq!(value_array.value(i), *expected);
         }
     }
-
-
 }
