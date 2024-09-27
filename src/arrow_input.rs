@@ -3788,10 +3788,6 @@ mod tests {
         let record_batch =
             constraints_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
-        // Print the RecordBatch for debugging
-        let batches = vec![record_batch.clone()];
-        print_batches(&batches);
-
         // Expected result DataFrame
         let expected_names = vec!["c1", "c2", "c3"];
         let expected_operators = vec!["eq", "st", "gt"];
@@ -3852,10 +3848,6 @@ mod tests {
         let record_batch =
             bid_slots_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
-        // Print the RecordBatch for debugging
-        let batches = vec![record_batch.clone()];
-        print_batches(&batches);
-
         // Expected result DataFrame
         let expected_t_values = vec![
             "2022-04-20T00:00:00+00:00",
@@ -3913,10 +3905,6 @@ mod tests {
         let record_batch =
             processes_cf_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
-        // Print the RecordBatch for debugging
-        let batches = vec![record_batch.clone()];
-        print_batches(&batches);
-
         // Expected result DataFrame
         let expected_t_values = vec![
             "2022-04-20T00:00:00+00:00",
@@ -3949,10 +3937,6 @@ mod tests {
         // Convert market price data to Arrow RecordBatch
         let record_batch =
             market_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-
-        // Print the RecordBatch for debugging
-        let batches = vec![record_batch.clone()];
-        print_batches(&batches);
 
         // Expected result DataFrame with columns in BTreeMap lexicographical order
         let expected_t_values = vec![
@@ -4032,10 +4016,6 @@ mod tests {
         let record_batch =
             nodes_commodity_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
-        // Print the RecordBatch for debugging
-        let batches = vec![record_batch.clone()];
-        print_batches(&batches);
-
         // Expected result DataFrame
         let expected_t_values = vec![
             "2022-04-20T00:00:00+00:00",
@@ -4068,10 +4048,6 @@ mod tests {
         // Convert process efficiency data to Arrow RecordBatch
         let record_batch =
             processes_eff_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-
-        // Print the RecordBatch for debugging
-        let batches = vec![record_batch.clone()];
-        print_batches(&batches);
 
         // Expected result DataFrame
         let expected_t_values = vec![
@@ -4125,10 +4101,6 @@ mod tests {
         // Convert market balance price data to Arrow RecordBatch
         let record_batch =
             market_balance_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-
-        // Print the RecordBatch for debugging
-        let batches = vec![record_batch.clone()];
-        print_batches(&batches);
 
         // Expected result DataFrame with columns in BTreeMap lexicographical order
         let expected_t_values = vec![
@@ -4221,11 +4193,8 @@ mod tests {
 
         let expected_values = vec!["1", "1", "1", "1", "1", "10000", "10000", "2", "s_all"];
 
-        // Print the RecordBatch for debugging
-        let batches = vec![record_batch];
-        print_batches(&batches);
-
         // Assert parameter values
+        let batches = vec![record_batch];
         let parameter_array = batches[0]
             .column(0)
             .as_any()

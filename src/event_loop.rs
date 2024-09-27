@@ -3,18 +3,25 @@ use crate::input_data;
 use crate::input_data::OptimizationData;
 use crate::settings::Settings;
 use crate::utilities;
+use arrow::array::RecordBatch;
 use arrow::ipc::reader::StreamReader;
 use chrono::{DateTime, Utc};
-use std::collections::BTreeMap;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
+use std::io;
+use std::process::{Command, ExitStatus};
 use std::sync::Arc;
+use std::thread;
+use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tokio::time::{self, Duration};
-use zmq::Context;
+use zmq::{Context, Socket};
+
+const PREDICER_SEND_FLAGS: i32 = 0;
+const PREDICER_RECEIVE_FLAGS: i32 = 0;
 
 pub async fn event_loop(settings: Settings, mut rx: mpsc::Receiver<input_data::OptimizationData>) {
     let (tx_weather, rx_weather) = mpsc::channel::<OptimizationData>(32);
@@ -22,33 +29,27 @@ pub async fn event_loop(settings: Settings, mut rx: mpsc::Receiver<input_data::O
     let (tx_update, rx_update) = mpsc::channel::<OptimizationData>(32);
     let (tx_batches, rx_batches) = mpsc::channel::<OptimizationData>(32);
     let (tx_optimization, rx_optimization) = mpsc::channel::<OptimizationData>(32);
-    //let (_tx_final, mut _rx_final) = mpsc::channel::<OptimizationData>(32);
-
-    // Spawn the weather data task to process and pass the data to the electricity price data task
     tokio::spawn(async move {
         fetch_weather_data_task(rx_weather, tx_elec).await; // Output sent to fetch_elec_price_task
     });
-
-    // Spawn the electricity price data task to process and potentially finalize the data
     tokio::spawn(async move {
         fetch_elec_price_task(rx_elec, tx_update).await; // Final output sent to update_model_data_task
     });
-
     tokio::spawn(async move {
         // Adjust the function signature of update_model_data_task to accept tx_optimization
         update_model_data_task(rx_update, tx_batches).await;
     });
-
-    // Spawn the data conversion task
     tokio::spawn(async move {
         data_conversion_task(rx_batches, tx_optimization).await;
     });
-
-    // Spawn the optimization task
-    tokio::spawn(async move {
-        optimization_task(rx_optimization).await;
-    });
-
+    let mut zmq_port = settings.predicer_port;
+    if zmq_port == 0 {
+        zmq_port = find_available_port()
+            .await
+            .expect("failed to find available ZMQ port");
+    }
+    let optimization_task_handle =
+        tokio::spawn(async move { optimization_task(rx_optimization, zmq_port).await });
     tokio::spawn(async move {
         while let Some(data) = rx.recv().await {
             if tx_weather.send(data).await.is_err() {
@@ -59,13 +60,13 @@ pub async fn event_loop(settings: Settings, mut rx: mpsc::Receiver<input_data::O
             sleep(Duration::from_secs(1)).await;
         }
     });
-
     tokio::spawn(async move {
         match start_julia_local(
             &settings.julia_exec,
             &settings.predicer_runner_project,
             &settings.predicer_project,
             &settings.predicer_runner_script,
+            zmq_port,
         )
         .await
         {
@@ -79,13 +80,15 @@ pub async fn event_loop(settings: Settings, mut rx: mpsc::Receiver<input_data::O
             }
         }
     });
+    if let Some(results) = optimization_task_handle.await.unwrap() {
+        println!("Result tables:");
+        for key in results.keys() {
+            println!("{}", key);
+        }
+    } else {
+        println!("did not get any results at all");
+    }
 }
-
-use std::env;
-use std::io;
-use std::process::Command;
-use std::process::ExitStatus;
-use tokio::net::TcpListener;
 
 pub async fn find_available_port() -> Result<u16, io::Error> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -98,109 +101,62 @@ pub async fn start_julia_local(
     predicer_runner_project: &String,
     predicer_project: &String,
     predicer_runner_script: &String,
+    zmq_port: u16,
 ) -> Result<ExitStatus, io::Error> {
-    let push_port = find_available_port().await?;
-    env::set_var("PUSH_PORT", push_port.to_string());
-    println!("starting Julia from {}", julia_exec);
-    println!("Predicer runner script in {}", predicer_runner_script);
-    println!("using project in {}", predicer_runner_project);
-    println!("using Predicer in {}", predicer_project);
     let status = Command::new(julia_exec)
         .arg(format!("--project={}", predicer_runner_project))
         .arg(predicer_runner_script)
         .arg(predicer_project)
+        .arg(zmq_port.to_string())
         .status()?;
     Ok(status)
 }
 
-use std::thread;
-pub async fn optimization_task(mut zmq_rx: mpsc::Receiver<OptimizationData>) {
-    let zmq_context = zmq::Context::new();
-    let responder = zmq_context.socket(zmq::REP).unwrap();
-    assert!(responder.bind("tcp://*:5555").is_ok());
-
+pub async fn optimization_task(
+    mut zmq_rx: mpsc::Receiver<OptimizationData>,
+    zmq_port: u16,
+) -> Option<BTreeMap<String, RecordBatch>> {
+    let zmq_context: Context = Context::new();
+    let reply_socket = zmq_context.socket(zmq::REP).unwrap();
+    assert!(reply_socket.bind(&format!("tcp://*:{}", zmq_port)).is_ok());
     let mut is_running = true;
-    let receive_flags = 0;
-    let send_flags = 0;
-
-    // Initialize the data store
-    let data_store: Arc<Mutex<Vec<input_data::DataTable>>> = Arc::new(Mutex::new(Vec::new()));
-
+    let mut result = None;
     // Server loop to handle requests
     while is_running {
-        let request_result = responder.recv_string(receive_flags);
+        let request_result = reply_socket.recv_string(PREDICER_RECEIVE_FLAGS);
         match request_result {
-            Ok(inner_result) => {
-                match inner_result {
-                    Ok(command) => {
-                        if command == "Hello" {
-                            println!("Received Hello");
-
-                            if let Some(data) = zmq_rx.recv().await {
-                                if let Some(batches) = data.input_data_batch {
-                                    // Send all serialized batches
-                                    for (key, buffer) in batches {
-                                        println!("Sending batch: {}", key);
-                                        if let Err(e) = responder.send(buffer, send_flags) {
-                                            eprintln!("Failed to send batch {}: {:?}", key, e);
-                                            is_running = false;
-                                            break;
-                                        }
-
-                                        // Wait for acknowledgment from the client
-                                        let ack_result = responder.recv_string(receive_flags);
-                                        match ack_result {
-                                            Ok(_ack) => {
-                                                println!(
-                                                    "Received acknowledgment for batch: {}",
-                                                    key
-                                                );
-                                            }
-                                            Err(e) => {
-                                                eprintln!(
-                                                    "Failed to receive acknowledgment: {:?}",
-                                                    e
-                                                );
-                                                is_running = false;
-                                                break;
-                                            }
-                                        }
-                                    }
-
-                                    // Send END signal after all batches are sent
-                                    println!("Sending END signal");
-                                    if let Err(e) = responder.send("END", send_flags) {
-                                        eprintln!("Failed to send END signal: {:?}", e);
-                                    }
+            Ok(inner_result) => match inner_result {
+                Ok(command) => {
+                    if command == "Hello" {
+                        if let Some(data) = zmq_rx.recv().await {
+                            if let Some(batches) = data.input_data_batch {
+                                if let Err(error) = send_predicer_batches(&reply_socket, &batches) {
+                                    eprintln!("Failed to send batches {:?}", error);
+                                    is_running = false;
                                 }
                             }
-                        } else if command.starts_with("Take this!") {
-                            let endpoint = command
-                                .strip_prefix("Take this! ")
-                                .expect("cannot decipher endpoint");
-                            responder
-                                .send("ready to receive", send_flags)
-                                .expect("failed to confirm readiness for input");
-                            //receive_data(endpoint, &zmq_context);
-                            if let Err(e) = receive_data(endpoint, &zmq_context, &data_store) {
-                                eprintln!("Failed to receive data: {:?}", e);
-                            }
-                        } else if command == "Quit" {
-                            println!("Received request to quit");
-                            is_running = false;
-                        } else {
-                            println!("Received unknown command {}", command);
                         }
+                    } else if command == "Ready to receive?" {
+                        send_acknowledgement(&reply_socket)
+                            .expect("failed to confirm readiness for input");
+                        match receive_predicer_results(&reply_socket) {
+                            Ok(optimization_result) => result = Some(optimization_result),
+                            Err(error) => eprintln!("Failed to receive data: {:?}", error),
+                        };
+                        is_running = false;
+                    } else {
+                        println!("Received unknown command {}", command);
                     }
-                    Err(_) => println!("Received absolute gibberish"),
                 }
-            }
+                Err(_) => println!("Received absolute gibberish"),
+            },
             Err(e) => {
                 println!("Failed to receive data: {:?}", e);
                 thread::sleep(time::Duration::from_secs(1));
             }
         }
     }
+    result
 }
 
 pub async fn data_conversion_task(
@@ -214,16 +170,8 @@ pub async fn data_conversion_task(
         let check_handle: JoinHandle<()> = tokio::spawn(async move {
             utilities::check_ts_data_against_temporals(data_clone).await;
         });
-
-        // Await the completion of the check task
-        let _ = check_handle.await;
-
-        // Lock the updated data and proceed with serialization
+        check_handle.await.expect("time series data check failed");
         let mut updated_data = optimization_data_arc.lock().await;
-
-        // Print the updated data for debugging
-        //println!("Updated OptimizationData: {:?}", *updated_data);
-
         if let Some(model_data) = &updated_data.model_data {
             match arrow_input::create_and_serialize_record_batches(model_data) {
                 Ok(serialized_batches) => {
@@ -242,43 +190,87 @@ pub async fn data_conversion_task(
     }
 }
 
-pub fn receive_data(
-    endpoint: &str,
-    zmq_context: &zmq::Context,
-    _data_store: &Arc<Mutex<Vec<input_data::DataTable>>>,
-) -> Result<(), Box<dyn Error>> {
-    let receiver = zmq_context.socket(zmq::PULL)?;
-    receiver.connect(endpoint)?;
-    let flags = 0;
+fn send_acknowledgement(socket: &Socket) -> Result<(), Box<dyn Error>> {
+    Ok(socket.send("Ok", PREDICER_SEND_FLAGS)?)
+}
 
-    let pull_result = receiver.recv_bytes(flags)?;
-    let reader = StreamReader::try_new(pull_result.as_slice(), None)
-        .expect("Failed to construct Arrow reader");
-
-    for record_batch_result in reader {
-        let _record_batch = record_batch_result.expect("Failed to read record batch");
-        //let data_table = input_data::DataTable::from_record_batch(&record_batch);
-
-        //let mut data_store = data_store.lock().unwrap();
-        //data_store.push(data_table);
+fn receive_acknowledgement(socket: &Socket) -> Result<(), Box<dyn Error>> {
+    match socket.recv_string(PREDICER_RECEIVE_FLAGS)? {
+        Ok(request) => {
+            if request != "Ok" {
+                return Err("unknown reply".into());
+            }
+            Ok(())
+        }
+        Err(..) => return Err("failed to decode acknowledgement".into()),
     }
+}
 
+fn send_predicer_batches(
+    socket: &Socket,
+    batches: &Vec<(String, Vec<u8>)>,
+) -> Result<(), Box<dyn Error>> {
+    for (key, buffer) in batches {
+        send_single_predicer_batch(&socket, &key, &buffer)?;
+    }
+    socket.send("End", PREDICER_SEND_FLAGS)?;
     Ok(())
 }
 
-async fn _send_serialized_batches(
-    serialized_batches: &[(String, Vec<u8>)],
-    zmq_context: &Context,
+fn send_single_predicer_batch(
+    socket: &Socket,
+    key: &str,
+    buffer: &Vec<u8>,
 ) -> Result<(), Box<dyn Error>> {
-    let push_socket = zmq_context.socket(zmq::PUSH)?;
-    push_socket.connect("tcp://127.0.0.1:5555")?;
-
-    for (key, batch) in serialized_batches {
-        println!("Sending batch: {}", key);
-        push_socket.send(batch, 0)?;
-    }
-
+    socket.send(&format!("Receive {}", key), PREDICER_SEND_FLAGS)?;
+    receive_acknowledgement(socket)?;
+    socket.send(buffer, PREDICER_SEND_FLAGS)?;
+    receive_acknowledgement(socket)?;
     Ok(())
+}
+
+fn receive_predicer_results(
+    socket: &Socket,
+) -> Result<BTreeMap<String, RecordBatch>, Box<dyn Error>> {
+    let mut data = BTreeMap::<String, RecordBatch>::new();
+    loop {
+        let request = socket
+            .recv_string(PREDICER_RECEIVE_FLAGS)?
+            .expect("failed to decode received bytes");
+        if request == "End" {
+            send_acknowledgement(&socket)?;
+            break;
+        } else if request.starts_with("Receive ") {
+            let key = match request.split_once(' ') {
+                Some((_, key)) => key,
+                None => return Err(format!("key missing from Receive request").into()),
+            };
+            send_acknowledgement(socket)?;
+            let batch = receive_single_predicer_result(socket)?;
+            data.insert(key.to_string(), batch);
+        } else {
+            return Err(format!("unknown request {}", request).into());
+        }
+    }
+    Ok(data)
+}
+
+fn receive_single_predicer_result(socket: &Socket) -> Result<RecordBatch, Box<dyn Error>> {
+    let blob = socket.recv_bytes(PREDICER_RECEIVE_FLAGS)?;
+    send_acknowledgement(socket)?;
+    let reader =
+        StreamReader::try_new(blob.as_slice(), None).expect("Failed to construct Arrow reader");
+    let mut batches = Vec::<RecordBatch>::new();
+    for read_result in reader {
+        match read_result {
+            Ok(batch) => batches.push(batch),
+            Err(error) => return Err(Box::new(error)),
+        };
+    }
+    if batches.len() != 1 {
+        return Err(format!("expected a single record batch, got {}", batches.len()).into());
+    }
+    Ok(batches.pop().expect("batches should have an element"))
 }
 
 async fn update_model_data_task(
@@ -335,55 +327,6 @@ fn update_timeseries(optimization_data: &mut OptimizationData) -> Result<(), &'s
     }
 }
 
-/*
-fn update_gen_constraints(optimization_data: &mut OptimizationData)  -> Result<(), &'static str> {
-
-    if let Some(time_data) = &optimization_data.time_data {
-
-        let model_data = optimization_data.model_data.as_mut().ok_or("Model data is not available.")?;
-
-    } else {
-        // ModelData is None
-        return Err("Time Data is not available.");
-    }
-
-
-}
-    */
-
-/*
-pub fn update_interior_air_initial_state(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
-    // Check if sensor_data is Some
-    if let Some(sensor_data) = &optimization_data.sensor_data {
-        // Ensure model_data is available
-        let model_data = optimization_data.model_data.as_mut().ok_or("Model data is not available.")?;
-        let nodes = &mut model_data.nodes;
-
-        // Find the sensor data for "interiorair"
-        if let Some(interior_air_sensor) = sensor_data.iter().find(|s| s.sensor_name == "interiorair") {
-            // Update the interiorair initial_state with the sensor temp
-            if let Some(node) = nodes.get_mut("interiorair") {
-                if let Some(ref mut state) = node.state {
-                    state.initial_state = interior_air_sensor.temp; // Correctly update the initial_state
-                    return Ok(());
-                } else {
-                    return Err("InteriorAir node state is not available.");
-                }
-            } else {
-                // "interiorair" node not found
-                return Err("InteriorAir node not found in nodes.");
-            }
-        } else {
-            // "interiorair" sensor not found
-            return Err("InteriorAir sensor not found in sensor data.");
-        }
-    } else {
-        // sensor_data is None
-        return Err("Sensor data is not available.");
-    }
-}
-*/
-
 pub fn update_npe_market_prices(
     optimization_data: &mut input_data::OptimizationData,
 ) -> Result<(), &'static str> {
@@ -418,71 +361,6 @@ pub fn update_npe_market_prices(
         return Err("Electricity price data is not available.");
     }
 }
-
-/*
-async fn update_token_in_optimization_data(optimization_data: &mut OptimizationData) -> Result<(), io::Error> {
-    let token = fs::read_to_string("config/token.txt")?;
-
-    if let Some(ref mut elec_price_source) = optimization_data.elec_price_source {
-        elec_price_source.token = Some(token);
-    } else {
-        // Optionally handle the case where elec_price_source is None
-        optimization_data.elec_price_source = Some(ElecPriceSource {
-            api_source: String::new(), // Or some default value
-            token: Some(token),
-            country: None,
-            bidding_in_domain: None,
-            bidding_out_domain: None,
-        });
-    }
-
-    Ok(())
-}
-*/
-
-/*
-async fn create_time_data_task(
-    mut rx: mpsc::Receiver<OptimizationData>,
-    tx: mpsc::Sender<OptimizationData>,
-) {
-    while let Some(mut optimization_data) = rx.recv().await {
-        if let Some(timezone_str) = optimization_data.timezone.as_deref() {
-            if let Ok((start_time, end_time)) = input_data::calculate_time_range(timezone_str, &optimization_data.temporals) {
-                // Generate the series of timestamps based on the DateTime<FixedOffset> objects
-                // Here, convert DateTime<FixedOffset> to strings only if necessary for the generate_hourly_timestamps function or any subsequent operation
-                match input_data::generate_hourly_timestamps(start_time, end_time).await {
-                    Ok(series) => {
-                        // Update optimization_data.time_data with the new TimeData
-                        // Here we keep start_time and end_time as DateTime<FixedOffset> objects
-
-                        optimization_data.time_data = Some(input_data::TimeData {
-                            start_time,
-                            end_time,
-                            series,
-                        });
-
-                    },
-                    Err(e) => {
-                        eprintln!("Error generating hourly timestamps: {}", e);
-                        continue;
-                    }
-                }
-            } else {
-                eprintln!("Error calculating time range.");
-                continue;
-            }
-        } else {
-            eprintln!("Timezone is missing from OptimizationData.");
-            continue;
-        }
-
-        // Send the updated optimization data
-        if tx.send(optimization_data).await.is_err() {
-            eprintln!("Failed to send updated OptimizationData");
-        }
-    }
-}
-    */
 
 async fn fetch_weather_data_task(
     mut rx: mpsc::Receiver<OptimizationData>,
@@ -772,42 +650,6 @@ pub fn create_modified_price_series_data(
     }
 }
 
-/*
-async fn fetch_entsoe_electricity_prices(
-    start_time: String,
-    end_time: String,
-    country: String,
-    token: String, // API token is now a parameter
-) -> Result<input_data::ElectricityPriceData, Box<dyn Error + Send>> {
-    println!("Fetching electricity price data for country: {}, start time: {}, end time: {}", country, start_time, end_time);
-
-    let client = Client::new();
-    let url = format!("https://transparency.entsoe.eu/api?documentType=A44&in_Domain={}&out_Domain={}&periodStart={}&periodEnd={}",
-                      country, country, start_time, end_time);
-
-    let response = client.get(&url)
-        .header("accept", "application/json")
-        .header("X-API-Key", token) // Use your API key here
-        .send().await
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
-
-    let full_data: HashMap<String, serde_json::Value> = response.json().await
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send>)?;
-
-    // Assuming the API returns data in a format that needs parsing similar to your original function.
-    // You will need to adjust the parsing logic based on the actual structure of the ENTSO-E API response.
-
-    // Example placeholder for parsing logic. Replace with actual parsing based on the response structure.
-    let electricity_price_data = input_data::ElectricityPriceData {
-        country: country.clone(),
-        // Placeholder for price data. Replace with actual data parsed from the response.
-        price_data: vec![],
-    };
-
-    Ok(electricity_price_data)
-}
-    */
-
 async fn fetch_elec_price_task(
     mut rx: mpsc::Receiver<OptimizationData>,
     tx: mpsc::Sender<OptimizationData>,
@@ -865,6 +707,252 @@ async fn fetch_elec_price_task(
         } else {
             println!("Channel closed, stopping task.");
             break;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::array::Int8Array;
+    use arrow::datatypes::{DataType, Field, Schema};
+    use std::net::TcpListener as SyncTcpListener;
+    use std::thread;
+
+    fn find_available_port_sync() -> Result<u16, io::Error> {
+        let listener = SyncTcpListener::bind("127.0.0.1:0")?;
+        let port = listener.local_addr()?.port();
+        Ok(port)
+    }
+    fn make_serialized_record_batch(data: Vec<i8>) -> Vec<u8> {
+        let array = Int8Array::from(data);
+        let schema = Schema::new(vec![Field::new("number", DataType::Int8, false)]);
+        let batch = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(array)]).unwrap();
+        arrow_input::serialize_batch_to_buffer(&batch).expect("failed to serialize batch")
+    }
+    mod send_predicer_batches {
+        use super::*;
+        #[test]
+        fn sends_end_message_last() -> Result<(), Box<dyn Error>> {
+            let zmq_context: Context = Context::new();
+            let request_socket = zmq_context
+                .socket(zmq::REQ)
+                .expect("failed to create request socket");
+            let port: u16 = find_available_port_sync()?;
+            let join_handle = thread::spawn(move || {
+                let reply_socket = zmq_context
+                    .socket(zmq::REP)
+                    .expect("failed to create reply socket");
+                reply_socket
+                    .bind(&format!("tcp://*:{}", port))
+                    .expect("failed to bind reply socket");
+                assert_eq!(
+                    reply_socket
+                        .recv_string(0)
+                        .expect("failed to receive hello")
+                        .expect("failed to decode hello"),
+                    "Hello"
+                );
+                send_predicer_batches(&reply_socket, &Vec::<(String, Vec<u8>)>::new())
+                    .expect("failed to send batches");
+            });
+            request_socket
+                .connect(&format!("tcp://127.0.0.1:{}", port))
+                .expect("failed to connect request socket");
+            request_socket.send("Hello", PREDICER_SEND_FLAGS)?;
+            let end_message = request_socket
+                .recv_string(PREDICER_RECEIVE_FLAGS)?
+                .expect("failed to decode key");
+            assert_eq!(end_message, "End");
+            join_handle
+                .join()
+                .expect("failed to join the sender thread");
+            Ok(())
+        }
+    }
+    mod send_single_predicer_batch {
+        use super::*;
+        #[test]
+        fn sending_single_record_batch_works() -> Result<(), Box<dyn Error>> {
+            let zmq_context: Context = Context::new();
+            let request_socket = zmq_context
+                .socket(zmq::REQ)
+                .expect("failed to create request socket");
+            let port: u16 = find_available_port_sync()?;
+            let join_handle = thread::spawn(move || {
+                let reply_socket = zmq_context
+                    .socket(zmq::REP)
+                    .expect("failed to create reply socket");
+                reply_socket
+                    .bind(&format!("tcp://*:{}", port))
+                    .expect("failed to bind reply socket");
+                assert_eq!(
+                    reply_socket
+                        .recv_string(0)
+                        .expect("failed to receive hello")
+                        .expect("failed to decode hello"),
+                    "Hello"
+                );
+                send_single_predicer_batch(&reply_socket, "my key", &vec![23])
+                    .expect("failed to send batch");
+            });
+            request_socket
+                .connect(&format!("tcp://127.0.0.1:{}", port))
+                .expect("failed to connect request socket");
+            request_socket.send("Hello", PREDICER_SEND_FLAGS)?;
+            let key = request_socket
+                .recv_string(PREDICER_RECEIVE_FLAGS)?
+                .expect("failed to decode key");
+            assert_eq!(key, "Receive my key");
+            send_acknowledgement(&request_socket).expect("failed to send acknowledgement");
+            let buffer = request_socket
+                .recv_bytes(PREDICER_RECEIVE_FLAGS)
+                .expect("failed to receive bytes");
+            assert_eq!(buffer, vec![23]);
+            send_acknowledgement(&request_socket).expect("failed to send acknowledgement");
+            join_handle
+                .join()
+                .expect("failed to join the sender thread");
+            Ok(())
+        }
+    }
+    mod receive_predicer_results {
+        use super::*;
+        #[test]
+        fn end_message_stops_receiving() -> Result<(), Box<dyn Error>> {
+            let zmq_context: Context = Context::new();
+            let request_socket = zmq_context
+                .socket(zmq::REQ)
+                .expect("failed to create request socket");
+            let port: u16 = find_available_port_sync()?;
+            let join_handle = thread::spawn(move || {
+                let reply_socket = zmq_context
+                    .socket(zmq::REP)
+                    .expect("failed to create reply socket");
+                reply_socket
+                    .bind(&format!("tcp://*:{}", port))
+                    .expect("failed to bind reply socket");
+                let data_store =
+                    receive_predicer_results(&reply_socket).expect("failed to receive batches");
+                data_store
+            });
+            request_socket
+                .connect(&format!("tcp://127.0.0.1:{}", port))
+                .expect("failed to connect request socket");
+            request_socket
+                .send("End", PREDICER_SEND_FLAGS)
+                .expect("failed to hail replier");
+            let data_store = join_handle.join().expect("failed to join replier thread");
+            assert!(data_store.is_empty());
+            Ok(())
+        }
+        #[test]
+        fn receive_single_record_batch_works() -> Result<(), Box<dyn Error>> {
+            let zmq_context: Context = Context::new();
+            let request_socket = zmq_context
+                .socket(zmq::REQ)
+                .expect("failed to create request socket");
+            let port: u16 = find_available_port_sync()?;
+            let join_handle = thread::spawn(move || {
+                let reply_socket = zmq_context
+                    .socket(zmq::REP)
+                    .expect("failed to create reply socket");
+                reply_socket
+                    .bind(&format!("tcp://*:{}", port))
+                    .expect("failed to bind reply socket");
+                let data_store =
+                    receive_predicer_results(&reply_socket).expect("failed to receive batches");
+                data_store
+            });
+            request_socket
+                .connect(&format!("tcp://127.0.0.1:{}", port))
+                .expect("failed to connect request socket");
+            request_socket
+                .send("Receive my key", PREDICER_SEND_FLAGS)
+                .expect("failed to hail replier");
+            let serialized_batch = make_serialized_record_batch(vec![-1, 0, 1]);
+            let ok = request_socket
+                .recv_string(PREDICER_RECEIVE_FLAGS)?
+                .expect("failed to decode  acknowledgement");
+            assert_eq!(ok, "Ok");
+            request_socket
+                .send(serialized_batch, PREDICER_SEND_FLAGS)
+                .expect("failed to send record batch");
+            let ok = request_socket
+                .recv_string(PREDICER_RECEIVE_FLAGS)?
+                .expect("failed to decode acknowledgement");
+            assert_eq!(ok, "Ok");
+            request_socket
+                .send("End", PREDICER_SEND_FLAGS)
+                .expect("failed to send end message");
+            let data_store = join_handle.join().expect("failed to join replier thread");
+            assert!(!data_store.is_empty());
+            let record_batch = match data_store.get("my key") {
+                Some(batch) => batch,
+                None => return Err("expected key does not exist".into()),
+            };
+            assert_eq!(record_batch.schema().fields().len(), 1);
+            assert_eq!(record_batch.schema().fields()[0].name(), "number");
+            let number_column = match record_batch.column_by_name("number") {
+                Some(column) => column,
+                None => return Err("numbers not found".into()),
+            };
+            assert_eq!(number_column.len(), 3);
+            assert_eq!(
+                number_column
+                    .as_any()
+                    .downcast_ref::<Int8Array>()
+                    .expect("failed to downcast array")
+                    .values(),
+                &[-1, 0, 1]
+            );
+            Ok(())
+        }
+    }
+    mod receive_single_predicer_result {
+        use super::*;
+        #[test]
+        fn receiving_record_batch_works() -> Result<(), Box<dyn Error>> {
+            let zmq_context: Context = Context::new();
+            let request_socket = zmq_context
+                .socket(zmq::REQ)
+                .expect("failed to create request socket");
+            let port: u16 = find_available_port_sync()?;
+            let join_handle = thread::spawn(move || {
+                let reply_socket = zmq_context
+                    .socket(zmq::REP)
+                    .expect("failed to create reply socket");
+                reply_socket
+                    .bind(&format!("tcp://*:{}", port))
+                    .expect("failed to bind reply socket");
+                receive_single_predicer_result(&reply_socket).expect("error when receiving batch")
+            });
+            request_socket
+                .connect(&format!("tcp://127.0.0.1:{}", port))
+                .expect("failed to connect request socket");
+            let serialized_batch = make_serialized_record_batch(vec![-1, 0, 1]);
+            request_socket.send(serialized_batch, PREDICER_SEND_FLAGS)?;
+            let acknowledgement = request_socket
+                .recv_string(PREDICER_RECEIVE_FLAGS)?
+                .expect("failed to decode acknowledgement");
+            assert_eq!(acknowledgement, "Ok");
+            let record_batch = join_handle.join().expect("failed to join replier thread");
+            assert_eq!(record_batch.schema().fields().len(), 1);
+            assert_eq!(record_batch.schema().fields()[0].name(), "number");
+            let number_column = match record_batch.column_by_name("number") {
+                Some(column) => column,
+                None => return Err("numbers not found".into()),
+            };
+            assert_eq!(number_column.len(), 3);
+            assert_eq!(
+                number_column
+                    .as_any()
+                    .downcast_ref::<Int8Array>()
+                    .expect("failed to downcast array")
+                    .values(),
+                &[-1, 0, 1]
+            );
+            Ok(())
         }
     }
 }

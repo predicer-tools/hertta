@@ -19,6 +19,8 @@ pub struct Settings {
     pub predicer_project: String,
     #[serde(skip, default = "default_predicer_runner_script")]
     pub predicer_runner_script: String,
+    #[serde(default = "default_predicer_port")]
+    pub predicer_port: u16,
 }
 
 impl Default for Settings {
@@ -28,6 +30,7 @@ impl Default for Settings {
             predicer_runner_project: JULIA_DEFAULT_PROJECT.to_string(),
             predicer_project: default_predicer_project(),
             predicer_runner_script: default_predicer_runner_script(),
+            predicer_port: default_predicer_port(),
         }
     }
 }
@@ -52,6 +55,10 @@ fn default_predicer_runner_script() -> String {
         .to_str()
         .expect("predicer runner script path contains unknown characters")
         .to_string()
+}
+
+fn default_predicer_port() -> u16 {
+    0
 }
 
 fn path_to_string(path: &PathBuf) -> String {

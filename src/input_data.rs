@@ -1,4 +1,3 @@
-//use crate::errors;
 use crate::utilities;
 
 use arrow::record_batch::RecordBatch;
