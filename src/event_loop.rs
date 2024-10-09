@@ -5,7 +5,7 @@ use crate::settings::Settings;
 use crate::utilities;
 use arrow::array::RecordBatch;
 use arrow::ipc::reader::StreamReader;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, Utc};
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::io;
@@ -465,7 +465,7 @@ pub fn create_and_update_weather_data(optimization_data: &mut OptimizationData, 
 
 // Function to create TimeSeriesData with scenarios "s1" and "s2" using paired series
 fn create_time_series_data_with_scenarios(
-    paired_series: BTreeMap<String, f64>,
+    paired_series: BTreeMap<DateTime<FixedOffset>, f64>,
 ) -> input_data::TimeSeriesData {
     // Create TimeSeries instances for scenarios "s1" and "s2" with the same series data
     let time_series_s1 = input_data::TimeSeries {
@@ -484,7 +484,10 @@ fn create_time_series_data_with_scenarios(
     }
 }
 
-pub fn pair_timeseries_with_values(series: &[String], values: &[f64]) -> BTreeMap<String, f64> {
+pub fn pair_timeseries_with_values(
+    series: &[DateTime<FixedOffset>],
+    values: &[f64],
+) -> BTreeMap<DateTime<FixedOffset>, f64> {
     series
         .iter()
         .zip(values.iter())
@@ -542,7 +545,7 @@ async fn fetch_electricity_prices(
     start_time: String,
     end_time: String,
     country: String,
-) -> Result<BTreeMap<String, f64>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<BTreeMap<DateTime<FixedOffset>, f64>, Box<dyn std::error::Error + Send + Sync>> {
     let client = reqwest::Client::new();
     let url = format!(
         "https://dashboard.elering.ee/api/nps/price?start={}&end={}",
@@ -575,12 +578,11 @@ async fn fetch_electricity_prices(
     })?;
 
     // Convert the prices to the desired format and collect them in BTreeMap
-    let mut series = BTreeMap::new();
+    let mut series = BTreeMap::<DateTime<FixedOffset>, f64>::new();
     for entry in country_data {
         if let (Some(&timestamp), Some(&price)) = (entry.get("timestamp"), entry.get("price")) {
             if let Some(datetime) = DateTime::<Utc>::from_timestamp(timestamp as i64, 0) {
-                let timestamp_str = datetime.format("%Y-%m-%dT%H:00:00Z").to_string();
-                series.insert(timestamp_str, price * 1.0); // Convert from EUR/MWh to cents/kWh if needed
+                series.insert(datetime.into(), price * 1.0);
             } else {
                 return Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -589,27 +591,26 @@ async fn fetch_electricity_prices(
             }
         }
     }
-
     Ok(series)
 }
 
 pub fn create_and_update_elec_price_data(
     optimization_data: &mut OptimizationData,
-    price_series: &BTreeMap<String, f64>,
+    price_series: &BTreeMap<DateTime<FixedOffset>, f64>,
 ) {
     if let Some(_time_data) = &optimization_data.time_data {
         // Generating modified TimeSeriesData for original, up, and down price scenarios
-        let original_ts_data = Some(create_modified_price_series_data(&price_series, 1.0)); // No modification for the original
-        let up_price_ts_data = Some(create_modified_price_series_data(&price_series, 1.1)); // Increase by 10%
-        let down_price_ts_data = Some(create_modified_price_series_data(&price_series, 0.9)); // Decrease by 10%
+        let original_ts_data = Some(create_modified_price_series_data(price_series, 1.0));
+        let up_price_ts_data = Some(create_modified_price_series_data(price_series, 1.1));
+        let down_price_ts_data = Some(create_modified_price_series_data(price_series, 0.9));
 
         // Assuming the country is defined somewhere within optimization_data, for example in the location field
         let country = optimization_data.location.clone().unwrap_or_default();
 
         // Constructing the ElectricityPriceData structure
         let electricity_price_data = input_data::ElectricityPriceData {
-            api_source: Some("".to_string()),
-            api_key: Some("".to_string()),
+            api_source: Some(String::new()),
+            api_key: Some(String::new()),
             country: Some(country),
             price_data: original_ts_data,
             up_price_data: up_price_ts_data,
@@ -624,11 +625,11 @@ pub fn create_and_update_elec_price_data(
 }
 
 pub fn create_modified_price_series_data(
-    original_series: &BTreeMap<String, f64>,
+    original_series: &BTreeMap<DateTime<FixedOffset>, f64>,
     multiplier: f64,
 ) -> input_data::TimeSeriesData {
     // Create a modified series by multiplying each price by the multiplier
-    let modified_series: BTreeMap<String, f64> = original_series
+    let modified_series: BTreeMap<DateTime<FixedOffset>, f64> = original_series
         .iter()
         .map(|(timestamp, price)| (timestamp.clone(), price * multiplier))
         .collect();
@@ -681,7 +682,6 @@ async fn fetch_elec_price_task(
                 match fetch_electricity_prices(start_time_str, end_time_str, country.clone()).await
                 {
                     Ok(prices) => {
-                        //println!("Fetched electricity prices for country '{}': {:?}", country, prices);
                         create_and_update_elec_price_data(&mut optimization_data, &prices);
                         if tx.send(optimization_data).await.is_err() {
                             eprintln!(

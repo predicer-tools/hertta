@@ -5,6 +5,7 @@ zmq_port = ARGS[2]
 
 Pkg.instantiate()
 Pkg.add("Arrow")
+Pkg.add("DataFrames")
 Pkg.add("ZMQ")
 Pkg.add("OrderedCollections")
 Pkg.add("TimeZones")
@@ -23,6 +24,7 @@ Pkg.instantiate()
 using Predicer
 
 zmq_context = Context()
+time_stamp_format = dateformat"yyyy-mm-ddTHH:MM:SS.s"
 
 function send_acknowledgement(socket::Socket)
     ZMQ.send(socket, "Ok")
@@ -61,26 +63,21 @@ function receive_data(socket::Socket)
     data_dict
 end
 
-function convert_t_to_datetime!(df::DataFrame)
+function convert_time_stamps!(df::DataFrame)
     if hasproperty(df, :t)
-        println("Found 't' column with values: ", df.t)
-        if eltype(df.t) == String
+        if eltype(df.t) == DateTime
             try
-                df.t = DateTime.(df.t, "yyyy-mm-ddTHH:MM:SS.s")  # Adjust format if necessary
-                println("Converted 't' column to DateTime successfully.")
+                df.t = Dates.format.(df.t, time_stamp_format)
             catch e
                 println("Error converting 't' column: ", e)
             end
-        elseif eltype(df.t) == Union{Missing, String}
+        elseif eltype(df.t) == Union{Missing, DateTime}
             try
-                df.t = coalesce.(DateTime.(df.t, "yyyy-mm-ddTHH:MM:SS.s"), missing)  # Convert missing values if present
-                println("Converted 't' column to DateTime successfully with missing values.")
+                df.t = coalesce.(Dates.format.(df.t, time_stamp_format), missing)
             catch e
                 println("Error converting 't' column with missing values: ", e)
             end
         end
-    else
-        println("No 't' column found in DataFrame.")
     end
 end
 
@@ -99,7 +96,7 @@ function split_data_to_system_and_time_series(data::OrderedDict{String, DataFram
     system_data = OrderedDict()
     timeseries_data = OrderedDict()
     for (key, df) in data
-        convert_t_to_datetime!(df)
+        # convert_time_stamps!(df)
         if key in sheetnames_system
             delete!(sheetnames_system, key)
             system_data[key] = df
@@ -141,7 +138,7 @@ function main()
     ZMQ.send(socket, "Hello")
     data_dict = receive_data(socket)
     println("All data received.")
-    temporals = collect(pop!(data_dict, "temps").t)
+    temporals = string.(ZonedDateTime.(pop!(data_dict, "temps").t, tz"UTC"))
     (system_data, timeseries_data) = split_data_to_system_and_time_series(data_dict)
     input_data = Predicer.compile_input_data(system_data, timeseries_data, temporals)
     mc, input_data = Predicer.generate_model(input_data)
