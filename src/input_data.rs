@@ -46,11 +46,9 @@ pub struct InputData {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Temporals {
-    pub t: Vec<String>,
+    pub t: Vec<DateTime<FixedOffset>>,
     pub dtf: f64,
-    pub is_variable_dt: bool,
-    pub variable_dt: Vec<(String, f64)>,
-    pub ts_format: String,
+    pub variable_dt: Option<Vec<(String, f64)>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -158,34 +156,39 @@ pub struct Group {
 pub struct InflowBlock {
     pub name: String,
     pub node: String,
-    pub start_time: String,
+    pub start_time: DateTime<FixedOffset>,
     pub data: TimeSeriesData,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct BidSlot {
     pub market: String,
-    pub time_steps: Vec<String>,
+    pub time_steps: Vec<DateTime<FixedOffset>>,
     pub slots: Vec<String>,
     #[serde(deserialize_with = "deserialize_prices")]
-    pub prices: BTreeMap<(String, String), f64>,
+    pub prices: BTreeMap<(DateTime<FixedOffset>, String), f64>,
     #[serde(deserialize_with = "deserialize_market_price_allocation")]
-    pub market_price_allocation: BTreeMap<(String, String), (String, String)>,
+    pub market_price_allocation: BTreeMap<(String, DateTime<FixedOffset>), (String, String)>,
 }
 
-fn deserialize_prices<'de, D>(deserializer: D) -> Result<BTreeMap<(String, String), f64>, D::Error>
+fn parse_time_stamp(key: &str) -> Result<DateTime<FixedOffset>, String> {
+    DateTime::parse_from_rfc3339(key.trim_matches(|c| c == '"'))
+        .map_err(|error| format!("invalid time format {} for prices: {}", key, error))
+}
+
+fn deserialize_prices<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<(DateTime<FixedOffset>, String), f64>, D::Error>
 where
     D: Deserializer<'de>,
 {
     struct PricesVisitor;
 
     impl<'de> Visitor<'de> for PricesVisitor {
-        type Value = BTreeMap<(String, String), f64>;
+        type Value = BTreeMap<(DateTime<FixedOffset>, String), f64>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str(
-                "a map with string keys formatted as tuple (String, String) and float values",
-            )
+            formatter.write_str("a map with (time stamp, string) formatted as tuple (String, String) keys and float values")
         }
 
         fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
@@ -203,31 +206,32 @@ where
                 if key.len() != 2 {
                     return Err(de::Error::custom("invalid key format for prices"));
                 }
-                map.insert((key[0].clone(), key[1].clone()), value);
+                let time_stamp =
+                    parse_time_stamp(&key[0]).map_err(|error| de::Error::custom(error))?;
+                map.insert(
+                    (time_stamp, key[1].trim_matches(|c| c == '"').to_string()),
+                    value,
+                );
             }
-
             Ok(map)
         }
     }
-
     deserializer.deserialize_map(PricesVisitor)
 }
 
 fn deserialize_market_price_allocation<'de, D>(
     deserializer: D,
-) -> Result<BTreeMap<(String, String), (String, String)>, D::Error>
+) -> Result<BTreeMap<(String, DateTime<FixedOffset>), (String, String)>, D::Error>
 where
     D: Deserializer<'de>,
 {
     struct MarketPriceAllocationVisitor;
-
     impl<'de> Visitor<'de> for MarketPriceAllocationVisitor {
-        type Value = BTreeMap<(String, String), (String, String)>;
+        type Value = BTreeMap<(String, DateTime<FixedOffset>), (String, String)>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a map with string keys formatted as tuple (String, String) and tuple (String, String) values")
+            formatter.write_str("a map with (string, time stamp) formatted as tuple (String, String) and tuple (String, String) values")
         }
-
         fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
         where
             M: MapAccess<'de>,
@@ -245,16 +249,16 @@ where
                         "invalid key format for market_price_allocation",
                     ));
                 }
+                let time_stamp =
+                    parse_time_stamp(&key[1]).map_err(|error| de::Error::custom(error))?;
                 map.insert(
-                    (key[0].clone(), key[1].clone()),
+                    (key[0].trim_matches(|c| c == '"').to_string(), time_stamp),
                     (value[0].clone(), value[1].clone()),
                 );
             }
-
             Ok(map)
         }
     }
-
     deserializer.deserialize_map(MarketPriceAllocationVisitor)
 }
 
@@ -303,11 +307,11 @@ pub struct TimeSeriesData {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TimeSeries {
     pub scenario: String,
-    pub series: BTreeMap<String, f64>,
+    pub series: BTreeMap<DateTime<FixedOffset>, f64>,
 }
 
 impl TimeSeriesData {
-    pub fn from_temporals(temporals_t: &[String], scenario: String) -> Self {
+    pub fn from_temporals(temporals_t: &[DateTime<FixedOffset>], scenario: String) -> Self {
         let mut series = BTreeMap::new();
         for time in temporals_t {
             series.insert(time.clone(), 1.0);
@@ -316,13 +320,6 @@ impl TimeSeriesData {
         TimeSeriesData {
             ts_data: vec![time_series],
         }
-    }
-}
-
-// Implement a function to create the TimeSeries
-impl TimeSeries {
-    fn _new(scenario: String, series: BTreeMap<String, f64>) -> TimeSeries {
-        TimeSeries { scenario, series }
     }
 }
 
@@ -356,7 +353,7 @@ impl DataTable {
         for row_index in 0..batch.num_rows() {
             let mut row = Vec::new();
             for column in batch.columns() {
-                let value = utilities::_column_value_to_string(column, row_index);
+                let value = utilities::column_value_to_string(column, row_index);
                 row.push(value);
             }
             data.push(row);
@@ -403,7 +400,7 @@ pub struct TimeData {
     pub start_time: DateTime<FixedOffset>,
     #[serde(serialize_with = "serialize", deserialize_with = "deserialize")]
     pub end_time: DateTime<FixedOffset>,
-    pub series: Vec<String>,
+    pub series: Vec<DateTime<FixedOffset>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

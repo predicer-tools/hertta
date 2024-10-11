@@ -1,4 +1,6 @@
 *.jl text
+*.json text
+*.md text
 *.py text
 *.rs text
 *.toml rext

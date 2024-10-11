@@ -1,22 +1,21 @@
 use crate::arrow_errors;
 use crate::input_data;
-use crate::input_data::InputData;
+use crate::input_data::{InputData, Market};
 use arrow::array::{
     Array, ArrayRef, BooleanArray, Float64Array, Int32Array, Int64Array, StringArray,
+    TimestampMillisecondArray, UnionArray,
 };
-use arrow::{
-    datatypes::{DataType, Field, Schema},
-    error::ArrowError,
-    record_batch::RecordBatch,
-};
+use arrow::buffer::ScalarBuffer;
+use arrow::datatypes::{DataType, Field, Schema, TimeUnit, UnionFields};
+use arrow::{error::ArrowError, record_batch::RecordBatch};
 use arrow_errors::DataConversionError;
 use arrow_ipc::writer::StreamWriter;
+use chrono::{DateTime, FixedOffset};
 use prettytable::{Cell, Row, Table};
+use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::sync::Arc;
-//use log::info;
-use std::collections::BTreeSet;
 
 pub fn _print_record_batches(batches: &HashMap<String, RecordBatch>) -> Result<(), Box<dyn Error>> {
     for (name, batch) in batches {
@@ -183,104 +182,87 @@ pub fn serialize_batch_to_buffer(
     Ok(buffer)
 }
 
+fn make_timestamp_field() -> Field {
+    Field::new("t", DataType::Timestamp(TimeUnit::Millisecond, None), false)
+}
+
+fn times_stamp_array_from_temporal_stamps(
+    stamps: &Vec<DateTime<FixedOffset>>,
+) -> Arc<TimestampMillisecondArray> {
+    Arc::new(stamps.iter().map(|s| Some(s.timestamp_millis())).collect())
+}
+
 pub fn temps_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("temps");
-    let temporals = &input_data.temporals;
-
-    let fields = vec![Field::new("t", DataType::Utf8, false)];
+    let fields = vec![make_timestamp_field()];
     let schema = Arc::new(Schema::new(fields));
-
-    // Create the StringArray from temporals.t
-    let t_values: Vec<&str> = temporals.t.iter().map(|s| s.as_str()).collect();
-    let t_array = StringArray::from(t_values);
-    let t_column: ArrayRef = Arc::new(t_array);
-
-    RecordBatch::try_new(schema, vec![t_column])
+    let stamp_column = times_stamp_array_from_temporal_stamps(&input_data.temporals.t) as ArrayRef;
+    let columns = vec![stamp_column];
+    RecordBatch::try_new(schema, columns)
 }
 
 pub fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, DataConversionError> {
-    //println!("setup");
     let setup = &input_data.setup;
-
-    let schema = Schema::new(vec![
-        Field::new("parameter", DataType::Utf8, false),
-        Field::new("value", DataType::Utf8, true),
+    let parameters = vec![
+        "use_market_bids",
+        "use_reserves",
+        "use_reserve_realisation",
+        "use_node_dummy_variables",
+        "use_ramp_dummy_variables",
+        "node_dummy_variable_cost",
+        "ramp_dummy_variable_cost",
+        "common_timesteps",
+        "common_scenario_name",
+    ];
+    let bool_array = BooleanArray::from(vec![
+        setup.contains_markets,
+        setup.contains_reserves,
+        setup.reserve_realisation,
+        setup.use_node_dummy_variables,
+        setup.use_ramp_dummy_variables,
     ]);
-
-    let mut parameters = Vec::new();
-    let mut values = Vec::new();
-
-    parameters.push("use_market_bids");
-    if setup.contains_markets {
-        values.push("1".to_string());
+    let float_array = Float64Array::from(vec![
+        setup.node_dummy_variable_cost,
+        setup.ramp_dummy_variable_cost,
+    ]);
+    let int_array = Int64Array::from(vec![setup.common_timesteps]);
+    let scenario_name = if setup.common_scenario_name.is_empty() {
+        "missing".to_string()
     } else {
-        values.push("0".to_string());
-    }
-
-    parameters.push("use_reserves");
-    if setup.contains_reserves {
-        values.push("1".to_string());
-    } else {
-        values.push("0".to_string());
-    }
-
-    parameters.push("use_reserve_realisation");
-    if setup.reserve_realisation {
-        values.push("1".to_string());
-    } else {
-        values.push("0".to_string());
-    }
-
-    parameters.push("use_node_dummy_variables");
-    if setup.use_node_dummy_variables {
-        values.push("1".to_string());
-    } else {
-        values.push("0".to_string());
-    }
-
-    parameters.push("use_ramp_dummy_variables");
-    if setup.use_ramp_dummy_variables {
-        values.push("1".to_string());
-    } else {
-        values.push("0".to_string());
-    }
-
-    parameters.push("node_dummy_variable_cost");
-    if setup.node_dummy_variable_cost != 0.0 {
-        values.push(setup.node_dummy_variable_cost.to_string());
-    } else {
-        values.push("0.0".to_string());
-    }
-
-    parameters.push("ramp_dummy_variable_cost");
-    if setup.ramp_dummy_variable_cost != 0.0 {
-        values.push(setup.ramp_dummy_variable_cost.to_string());
-    } else {
-        values.push("0.0".to_string());
-    }
-
-    // Always include common_timesteps
-    parameters.push("common_timesteps");
-    values.push(setup.common_timesteps.to_string());
-
-    // Include common_scenario_name with a default value if it's empty
-    parameters.push("common_scenario_name");
-    if setup.common_scenario_name.is_empty() {
-        values.push("missing".to_string());
-    } else {
-        values.push(setup.common_scenario_name.clone());
-    }
-
-    // Check for logical errors in input before creating arrays
+        setup.common_scenario_name.clone()
+    };
+    let str_array = StringArray::from(vec![scenario_name]);
+    let union_fields = [
+        (0, Arc::new(Field::new("bool", DataType::Boolean, false))),
+        (1, Arc::new(Field::new("float", DataType::Float64, false))),
+        (2, Arc::new(Field::new("int", DataType::Int32, false))),
+        (3, Arc::new(Field::new("str", DataType::Utf8, false))),
+    ]
+    .into_iter()
+    .collect::<UnionFields>();
+    let type_ids = [0, 0, 0, 0, 0, 1, 1, 2, 3]
+        .into_iter()
+        .collect::<ScalarBuffer<i8>>();
+    let offsets = [0, 1, 2, 3, 4, 0, 1, 0, 0]
+        .into_iter()
+        .collect::<ScalarBuffer<i32>>();
+    let children = vec![
+        Arc::new(bool_array) as ArrayRef,
+        Arc::new(float_array),
+        Arc::new(int_array),
+        Arc::new(str_array),
+    ];
+    let values = UnionArray::try_new(union_fields, type_ids, Some(offsets), children).unwrap();
     if parameters.len() != values.len() {
         return Err(DataConversionError::InvalidInput(
             "Mismatched parameters and values lengths".to_string(),
         ));
     }
-
     let parameter_array = Arc::new(StringArray::from(parameters)) as ArrayRef;
-    let value_array = Arc::new(StringArray::from(values)) as ArrayRef;
-
+    let value_array = Arc::new(values) as ArrayRef;
+    let schema = Schema::new(vec![
+        Field::new("parameter", DataType::Utf8, false),
+        Field::new("value", value_array.data_type().clone(), true),
+    ]);
     RecordBatch::try_new(Arc::new(schema), vec![parameter_array, value_array])
         .map_err(DataConversionError::from)
 }
@@ -288,10 +270,7 @@ pub fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, Da
 //What are the default values if State is None?
 //How to add the node.groups here?
 pub fn nodes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("nodes");
     let nodes = &input_data.nodes;
-
-    // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
         Field::new("node", DataType::Utf8, false),
         Field::new("is_commodity", DataType::Boolean, false),
@@ -307,27 +286,26 @@ pub fn nodes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError>
         Field::new("state_loss_proportional", DataType::Float64, false),
         Field::new("scenario_independent_state", DataType::Boolean, false),
         Field::new("is_temp", DataType::Boolean, false),
-        Field::new("T_E_conversion", DataType::Float64, false),
+        Field::new("t_e_conversion", DataType::Float64, false),
         Field::new("residual_value", DataType::Float64, false),
     ]);
-
-    let mut names: Vec<String> = Vec::new();
-    let mut is_commodity: Vec<bool> = Vec::new();
-    let mut is_state: Vec<bool> = Vec::new();
-    let mut is_res: Vec<bool> = Vec::new();
-    let mut is_market: Vec<bool> = Vec::new();
-    let mut is_inflow: Vec<bool> = Vec::new();
-    let mut state_maxs: Vec<f64> = Vec::new();
-    let mut state_mins: Vec<f64> = Vec::new();
-    let mut in_maxs: Vec<f64> = Vec::new();
-    let mut out_maxs: Vec<f64> = Vec::new();
-    let mut initial_states: Vec<f64> = Vec::new();
-    let mut state_loss_proportionals: Vec<f64> = Vec::new();
-    let mut scenario_independent_states: Vec<bool> = Vec::new();
-    let mut is_temps: Vec<bool> = Vec::new();
-    let mut t_e_conversions: Vec<f64> = Vec::new();
-    let mut residual_values: Vec<f64> = Vec::new();
-
+    let size = nodes.len();
+    let mut names: Vec<String> = Vec::with_capacity(size);
+    let mut is_commodity: Vec<bool> = Vec::with_capacity(size);
+    let mut is_state: Vec<bool> = Vec::with_capacity(size);
+    let mut is_res: Vec<bool> = Vec::with_capacity(size);
+    let mut is_market: Vec<bool> = Vec::with_capacity(size);
+    let mut is_inflow: Vec<bool> = Vec::with_capacity(size);
+    let mut state_maxs: Vec<f64> = Vec::with_capacity(size);
+    let mut state_mins: Vec<f64> = Vec::with_capacity(size);
+    let mut in_maxs: Vec<f64> = Vec::with_capacity(size);
+    let mut out_maxs: Vec<f64> = Vec::with_capacity(size);
+    let mut initial_states: Vec<f64> = Vec::with_capacity(size);
+    let mut state_loss_proportionals: Vec<f64> = Vec::with_capacity(size);
+    let mut scenario_independent_states: Vec<bool> = Vec::with_capacity(size);
+    let mut is_temps: Vec<bool> = Vec::with_capacity(size);
+    let mut t_e_conversions: Vec<f64> = Vec::with_capacity(size);
+    let mut residual_values: Vec<f64> = Vec::with_capacity(size);
     for (node_name, node) in nodes.iter() {
         names.push(node_name.clone());
         is_commodity.push(node.is_commodity);
@@ -361,8 +339,6 @@ pub fn nodes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError>
             residual_values.push(0.0);
         }
     }
-
-    // Create arrays from the vectors
     let names_array = Arc::new(StringArray::from(names)) as ArrayRef;
     let is_commodity_array = Arc::new(BooleanArray::from(is_commodity)) as ArrayRef;
     let is_state_array = Arc::new(BooleanArray::from(is_state)) as ArrayRef;
@@ -381,8 +357,6 @@ pub fn nodes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError>
     let is_temps_array = Arc::new(BooleanArray::from(is_temps)) as ArrayRef;
     let t_e_conversions_array = Arc::new(Float64Array::from(t_e_conversions)) as ArrayRef;
     let residual_values_array = Arc::new(Float64Array::from(residual_values)) as ArrayRef;
-
-    // Now you can create the RecordBatch using these arrays
     let record_batch = RecordBatch::try_new(
         Arc::new(schema),
         vec![
@@ -404,7 +378,6 @@ pub fn nodes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError>
             residual_values_array,
         ],
     )?;
-
     Ok(record_batch)
 }
 
@@ -521,28 +494,28 @@ pub fn processes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowEr
 
 // Function to convert HashMap<String, Group> to RecordBatch
 pub fn groups_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("groups");
     let groups = &input_data.groups;
 
     let schema = Schema::new(vec![
-        Field::new("type", DataType::Utf8, false),
+        Field::new("group_type", DataType::Utf8, false),
         Field::new("entity", DataType::Utf8, false),
         Field::new("group", DataType::Utf8, false),
     ]);
 
-    let mut types: Vec<String> = Vec::new();
-    let mut entities: Vec<String> = Vec::new();
-    let mut group_names: Vec<String> = Vec::new();
-
-    // Process each group
-    for (_, group) in groups.iter() {
+    let mut row_count: usize = 0;
+    for group in groups.values() {
+        row_count += group.members.len()
+    }
+    let mut types: Vec<String> = Vec::with_capacity(row_count);
+    let mut entities: Vec<String> = Vec::with_capacity(row_count);
+    let mut group_names: Vec<String> = Vec::with_capacity(row_count);
+    for group in groups.values() {
         for member in &group.members {
             types.push(group.g_type.clone());
             entities.push(member.clone());
             group_names.push(group.name.clone());
         }
     }
-
     let types_array = Arc::new(StringArray::from(types)) as ArrayRef;
     let entities_array = Arc::new(StringArray::from(entities)) as ArrayRef;
     let group_names_array = Arc::new(StringArray::from(group_names)) as ArrayRef;
@@ -565,7 +538,7 @@ pub fn process_topos_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
         Field::new("node", DataType::Utf8, false),
         Field::new("conversion_coeff", DataType::Float64, false),
         Field::new("capacity", DataType::Float64, false),
-        Field::new("VOM_cost", DataType::Float64, false),
+        Field::new("vom_cost", DataType::Float64, false),
         Field::new("ramp_up", DataType::Float64, false),
         Field::new("ramp_down", DataType::Float64, false),
         Field::new("initial_load", DataType::Float64, false),
@@ -649,158 +622,100 @@ pub fn process_topos_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
 }
 
 pub fn node_diffusion_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("diffusion");
     let node_diffusions = &input_data.node_diffusion;
     let temporals_t = &input_data.temporals.t;
-
-    // If node_diffusions is empty, create a dataframe with just the timestamps
+    let mut fields = vec![make_timestamp_field()];
+    let mut columns: Vec<ArrayRef> =
+        vec![times_stamp_array_from_temporal_stamps(temporals_t) as ArrayRef];
     if node_diffusions.is_empty() {
-        let t_array: ArrayRef = Arc::new(StringArray::from(temporals_t.clone()));
-        let schema = Schema::new(vec![Field::new("t", DataType::Utf8, false)]);
-        return RecordBatch::try_new(Arc::new(schema), vec![t_array]);
+        let schema = Schema::new(fields);
+        return RecordBatch::try_new(Arc::new(schema), columns);
     }
-
-    // Define fields for the schema dynamically
-    let mut fields = vec![Field::new("t", DataType::Utf8, false)];
-    let mut columns: Vec<ArrayRef> = Vec::new();
-
-    // Placeholder to hold time series data
     let mut float_columns_data: HashMap<String, Vec<f64>> = HashMap::new();
-
-    // Add 't' column
-    let t_column: Vec<String> = temporals_t.clone();
-    columns.push(Arc::new(StringArray::from(t_column.clone())) as ArrayRef);
-
-    // Populate the columns from the NodeDiffusion Vec
     for node_diffusion in node_diffusions {
         for ts in &node_diffusion.coefficient.ts_data {
+            check_timestamps_match(temporals_t, &ts)?;
             let column_name = format!(
                 "{},{},{}",
                 node_diffusion.node1, node_diffusion.node2, ts.scenario
             );
-
             fields.push(Field::new(&column_name, DataType::Float64, true));
-
-            // Initialize column data with NaNs
             let mut column_data = vec![f64::NAN; temporals_t.len()];
-
             for (timestamp, value) in &ts.series {
                 if let Some(pos) = temporals_t.iter().position(|t| t == timestamp) {
                     column_data[pos] = *value;
                 }
             }
-
-            // Only add the column if it contains any non-NaN values
             if column_data.iter().any(|&x| !x.is_nan()) {
                 float_columns_data.insert(column_name, column_data);
             }
         }
-
-        // Check if the timestamps match
-        check_timestamps_match(temporals_t, &node_diffusion.coefficient.ts_data)?;
     }
-
-    // Add the float columns to the RecordBatch
     for (_key, val) in float_columns_data {
         columns.push(Arc::new(Float64Array::from(val)) as ArrayRef);
     }
-
     let schema = Arc::new(Schema::new(fields));
-
-    // Create the RecordBatch using these arrays and the schema
     RecordBatch::try_new(schema, columns)
 }
 
 // Function to convert node histories to Arrow RecordBatch
 pub fn node_histories_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    // Extract node histories from input data
     let node_histories = &input_data.node_histories;
-
-    // Define the schema for the Arrow RecordBatch dynamically
     let mut fields = vec![Field::new("t", DataType::Int32, false)];
     let mut columns: Vec<ArrayRef> = Vec::new();
-
-    // Placeholder to hold time series data
-    let mut running_number = Vec::new();
-    let mut string_columns_data: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut time_stamp_columns_data: BTreeMap<String, Vec<DateTime<FixedOffset>>> = BTreeMap::new();
     let mut float_columns_data: BTreeMap<String, Vec<f64>> = BTreeMap::new();
-
-    // Determine the total number of rows based on the actual length of each node history's time series
     let mut total_rows = 0;
-
-    // Calculate the total number of rows needed
     for node_history in node_histories.values() {
         for ts in &node_history.steps.ts_data {
             let series_len = ts.series.len();
             total_rows = total_rows.max(series_len);
         }
     }
-
-    // Fill running number column (t)
+    let mut running_number = Vec::with_capacity(total_rows);
     for i in 0..total_rows {
         running_number.push(i as i32 + 1);
     }
     columns.push(Arc::new(Int32Array::from(running_number)) as ArrayRef);
-
-    // Populate the columns from the NodeHistory BTreeMap
     for node_history in node_histories.values() {
         for ts in &node_history.steps.ts_data {
-            // Create column names
-            let column_name_string = format!("{},t,{}", node_history.node, ts.scenario);
+            let column_name_time_stamp = format!("{},t,{}", node_history.node, ts.scenario);
             let column_name_float = format!("{},{}", node_history.node, ts.scenario);
-
-            // Add schema fields for string and float columns
-            fields.push(Field::new(&column_name_string, DataType::Utf8, false));
+            fields.push(Field::new(
+                &column_name_time_stamp,
+                DataType::Timestamp(TimeUnit::Millisecond, None),
+                false,
+            ));
             fields.push(Field::new(&column_name_float, DataType::Float64, false));
-
-            // Initialize empty vectors for the column data
-            let mut timestamps = vec!["".to_string(); total_rows]; // Use empty strings for uninitialized slots
-            let mut values = vec![f64::NAN; total_rows]; // Use NaN for uninitialized float slots
-
-            // Fill the column data
-            for (i, (timestamp, value)) in ts.series.iter().enumerate() {
-                timestamps[i] = timestamp.clone();
-                values[i] = *value;
+            let mut timestamps = Vec::<DateTime<FixedOffset>>::with_capacity(total_rows);
+            let mut values = Vec::<f64>::with_capacity(total_rows);
+            for (timestamp, value) in ts.series.iter() {
+                timestamps.push(timestamp.clone());
+                values.push(*value);
             }
-
-            // Insert the data into the respective maps
-            string_columns_data.insert(column_name_string.clone(), timestamps);
-            float_columns_data.insert(column_name_float.clone(), values);
+            time_stamp_columns_data.insert(column_name_time_stamp, timestamps);
+            float_columns_data.insert(column_name_float, values);
         }
     }
-
-    // Add the string and float columns to the RecordBatch in the correct order
     for node_history in node_histories.values() {
         for ts in &node_history.steps.ts_data {
-            let column_name_string = format!("{},t,{}", node_history.node, ts.scenario);
+            let column_name_time_stamp = format!("{},t,{}", node_history.node, ts.scenario);
             let column_name_float = format!("{},{}", node_history.node, ts.scenario);
-
-            // Push string column
-            if let Some(val) = string_columns_data.get(&column_name_string) {
-                columns.push(Arc::new(StringArray::from(val.clone())) as ArrayRef);
+            if let Some(val) = time_stamp_columns_data.get(&column_name_time_stamp) {
+                columns.push(times_stamp_array_from_temporal_stamps(val) as ArrayRef);
             }
-
-            // Push float column
             if let Some(val) = float_columns_data.get(&column_name_float) {
                 columns.push(Arc::new(Float64Array::from(val.clone())) as ArrayRef);
             }
         }
     }
-
-    // Create the schema
     let schema = Arc::new(Schema::new(fields));
-
-    // Create the RecordBatch using these arrays and the schema
     let record_batch = RecordBatch::try_new(schema, columns)?;
-
     Ok(record_batch)
 }
 
 pub fn node_delays_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("delays");
     let node_delays = &input_data.node_delay;
-
-    // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
         Field::new("node1", DataType::Utf8, false),
         Field::new("node2", DataType::Utf8, false),
@@ -808,17 +723,12 @@ pub fn node_delays_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arrow
         Field::new("min_flow", DataType::Float64, false),
         Field::new("max_flow", DataType::Float64, false),
     ]);
-
-    // Check if node_delays is empty
     if node_delays.is_empty() {
-        // Create empty Arrow arrays
         let node1_array: ArrayRef = Arc::new(StringArray::from(Vec::<&str>::new()));
         let node2_array: ArrayRef = Arc::new(StringArray::from(Vec::<&str>::new()));
         let delay_array: ArrayRef = Arc::new(Float64Array::from(Vec::<f64>::new()));
         let min_flow_array: ArrayRef = Arc::new(Float64Array::from(Vec::<f64>::new()));
         let max_flow_array: ArrayRef = Arc::new(Float64Array::from(Vec::<f64>::new()));
-
-        // Create the RecordBatch using these arrays and the schema
         return RecordBatch::try_new(
             Arc::new(schema),
             vec![
@@ -830,15 +740,11 @@ pub fn node_delays_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arrow
             ],
         );
     }
-
-    // Initialize vectors to hold the data
     let mut node1s: Vec<String> = Vec::new();
     let mut node2s: Vec<String> = Vec::new();
     let mut delays: Vec<f64> = Vec::new();
     let mut min_flows: Vec<f64> = Vec::new();
     let mut max_flows: Vec<f64> = Vec::new();
-
-    // Populate the vectors from the node_delays
     for (node1, node2, delay, min_flow, max_flow) in node_delays {
         node1s.push(node1.clone());
         node2s.push(node2.clone());
@@ -846,15 +752,11 @@ pub fn node_delays_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arrow
         min_flows.push(*min_flow);
         max_flows.push(*max_flow);
     }
-
-    // Create Arrow arrays from the vectors
     let node1_array: ArrayRef = Arc::new(StringArray::from(node1s));
     let node2_array: ArrayRef = Arc::new(StringArray::from(node2s));
     let delay_array: ArrayRef = Arc::new(Float64Array::from(delays));
     let min_flow_array: ArrayRef = Arc::new(Float64Array::from(min_flows));
     let max_flow_array: ArrayRef = Arc::new(Float64Array::from(max_flows));
-
-    // Create the RecordBatch using these arrays and the schema
     RecordBatch::try_new(
         Arc::new(schema),
         vec![
@@ -868,28 +770,20 @@ pub fn node_delays_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arrow
 }
 
 pub fn inflow_blocks_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("inflow_blocks");
-
     let inflow_blocks = &input_data.inflow_blocks;
-
     if inflow_blocks.is_empty() {
-        let schema = Arc::new(Schema::new(vec![Field::new("t", DataType::Int32, false)]));
-        let t_values: Vec<i32> = (1..=10).collect(); // Running number for `t`
-        let t_array: ArrayRef = Arc::new(Int32Array::from(t_values));
+        let schema = Arc::new(Schema::new(vec![Field::new("t", DataType::Int64, false)]));
+        let running_number_for_t: Vec<i64> = (1..=10).collect();
+        let t_array: ArrayRef = Arc::new(Int64Array::from(running_number_for_t));
         return RecordBatch::try_new(schema, vec![t_array]);
     }
-
     let mut scenario_names = BTreeMap::new(); // Use BTreeMap for consistent lexicographical ordering
-    let mut common_timestamps: Option<Vec<String>> = None;
-
+    let mut common_timestamps: Option<Vec<DateTime<FixedOffset>>> = None;
     // Collect all unique scenario names and ensure timestamps are consistent across all inflow blocks
     for block in inflow_blocks.values() {
         for ts in &block.data.ts_data {
             scenario_names.insert(ts.scenario.clone(), ()); // BTreeMap will maintain lexicographical order
-
-            let timestamps: Vec<String> = ts.series.keys().cloned().collect();
-
-            // Check if timestamps are consistent across all inflow blocks
+            let timestamps: Vec<DateTime<FixedOffset>> = ts.series.keys().cloned().collect();
             if let Some(ref common_ts) = common_timestamps {
                 if *common_ts != timestamps {
                     return Err(ArrowError::ComputeError(
@@ -913,7 +807,7 @@ pub fn inflow_blocks_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
         // Add the block name, node (e.g., "b1,dh_sto") column
         fields.push(Field::new(
             &format!("{},{}", block.name, block.node),
-            DataType::Utf8,
+            DataType::Timestamp(TimeUnit::Millisecond, None),
             false,
         ));
 
@@ -927,10 +821,9 @@ pub fn inflow_blocks_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
         }
     }
 
-    // Running number for the `t` column
-    let t_values: Vec<i64> = (1..=common_timestamps.len() as i64).collect();
+    let running_number_for_t: Vec<i64> = (1..=common_timestamps.len() as i64).collect();
 
-    let mut start_times: BTreeMap<String, Vec<String>> = BTreeMap::new(); // Use BTreeMap to preserve ordering
+    let mut start_times: BTreeMap<String, Vec<DateTime<FixedOffset>>> = BTreeMap::new(); // Use BTreeMap to preserve ordering
     let mut scenario_values: BTreeMap<String, BTreeMap<String, Vec<f64>>> = BTreeMap::new(); // Use BTreeMap to preserve ordering
 
     // Initialize data structures for each block and scenario
@@ -959,7 +852,7 @@ pub fn inflow_blocks_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
             .expect("block.name not found in scenario_values");
 
         for t in &common_timestamps {
-            start_time_vec.push(t.clone()); // Store the timestamp in `start_time_vec`
+            start_time_vec.push(t.clone());
 
             for ts in &block.data.ts_data {
                 if let Some(value) = ts.series.get(t) {
@@ -978,14 +871,14 @@ pub fn inflow_blocks_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
     }
 
     // Create Arrow arrays from the vectors
-    let t_array: ArrayRef = Arc::new(Int64Array::from(t_values)); // Running number in `t`
+    let t_array: ArrayRef = Arc::new(Int64Array::from(running_number_for_t));
     let mut columns: Vec<ArrayRef> = vec![t_array];
 
     for block in inflow_blocks.values() {
         // Create column for `block.name,block.node` (e.g., "b1,dh_sto")
-        let start_times_array: ArrayRef = Arc::new(StringArray::from(
-            start_times.remove(&block.name).unwrap_or_else(Vec::new),
-        ));
+        let start_times_array: ArrayRef = times_stamp_array_from_temporal_stamps(
+            &start_times.remove(&block.name).unwrap_or_else(Vec::new),
+        );
         columns.push(start_times_array);
 
         // Add scenario columns (e.g., "b1,s1", "b1,s2", ...) in lexicographical order
@@ -999,22 +892,17 @@ pub fn inflow_blocks_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
             columns.push(Arc::new(Float64Array::from(values)) as ArrayRef);
         }
     }
-
-    // Create the schema
     let schema = Arc::new(Schema::new(fields));
-
-    // Create the RecordBatch using these arrays and the schema
     RecordBatch::try_new(schema, columns)
 }
 
 pub fn markets_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("markets");
     let markets = &input_data.markets;
 
     // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
         Field::new("market", DataType::Utf8, false),
-        Field::new("type", DataType::Utf8, false),
+        Field::new("market_type", DataType::Utf8, false),
         Field::new("node", DataType::Utf8, false),
         Field::new("processgroup", DataType::Utf8, false),
         Field::new("direction", DataType::Utf8, false),
@@ -1092,30 +980,34 @@ pub fn markets_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowErro
     record_batch
 }
 
-pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("market realisation");
-    let markets = &input_data.markets;
-    let temporals = &input_data.temporals;
-
+fn sort_unique_market_and_scenario_names(
+    markets: &BTreeMap<String, Market>,
+) -> (Vec<String>, Vec<String>) {
     // Use BTreeSet to ensure lexicographical order for market and scenario names
     let mut scenario_names: BTreeSet<String> = BTreeSet::new();
     let mut market_names: BTreeSet<String> = BTreeSet::new();
-
-    // Collect all unique scenario names and market names across all markets
     for market in markets.values() {
         for ts in &market.realisation.ts_data {
             scenario_names.insert(ts.scenario.clone());
         }
         market_names.insert(market.name.clone());
     }
+    let scenario_names: Vec<String> = scenario_names.into_iter().collect();
+    let market_names: Vec<String> = market_names.into_iter().collect();
+    (market_names, scenario_names)
+}
 
-    let scenario_names: Vec<String> = scenario_names.into_iter().collect(); // Now sorted by BTreeSet order
-    let market_names: Vec<String> = market_names.into_iter().collect(); // Now sorted by BTreeSet order
-
-    // Define the schema dynamically based on the scenario names
-    let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
-    for market in &market_names {
-        for scenario in &scenario_names {
+fn schema_fields_from_scenarios(
+    market_names: &Vec<String>,
+    scenario_names: &Vec<String>,
+) -> Vec<Field> {
+    let mut fields: Vec<Field> = vec![Field::new(
+        "t",
+        DataType::Timestamp(TimeUnit::Millisecond, None),
+        false,
+    )];
+    for market in market_names {
+        for scenario in scenario_names {
             fields.push(Field::new(
                 &format!("{},{}", market, scenario),
                 DataType::Float64,
@@ -1123,17 +1015,18 @@ pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch
             ));
         }
     }
+    fields
+}
 
-    // Initialize a vector for the timestamps and data columns
-    let timestamps: Vec<String> = temporals.t.clone();
-    let mut scenario_values: BTreeMap<String, BTreeMap<String, BTreeMap<String, Option<f64>>>> =
-        BTreeMap::new();
-
-    // Validate timestamps
-    for market in markets.values() {
-        check_timestamps_match(&timestamps, &market.realisation.ts_data)?;
-    }
-
+pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+    let markets = &input_data.markets;
+    let temporals = &input_data.temporals;
+    let (market_names, scenario_names) = sort_unique_market_and_scenario_names(markets);
+    let fields = schema_fields_from_scenarios(&market_names, &scenario_names);
+    let mut scenario_values: BTreeMap<
+        String,
+        BTreeMap<String, BTreeMap<DateTime<FixedOffset>, Option<f64>>>,
+    > = BTreeMap::new();
     // Handle the case where there are no realisation data
     let has_realisation_data = markets
         .values()
@@ -1144,7 +1037,7 @@ pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch
             let mut market_map = BTreeMap::new();
             for scenario in &scenario_names {
                 let mut value_map = BTreeMap::new();
-                for timestamp in &timestamps {
+                for timestamp in &temporals.t {
                     value_map.insert(timestamp.clone(), None);
                 }
                 market_map.insert(scenario.clone(), value_map);
@@ -1155,6 +1048,7 @@ pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch
         // Collect timestamps and populate scenario values
         for market in markets.values() {
             for ts in &market.realisation.ts_data {
+                check_timestamps_match(&temporals.t, ts)?;
                 for (timestamp, value) in &ts.series {
                     let entry = scenario_values
                         .entry(market.name.clone())
@@ -1176,19 +1070,17 @@ pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch
             let scenario_map = market_map
                 .entry(scenario.clone())
                 .or_insert_with(BTreeMap::new);
-            for timestamp in &timestamps {
+            for timestamp in &temporals.t {
                 scenario_map.entry(timestamp.clone()).or_insert(None);
             }
         }
     }
-
-    // Create Arrow arrays from the vectors
-    let timestamps_array: ArrayRef = Arc::new(StringArray::from(timestamps.clone()));
+    let timestamps_array: ArrayRef = times_stamp_array_from_temporal_stamps(&temporals.t);
     let mut columns: Vec<ArrayRef> = vec![timestamps_array];
-
     for market in market_names {
         for scenario in &scenario_names {
-            let values = timestamps
+            let values = temporals
+                .t
                 .iter()
                 .map(|timestamp| {
                     scenario_values[&market][scenario]
@@ -1200,57 +1092,21 @@ pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch
             columns.push(Arc::new(Float64Array::from(values)) as ArrayRef);
         }
     }
-
-    // Create the schema
     let schema = Arc::new(Schema::new(fields));
-
-    // Create the RecordBatch using these arrays and the schema
     RecordBatch::try_new(schema, columns)
 }
 
 pub fn market_reserve_activation_price_to_arrow(
     input_data: &input_data::InputData,
 ) -> Result<RecordBatch, ArrowError> {
-    //println!("market reserve");
     let markets = &input_data.markets;
     let temporals = &input_data.temporals;
-
-    // Use BTreeSet to ensure lexicographical order for market and scenario names
-    let mut scenario_names: BTreeSet<String> = BTreeSet::new();
-    let mut market_names: BTreeSet<String> = BTreeSet::new();
-
-    // Collect all unique scenario names and market names across all markets
-    for market in markets.values() {
-        for ts in &market.reserve_activation_price.ts_data {
-            scenario_names.insert(ts.scenario.clone());
-        }
-        market_names.insert(market.name.clone());
-    }
-
-    let scenario_names: Vec<String> = scenario_names.into_iter().collect(); // Now sorted by BTreeSet order
-    let market_names: Vec<String> = market_names.into_iter().collect(); // Now sorted by BTreeSet order
-
-    // Define the schema dynamically based on the scenario names
-    let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
-    for market in &market_names {
-        for scenario in &scenario_names {
-            fields.push(Field::new(
-                &format!("{},{}", market, scenario),
-                DataType::Float64,
-                true,
-            ));
-        }
-    }
-
-    // Initialize a vector for the timestamps and data columns
-    let timestamps: Vec<String> = temporals.t.clone();
-    let mut scenario_values: BTreeMap<String, BTreeMap<String, BTreeMap<String, Option<f64>>>> =
-        BTreeMap::new();
-
-    // Validate timestamps
-    for market in markets.values() {
-        check_timestamps_match(&timestamps, &market.reserve_activation_price.ts_data)?;
-    }
+    let (market_names, scenario_names) = sort_unique_market_and_scenario_names(markets);
+    let fields = schema_fields_from_scenarios(&market_names, &scenario_names);
+    let mut scenario_values: BTreeMap<
+        String,
+        BTreeMap<String, BTreeMap<DateTime<FixedOffset>, Option<f64>>>,
+    > = BTreeMap::new();
 
     // Handle the case where there are no reserve_activation_price data
     let has_reserve_activation_price_data = markets
@@ -1262,7 +1118,7 @@ pub fn market_reserve_activation_price_to_arrow(
             let mut market_map = BTreeMap::new();
             for scenario in &scenario_names {
                 let mut value_map = BTreeMap::new();
-                for timestamp in &timestamps {
+                for timestamp in &temporals.t {
                     value_map.insert(timestamp.clone(), None);
                 }
                 market_map.insert(scenario.clone(), value_map);
@@ -1273,6 +1129,7 @@ pub fn market_reserve_activation_price_to_arrow(
         // Collect timestamps and populate scenario values
         for market in markets.values() {
             for ts in &market.reserve_activation_price.ts_data {
+                check_timestamps_match(&temporals.t, ts)?;
                 for (timestamp, value) in &ts.series {
                     let entry = scenario_values
                         .entry(market.name.clone())
@@ -1294,18 +1151,19 @@ pub fn market_reserve_activation_price_to_arrow(
             let scenario_map = market_map
                 .entry(scenario.clone())
                 .or_insert_with(BTreeMap::new);
-            for timestamp in &timestamps {
+            for timestamp in &temporals.t {
                 scenario_map.entry(timestamp.clone()).or_insert(None);
             }
         }
     }
 
     // Create Arrow arrays from the vectors
-    let timestamps_array: ArrayRef = Arc::new(StringArray::from(timestamps.clone()));
+    let timestamps_array: ArrayRef = times_stamp_array_from_temporal_stamps(&temporals.t);
     let mut columns: Vec<ArrayRef> = vec![timestamps_array];
     for market in &market_names {
         for scenario in &scenario_names {
-            let values = timestamps
+            let values = temporals
+                .t
                 .iter()
                 .map(|timestamp| {
                     scenario_values[market][scenario]
@@ -1317,11 +1175,7 @@ pub fn market_reserve_activation_price_to_arrow(
             columns.push(Arc::new(Float64Array::from(values)) as ArrayRef);
         }
     }
-
-    // Create the schema
     let schema = Arc::new(Schema::new(fields));
-
-    // Create the RecordBatch using these arrays and the schema
     RecordBatch::try_new(schema, columns)
 }
 
@@ -1428,30 +1282,19 @@ pub fn processes_eff_fun_to_arrow(input_data: &InputData) -> Result<RecordBatch,
 }
 
 pub fn reserve_type_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("reserve type");
     let reserve_type = &input_data.reserve_type;
-
-    // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
-        Field::new("type", DataType::Utf8, false),
+        Field::new("reserve_type", DataType::Utf8, false),
         Field::new("ramp_factor", DataType::Float64, false),
     ]);
-
-    // Initialize vectors to hold the data
-    let mut types: Vec<String> = Vec::new();
-    let mut ramp_factors: Vec<f64> = Vec::new();
-
-    // Populate the vectors from the BTreeMap
+    let mut types: Vec<String> = Vec::with_capacity(reserve_type.len());
+    let mut ramp_factors: Vec<f64> = Vec::with_capacity(reserve_type.len());
     for (key, &value) in reserve_type.iter() {
         types.push(key.clone());
         ramp_factors.push(value);
     }
-
-    // Create Arrow arrays from the vectors
     let type_array: ArrayRef = Arc::new(StringArray::from(types));
     let ramp_factor_array: ArrayRef = Arc::new(Float64Array::from(ramp_factors));
-
-    // Create the RecordBatch using these arrays and the schema
     RecordBatch::try_new(Arc::new(schema), vec![type_array, ramp_factor_array])
 }
 
@@ -1495,14 +1338,16 @@ pub fn risk_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> 
 }
 
 pub fn processes_cap_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("processes cap");
-
     let temporals = &input_data.temporals;
     let processes = &input_data.processes;
 
-    let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
+    let mut fields: Vec<Field> = vec![Field::new(
+        "t",
+        DataType::Timestamp(TimeUnit::Millisecond, None),
+        false,
+    )];
     let mut columns: Vec<ArrayRef> = vec![];
-    let mut column_data: BTreeMap<String, Vec<Option<f64>>> = BTreeMap::new(); // Changed to BTreeMap
+    let mut column_data: BTreeMap<String, Vec<Option<f64>>> = BTreeMap::new();
 
     let mut has_ts_data = false;
 
@@ -1510,18 +1355,14 @@ pub fn processes_cap_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
         if process.eff_ts.ts_data.is_empty() {
             continue;
         }
-
+        for time_series in &process.eff_ts.ts_data {
+            check_timestamps_match(&temporals.t, time_series)?;
+        }
         has_ts_data = true;
-
-        // Check if the timestamps match temporals.t
-        check_timestamps_match(&temporals.t, &process.eff_ts.ts_data)?;
-
         for topology in &process.topos {
-            // Only proceed if there is time series data for this topology
             if topology.cap_ts.ts_data.is_empty() {
                 continue;
             }
-
             let flow = if topology.sink == *process_name {
                 &topology.source
             } else if topology.source == *process_name {
@@ -1529,8 +1370,8 @@ pub fn processes_cap_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
             } else {
                 continue;
             };
-
             for time_series in &topology.cap_ts.ts_data {
+                check_timestamps_match(&temporals.t, time_series)?;
                 let column_name = format!("{},{},{}", process_name, flow, time_series.scenario);
                 fields.push(Field::new(&column_name, DataType::Float64, true));
 
@@ -1546,9 +1387,7 @@ pub fn processes_cap_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
             }
         }
     }
-
-    // Create the timestamp column
-    let timestamp_column = Arc::new(StringArray::from(temporals.t.clone())) as ArrayRef;
+    let timestamp_column = times_stamp_array_from_temporal_stamps(&temporals.t) as ArrayRef;
     columns.push(timestamp_column);
 
     // Check if we have any data to insert
@@ -1562,48 +1401,31 @@ pub fn processes_cap_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
     for data in column_data.values() {
         columns.push(Arc::new(Float64Array::from(data.clone())) as ArrayRef);
     }
-
-    // Create the schema from the field definitions
     let schema = Arc::new(Schema::new(fields));
-
-    // Construct and return the RecordBatch
     RecordBatch::try_new(schema, columns)
 }
 
 pub fn gen_constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("gen constraints");
-
     let temporals = &input_data.temporals;
     let gen_constraints = &input_data.gen_constraints;
 
     let mut fields: Vec<Field> = Vec::new();
     let mut column_data: BTreeMap<String, Vec<Option<f64>>> = BTreeMap::new();
-    let timestamps: Vec<Option<String>> = temporals.t.iter().map(|t| Some(t.clone())).collect();
 
-    fields.push(Field::new("t", DataType::Utf8, false)); // Timestamp column is not nullable
+    fields.push(Field::new(
+        "t",
+        DataType::Timestamp(TimeUnit::Millisecond, None),
+        false,
+    ));
 
     // Handle the constant TimeSeriesData for each GenConstraint
     for (constraint_name, gen_constraint) in gen_constraints.iter() {
         for ts in &gen_constraint.constant.ts_data {
+            check_timestamps_match(&temporals.t, ts)?;
             let col_name = format!("{},{}", constraint_name, ts.scenario);
             fields.push(Field::new(&col_name, DataType::Float64, true));
             let series_data: Vec<Option<f64>> =
                 ts.series.iter().map(|(_, value)| Some(*value)).collect();
-
-            // Check if the series data timestamps match temporals.t
-            if ts.series.len() != temporals.t.len() {
-                return Err(ArrowError::ComputeError(
-                    "Timeseries length mismatch".to_string(),
-                ));
-            }
-            for (i, (timestamp, _)) in ts.series.iter().enumerate() {
-                if &temporals.t[i] != timestamp {
-                    return Err(ArrowError::ComputeError(
-                        "Timeseries mismatch in temporal data".to_string(),
-                    ));
-                }
-            }
-
             if !series_data.is_empty() {
                 column_data.insert(col_name, series_data);
             }
@@ -1614,6 +1436,7 @@ pub fn gen_constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, A
     for (constraint_name, gen_constraint) in gen_constraints.iter() {
         for factor in &gen_constraint.factors {
             for ts in &factor.data.ts_data {
+                check_timestamps_match(&temporals.t, ts)?;
                 let var_tuple_component = if factor.var_tuple.1.is_empty() {
                     factor.var_tuple.0.clone()
                 } else {
@@ -1626,46 +1449,18 @@ pub fn gen_constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, A
                 fields.push(Field::new(&col_name, DataType::Float64, true));
                 let series_data: Vec<Option<f64>> =
                     ts.series.iter().map(|(_, value)| Some(*value)).collect();
-
-                // Check if the series data timestamps match temporals.t
-                if ts.series.len() != temporals.t.len() {
-                    return Err(ArrowError::ComputeError(
-                        "Timeseries length mismatch".to_string(),
-                    ));
-                }
-                for (i, (timestamp, _)) in ts.series.iter().enumerate() {
-                    if &temporals.t[i] != timestamp {
-                        return Err(ArrowError::ComputeError(
-                            "Timeseries mismatch in temporal data".to_string(),
-                        ));
-                    }
-                }
-
                 if !series_data.is_empty() {
                     column_data.insert(col_name, series_data);
                 }
             }
         }
     }
-
-    // Initialize the columns vector
     let mut columns: Vec<ArrayRef> = Vec::new();
-
-    // Check if we have any data to insert
+    columns.push(times_stamp_array_from_temporal_stamps(&temporals.t) as ArrayRef);
     if column_data.is_empty() {
         let schema = Arc::new(Schema::new(fields));
         return RecordBatch::try_new(schema, columns);
     }
-
-    // Create the timestamp column
-    let timestamp_column: ArrayRef = Arc::new(StringArray::from(
-        timestamps
-            .iter()
-            .flatten()
-            .cloned()
-            .collect::<Vec<String>>(),
-    ));
-    columns.push(timestamp_column);
 
     // Create other columns from the collected column_data
     for field in &fields[1..] {
@@ -1675,15 +1470,11 @@ pub fn gen_constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, A
             columns.push(Arc::new(col_array) as ArrayRef);
         }
     }
-
     let schema = Arc::new(Schema::new(fields));
-
-    // Create the RecordBatch using these arrays and the schema
     RecordBatch::try_new(schema, columns)
 }
 
 pub fn constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("constraints");
     let gen_constraints = &input_data.gen_constraints;
 
     // Define the schema for the Arrow RecordBatch
@@ -1721,109 +1512,72 @@ pub fn constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arrow
     )
 }
 
-//PROBLEMS
 pub fn bid_slots_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("bid slots");
-
     let bid_slots = &input_data.bid_slots;
     let temporals = &input_data.temporals;
-
-    let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
-    let mut columns: Vec<ArrayRef> = vec![];
-    let mut has_ts_data = false;
-
-    // Extract timestamps
-    let timestamps = if !bid_slots.is_empty() {
-        // Collect timestamps from the first available bid_slot
-        if let Some(bid_slot) = bid_slots.values().next() {
-            bid_slot.time_steps.clone()
-        } else {
-            temporals.t.clone()
-        }
+    let timestamps = if let Some(bid_slot) = bid_slots.values().next() {
+        &bid_slot.time_steps
     } else {
-        temporals.t.clone()
+        &temporals.t
     };
-
-    // Validate if bid_slots contain data
+    let mut has_ts_data = false;
     for bid_slot in bid_slots.values() {
         if !bid_slot.prices.is_empty() {
             has_ts_data = true;
+            break;
         }
     }
-
-    // If no time series data was found, return a RecordBatch with only the timestamp column
+    let mut fields: Vec<Field> = vec![Field::new(
+        "t",
+        DataType::Timestamp(TimeUnit::Millisecond, None),
+        false,
+    )];
+    let mut columns: Vec<ArrayRef> = vec![times_stamp_array_from_temporal_stamps(&timestamps)];
     if !has_ts_data {
-        let schema = Arc::new(Schema::new(fields.clone()));
-        let t_column: ArrayRef = Arc::new(StringArray::from(timestamps.clone())) as ArrayRef;
-        return RecordBatch::try_new(schema, vec![t_column]);
+        let schema = Arc::new(Schema::new(fields));
+        return RecordBatch::try_new(schema, columns);
     }
-
-    // Prepare fields for each slot
     for (market, bid_slot) in bid_slots {
         for slot in &bid_slot.slots {
-            let column_name = format!("{},{}", market, slot); // Defining fields
+            let column_name = format!("{},{}", market, slot);
             fields.push(Field::new(&column_name, DataType::Float64, true));
-        }
-    }
-
-    // Create the timestamp column
-    let timestamp_column = StringArray::from(timestamps.clone());
-    columns.push(Arc::new(timestamp_column) as ArrayRef);
-
-    // Collect slot data and add them as columns
-    for (_market, bid_slot) in bid_slots {
-        for slot in &bid_slot.slots {
             let mut column_values: Vec<Option<f64>> = Vec::with_capacity(timestamps.len());
-
-            // Match timestamps to slot prices
-            for time in &timestamps {
+            for time in timestamps {
                 let key = (time.clone(), slot.clone());
-                let value = bid_slot.prices.get(&key).copied(); // Get the price for the specific time and slot
+                let value = bid_slot.prices.get(&key).copied();
                 column_values.push(value);
             }
-
-            // Add the data column
             columns.push(Arc::new(Float64Array::from(column_values)) as ArrayRef);
         }
     }
-
-    // Create the schema from the fields
     let schema = Arc::new(Schema::new(fields));
-
-    // Construct and return the RecordBatch
     RecordBatch::try_new(schema, columns)
 }
 
 pub fn processes_cf_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("processes cf");
-
     let temporals = &input_data.temporals;
     let processes = &input_data.processes;
-
-    let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
-    let mut columns: Vec<ArrayRef> = vec![];
-
+    let mut fields: Vec<Field> = vec![Field::new(
+        "t",
+        DataType::Timestamp(TimeUnit::Millisecond, None),
+        false,
+    )];
+    let mut columns: Vec<ArrayRef> = Vec::new();
     let mut has_ts_data = false;
-
-    // Validate timestamps in each process
     for process in processes.values() {
         if !process.cf.ts_data.is_empty() {
             has_ts_data = true;
-            check_timestamps_match(&temporals.t, &process.cf.ts_data)?;
+            for time_series in &process.cf.ts_data {
+                check_timestamps_match(&temporals.t, time_series)?;
+            }
         }
     }
-
-    // If no ts_data was found, return a RecordBatch with only the t column
+    let timestamp_column = times_stamp_array_from_temporal_stamps(&temporals.t);
+    columns.push(timestamp_column as ArrayRef);
     if !has_ts_data {
         let schema = Arc::new(Schema::new(fields.clone()));
-        let t_column: ArrayRef = Arc::new(StringArray::from(temporals.t.clone())) as ArrayRef;
-        return RecordBatch::try_new(schema, vec![t_column]);
+        return RecordBatch::try_new(schema, columns);
     }
-
-    // Extract the temporals.t as timestamps
-    let timestamps = temporals.t.clone();
-
-    // Validate and collect timestamps, and create fields for each time series
     for process in processes.values() {
         for ts in &process.cf.ts_data {
             fields.push(Field::new(
@@ -1834,15 +1588,12 @@ pub fn processes_cf_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
         }
     }
 
-    // Create the timestamp column
-    let timestamp_column = StringArray::from(timestamps.clone());
-    columns.push(Arc::new(timestamp_column) as ArrayRef);
-
     // Collect data for each time series and add it to the columns
     for process in processes.values() {
         for ts in &process.cf.ts_data {
             // Match timestamps to values
-            let column_values: Vec<Option<f64>> = timestamps
+            let column_values: Vec<Option<f64>> = temporals
+                .t
                 .iter()
                 .map(|t| {
                     ts.series
@@ -1855,11 +1606,7 @@ pub fn processes_cf_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
             columns.push(Arc::new(Float64Array::from(column_values)) as ArrayRef);
         }
     }
-
-    // Create the schema from the fields
     let schema = Arc::new(Schema::new(fields));
-
-    // Construct and return the RecordBatch
     RecordBatch::try_new(schema, columns)
 }
 
@@ -1921,44 +1668,38 @@ pub fn market_fixed_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
 }
 
 pub fn market_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("market price");
     let temporals_t = &input_data.temporals.t;
-
-    // Ensure temporals_t is not empty
     if temporals_t.is_empty() {
         return Err(ArrowError::InvalidArgumentError(
             "Temporals timestamps are empty".to_string(),
         ));
     }
-
-    // Check if the timestamps in market price data match temporals_t
+    let mut unique_timestamps: BTreeSet<DateTime<FixedOffset>> = BTreeSet::new();
     for market in input_data.markets.values() {
-        check_timestamps_match(temporals_t, &market.price.ts_data)?;
-    }
-
-    // Collect all timestamps and initialize columns using BTreeMap to maintain order
-    let mut columns: BTreeMap<String, Vec<f64>> = BTreeMap::new();
-    let mut unique_timestamps: BTreeSet<String> = BTreeSet::new();
-
-    for market in input_data.markets.values() {
-        for data in &market.price.ts_data {
-            for (timestamp, _) in &data.series {
+        for time_series in &market.price.ts_data {
+            check_timestamps_match(temporals_t, &time_series)?;
+            for timestamp in time_series.series.keys() {
                 unique_timestamps.insert(timestamp.clone());
             }
         }
     }
 
-    let sorted_timestamps: Vec<String> = temporals_t.clone();
+    let sorted_timestamps: Vec<DateTime<FixedOffset>> = temporals_t.clone();
 
     // If there are no unique timestamps, return an empty RecordBatch
     if sorted_timestamps.is_empty() {
-        let schema = Arc::new(Schema::new(vec![Field::new("t", DataType::Utf8, false)]));
-        let timestamp_array: ArrayRef = Arc::new(StringArray::from(sorted_timestamps));
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "t",
+            DataType::Timestamp(TimeUnit::Millisecond, None),
+            false,
+        )]));
+        let timestamp_array: ArrayRef = times_stamp_array_from_temporal_stamps(&sorted_timestamps);
         let arrays = vec![timestamp_array];
         return RecordBatch::try_new(schema, arrays);
     }
 
     // Initialize column data
+    let mut columns: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     for market in input_data.markets.values() {
         for data in &market.price.ts_data {
             let scenario = &data.scenario;
@@ -1979,8 +1720,12 @@ pub fn market_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
     }
 
     // Prepare the schema and arrays
-    let mut fields = vec![Field::new("t", DataType::Utf8, false)];
-    let timestamp_array: ArrayRef = Arc::new(StringArray::from(sorted_timestamps));
+    let mut fields = vec![Field::new(
+        "t",
+        DataType::Timestamp(TimeUnit::Millisecond, None),
+        false,
+    )];
+    let timestamp_array: ArrayRef = times_stamp_array_from_temporal_stamps(&sorted_timestamps);
     let mut arrays = vec![timestamp_array];
 
     // BTreeMap will naturally iterate columns in lexicographical order
@@ -2009,19 +1754,24 @@ pub fn market_balance_price_to_arrow(input_data: &InputData) -> Result<RecordBat
 
     // Check if the timestamps in market price data match temporals_t
     for market in input_data.markets.values().filter(|m| m.m_type == "energy") {
-        check_timestamps_match(temporals_t, &market.up_price.ts_data)?;
-        check_timestamps_match(temporals_t, &market.down_price.ts_data)?;
+        for time_series in &market.up_price.ts_data {
+            check_timestamps_match(temporals_t, time_series)?;
+        }
+        for time_series in &market.down_price.ts_data {
+            check_timestamps_match(temporals_t, time_series)?;
+        }
     }
 
     // Collect all timestamps and initialize columns using BTreeMap to ensure order
     let mut columns: BTreeMap<String, Vec<f64>> = BTreeMap::new();
-
-    let sorted_timestamps: Vec<String> = temporals_t.clone();
-
     // If there are no unique timestamps, return an empty RecordBatch
-    if sorted_timestamps.is_empty() {
-        let schema = Arc::new(Schema::new(vec![Field::new("t", DataType::Utf8, false)]));
-        let timestamp_array: ArrayRef = Arc::new(StringArray::from(sorted_timestamps));
+    if temporals_t.is_empty() {
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "t",
+            DataType::Timestamp(TimeUnit::Millisecond, None),
+            false,
+        )]));
+        let timestamp_array: ArrayRef = times_stamp_array_from_temporal_stamps(&temporals_t);
         let arrays = vec![timestamp_array];
         return RecordBatch::try_new(schema, arrays);
     }
@@ -2031,10 +1781,10 @@ pub fn market_balance_price_to_arrow(input_data: &InputData) -> Result<RecordBat
         for (label, price_data) in [("up", &market.up_price), ("dw", &market.down_price)].iter() {
             for data in &price_data.ts_data {
                 let column_name = format!("{},{},{}", market.name, label, data.scenario);
-                let mut column_data = vec![f64::NAN; sorted_timestamps.len()];
+                let mut column_data = vec![f64::NAN; temporals_t.len()];
 
                 for (timestamp, value) in &data.series {
-                    if let Some(pos) = sorted_timestamps.iter().position(|t| t == timestamp) {
+                    if let Some(pos) = temporals_t.iter().position(|t| t == timestamp) {
                         column_data[pos] = *value;
                     }
                 }
@@ -2046,20 +1796,18 @@ pub fn market_balance_price_to_arrow(input_data: &InputData) -> Result<RecordBat
             }
         }
     }
-
-    // Prepare the schema and arrays
-    let mut fields = vec![Field::new("t", DataType::Utf8, false)];
-    let timestamp_array: ArrayRef = Arc::new(StringArray::from(sorted_timestamps));
+    let mut fields = vec![Field::new(
+        "t",
+        DataType::Timestamp(TimeUnit::Millisecond, None),
+        false,
+    )];
+    let timestamp_array: ArrayRef = times_stamp_array_from_temporal_stamps(&temporals_t);
     let mut arrays = vec![timestamp_array];
-
-    // Add columns in BTreeMap order (already sorted)
     for (name, data) in columns {
         fields.push(Field::new(&name, DataType::Float64, true));
         let array: ArrayRef = Arc::new(Float64Array::from(data));
         arrays.push(array);
     }
-
-    // Create the RecordBatch
     let schema = Arc::new(Schema::new(fields));
     let record_batch = RecordBatch::try_new(schema, arrays)?;
     Ok(record_batch)
@@ -2067,7 +1815,6 @@ pub fn market_balance_price_to_arrow(input_data: &InputData) -> Result<RecordBat
 
 // This function converts a HashMap<String, Node> of inflow TimeSeriesData to an Arrow RecordBatch
 pub fn nodes_inflow_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("nodes inflow");
     let temporals_t = &input_data.temporals.t;
     let nodes = &input_data.nodes;
 
@@ -2078,13 +1825,17 @@ pub fn nodes_inflow_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
         ));
     }
 
-    let mut fields = vec![Field::new("t", DataType::Utf8, false)];
+    let mut fields = vec![Field::new(
+        "t",
+        DataType::Timestamp(TimeUnit::Millisecond, None),
+        false,
+    )];
     let mut columns: Vec<ArrayRef> = Vec::new();
 
     // Determine the common length using the timestamps of the temporals
     let timestamps = temporals_t.clone();
     let common_length = timestamps.len();
-    let timestamp_array = Arc::new(StringArray::from(timestamps.clone())) as ArrayRef;
+    let timestamp_array = times_stamp_array_from_temporal_stamps(&timestamps) as ArrayRef;
     columns.push(timestamp_array);
 
     // Collect inflow data for each node and scenario
@@ -2094,18 +1845,11 @@ pub fn nodes_inflow_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
         {
             continue;
         }
-
-        // Check if the timestamps in node inflow data match temporals_t
-        if let Err(e) = check_timestamps_match(temporals_t, &node.inflow.ts_data) {
-            println!("Timestamp mismatch in node '{}'. Error: {}", node_name, e);
-            return Err(e);
-        }
-
         for ts in &node.inflow.ts_data {
             if ts.series.is_empty() {
                 continue;
             }
-
+            check_timestamps_match(temporals_t, ts)?;
             let column_name = format!("{},{}", node_name, ts.scenario);
             fields.push(Field::new(&column_name, DataType::Float64, true));
 
@@ -2150,14 +1894,20 @@ pub fn nodes_commodity_price_to_arrow(input_data: &InputData) -> Result<RecordBa
 
     // Check if the timestamps in node cost data match temporals_t
     for node in nodes.values().filter(|n| n.is_commodity) {
-        check_timestamps_match(temporals_t, &node.cost.ts_data)?;
+        for time_series in &node.cost.ts_data {
+            check_timestamps_match(temporals_t, time_series)?;
+        }
     }
 
-    let mut fields = vec![Field::new("t", DataType::Utf8, false)];
+    let mut fields = vec![Field::new(
+        "t",
+        DataType::Timestamp(TimeUnit::Millisecond, None),
+        false,
+    )];
     let mut columns: Vec<ArrayRef> = Vec::new();
 
     // First column from Temporals
-    let timestamp_array = Arc::new(StringArray::from(temporals_t.clone())) as ArrayRef;
+    let timestamp_array = times_stamp_array_from_temporal_stamps(&temporals_t) as ArrayRef;
     columns.push(timestamp_array);
 
     // Check the common length from temporals
@@ -2197,27 +1947,27 @@ pub fn nodes_commodity_price_to_arrow(input_data: &InputData) -> Result<RecordBa
 }
 
 pub fn processes_eff_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("processes eff");
     let processes = &input_data.processes;
     let temporals_t = &input_data.temporals.t;
-
-    // Ensure temporals_t is not empty
     if temporals_t.is_empty() {
         return Err(ArrowError::InvalidArgumentError(
             "Temporals timestamps are empty".to_string(),
         ));
     }
-
-    // Check if the timestamps in process efficiency data match temporals_t
     for process in processes.values() {
-        check_timestamps_match(temporals_t, &process.eff_ts.ts_data)?;
+        for time_series in &process.eff_ts.ts_data {
+            check_timestamps_match(temporals_t, time_series)?;
+        }
     }
-
-    let mut fields: Vec<Field> = vec![Field::new("t", DataType::Utf8, false)];
+    let mut fields: Vec<Field> = vec![Field::new(
+        "t",
+        DataType::Timestamp(TimeUnit::Millisecond, None),
+        false,
+    )];
     let mut columns: Vec<ArrayRef> = Vec::new();
 
     // Create the timestamp column from Temporals
-    let timestamp_array = Arc::new(StringArray::from(temporals_t.clone())) as ArrayRef;
+    let timestamp_array = times_stamp_array_from_temporal_stamps(&temporals_t) as ArrayRef;
     columns.push(timestamp_array);
 
     let common_length = temporals_t.len();
@@ -2257,26 +2007,25 @@ pub fn processes_eff_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
             columns.push(value_array);
         }
     }
-
-    // Construct the schema from the fields
     let schema = Arc::new(Schema::new(fields));
-
-    // Construct the record batch
     let record_batch = RecordBatch::try_new(schema, columns)?;
-
     Ok(record_batch)
 }
 
 // Function to check timestamps match
 pub fn check_timestamps_match(
-    temporals_t: &Vec<String>,
-    ts_data: &Vec<input_data::TimeSeries>,
+    temporals_t: &Vec<DateTime<FixedOffset>>,
+    time_series: &input_data::TimeSeries,
 ) -> Result<(), ArrowError> {
-    for ts in ts_data {
-        let ts_timestamps: Vec<String> = ts.series.keys().cloned().collect();
-        if ts_timestamps != *temporals_t {
+    if temporals_t.len() != time_series.series.len() {
+        return Err(ArrowError::InvalidArgumentError(
+            "time stamp count differs from temporals.t".to_string(),
+        ));
+    }
+    for (i, stamp) in time_series.series.keys().enumerate() {
+        if *stamp != temporals_t[i] {
             return Err(ArrowError::InvalidArgumentError(
-                "Timestamps do not match temporals.t".to_string(),
+                "timestamps do not match temporals.t".to_string(),
             ));
         }
     }
@@ -2286,11 +2035,15 @@ pub fn check_timestamps_match(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::array::timezone::Tz;
     use arrow::array::{Array, Float64Array, Int32Array, StringArray};
     use arrow::record_batch::RecordBatch;
+    use chrono::offset::Utc;
+    use chrono::TimeZone;
     use std::fs::File;
     use std::io::BufReader;
     use std::path::PathBuf;
+    use std::str::FromStr;
 
     fn load_test_data() -> InputData {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -2319,7 +2072,11 @@ mod tests {
                     } else if let Some(array) = column.as_any().downcast_ref::<Float64Array>() {
                         array.value(row).to_string()
                     } else if let Some(array) = column.as_any().downcast_ref::<Int64Array>() {
-                        array.value(row).to_string() // Handle Int64Array here
+                        array.value(row).to_string()
+                    } else if let Some(array) =
+                        column.as_any().downcast_ref::<TimestampMillisecondArray>()
+                    {
+                        array.value_as_datetime(row).unwrap().to_string()
                     } else {
                         "N/A".to_string()
                     };
@@ -2370,6 +2127,28 @@ mod tests {
         for (i, expected) in expected_values.iter().enumerate() {
             assert_eq!(
                 array.value(i),
+                *expected,
+                "Mismatch at row {}, column '{}'",
+                i,
+                column_name
+            );
+        }
+    }
+
+    fn assert_time_stamp_column(
+        array: &TimestampMillisecondArray,
+        expected_values: &[DateTime<FixedOffset>],
+        column_name: &str,
+    ) {
+        for (i, expected) in expected_values.iter().enumerate() {
+            assert_eq!(
+                array
+                    .value_as_datetime_with_tz(
+                        i,
+                        Tz::from_str(&expected.timezone().to_string())
+                            .expect("parsing a machine created timezone string should not fail")
+                    )
+                    .unwrap(),
                 *expected,
                 "Mismatch at row {}, column '{}'",
                 i,
@@ -2818,37 +2597,21 @@ mod tests {
 
         // Expected result DataFrame
         let expected_t_values = vec![1, 2];
-        let expected_timestamp_s1 = vec!["2022-04-20T00:00:00+00:00", "2022-04-20T01:00:00+00:00"];
+        let expected_timestamp_s1: Vec<DateTime<FixedOffset>> = vec![
+            Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
+        ];
         let expected_value_s1 = vec![1.0, 1.0];
-        let expected_timestamp_s2 = vec!["2022-04-20T00:00:00+00:00", "2022-04-20T01:00:00+00:00"];
+        let expected_timestamp_s2: Vec<DateTime<FixedOffset>> = vec![
+            Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
+        ];
         let expected_value_s2 = vec![1.0, 1.0];
-        let expected_timestamp_s3 = vec!["2022-04-20T00:00:00+00:00", "2022-04-20T01:00:00+00:00"];
+        let expected_timestamp_s3: Vec<DateTime<FixedOffset>> = vec![
+            Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
+        ];
         let expected_value_s3 = vec![1.0, 1.0];
-
-        // Helper function to assert string column values
-        fn assert_string_column(array: &StringArray, expected_values: &[&str], column_name: &str) {
-            for (i, expected) in expected_values.iter().enumerate() {
-                assert_eq!(
-                    array.value(i),
-                    *expected,
-                    "Mismatch at row {}, column '{}'",
-                    i,
-                    column_name
-                );
-            }
-        }
-
-        // Helper function to assert float column values
-        fn assert_float_column(array: &Float64Array, expected_values: &[f64], column_name: &str) {
-            for (i, expected) in expected_values.iter().enumerate() {
-                assert!(
-                    (array.value(i) - *expected).abs() < f64::EPSILON,
-                    "Mismatch at row {}, column '{}'",
-                    i,
-                    column_name
-                );
-            }
-        }
 
         // Assert columns
         let t_array = record_batch
@@ -2868,44 +2631,44 @@ mod tests {
         let timestamp_s1_array = record_batch
             .column(1)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
-        assert_string_column(timestamp_s1_array, &expected_timestamp_s1, "dh_source,t,s1");
+        assert_time_stamp_column(timestamp_s1_array, &expected_timestamp_s1, "dh_source,t,s1");
 
         let value_s1_array = record_batch
             .column(2)
             .as_any()
             .downcast_ref::<Float64Array>()
             .unwrap();
-        assert_float_column(value_s1_array, &expected_value_s1, "dh_source,s1");
+        assert_float64_column(value_s1_array, &expected_value_s1, "dh_source,s1");
 
         let timestamp_s2_array = record_batch
             .column(3)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
-        assert_string_column(timestamp_s2_array, &expected_timestamp_s2, "dh_source,t,s2");
+        assert_time_stamp_column(timestamp_s2_array, &expected_timestamp_s2, "dh_source,t,s2");
 
         let value_s2_array = record_batch
             .column(4)
             .as_any()
             .downcast_ref::<Float64Array>()
             .unwrap();
-        assert_float_column(value_s2_array, &expected_value_s2, "dh_source,s2");
+        assert_float64_column(value_s2_array, &expected_value_s2, "dh_source,s2");
 
         let timestamp_s3_array = record_batch
             .column(5)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
-        assert_string_column(timestamp_s3_array, &expected_timestamp_s3, "dh_source,t,s3");
+        assert_time_stamp_column(timestamp_s3_array, &expected_timestamp_s3, "dh_source,t,s3");
 
         let value_s3_array = record_batch
             .column(6)
             .as_any()
             .downcast_ref::<Float64Array>()
             .unwrap();
-        assert_float_column(value_s3_array, &expected_value_s3, "dh_source,s3");
+        assert_float64_column(value_s3_array, &expected_value_s3, "dh_source,s3");
     }
 
     #[test]
@@ -3022,47 +2785,22 @@ mod tests {
         print_batches(&batches);
 
         // Expected result DataFrame
-        let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00",
-            "2022-04-20T01:00:00+00:00",
-            "2022-04-20T02:00:00+00:00",
+        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+            Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
         ];
         let expected_value_s1 = vec![0.02, 0.02, 0.02];
         let expected_value_s2 = vec![0.02, 0.02, 0.02];
         let expected_value_s3 = vec![0.02, 0.02, 0.02];
 
-        // Helper function to assert string column values
-        fn assert_string_column(array: &StringArray, expected_values: &[&str], column_name: &str) {
-            for (i, expected) in expected_values.iter().enumerate() {
-                assert_eq!(
-                    array.value(i),
-                    *expected,
-                    "Mismatch at row {}, column '{}'",
-                    i,
-                    column_name
-                );
-            }
-        }
-
-        // Helper function to assert float column values
-        fn assert_float_column(array: &Float64Array, expected_values: &[f64], column_name: &str) {
-            for (i, expected) in expected_values.iter().enumerate() {
-                assert!(
-                    (array.value(i) - *expected).abs() < f64::EPSILON,
-                    "Mismatch at row {}, column '{}'",
-                    i,
-                    column_name
-                );
-            }
-        }
-
         // Assert 't' column
         let t_array = record_batch
             .column(0)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
-        assert_string_column(t_array, &expected_t_values, "t");
+        assert_time_stamp_column(t_array, &expected_t_values, "t");
 
         // Assert 'dh_sto,ambience,s1' column
         let value_s1_array = record_batch
@@ -3070,7 +2808,7 @@ mod tests {
             .as_any()
             .downcast_ref::<Float64Array>()
             .unwrap();
-        assert_float_column(value_s1_array, &expected_value_s1, "dh_sto,ambience,s1");
+        assert_float64_column(value_s1_array, &expected_value_s1, "dh_sto,ambience,s1");
 
         // Assert 'dh_sto,ambience,s2' column
         let value_s2_array = record_batch
@@ -3078,7 +2816,7 @@ mod tests {
             .as_any()
             .downcast_ref::<Float64Array>()
             .unwrap();
-        assert_float_column(value_s2_array, &expected_value_s2, "dh_sto,ambience,s2");
+        assert_float64_column(value_s2_array, &expected_value_s2, "dh_sto,ambience,s2");
 
         // Assert 'dh_sto,ambience,s3' column
         let value_s3_array = record_batch
@@ -3086,7 +2824,7 @@ mod tests {
             .as_any()
             .downcast_ref::<Float64Array>()
             .unwrap();
-        assert_float_column(value_s3_array, &expected_value_s3, "dh_sto,ambience,s3");
+        assert_float64_column(value_s3_array, &expected_value_s3, "dh_sto,ambience,s3");
     }
 
     #[test]
@@ -3108,10 +2846,10 @@ mod tests {
 
         // Expected result DataFrame
         let expected_t_values = vec![1, 2, 3];
-        let expected_b1_dh_sto = vec![
-            "2022-04-20T00:00:00+00:00",
-            "2022-04-20T01:00:00+00:00",
-            "2022-04-20T02:00:00+00:00",
+        let expected_b1_dh_sto: Vec<DateTime<FixedOffset>> = vec![
+            Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
         ];
         let expected_b1_s1 = vec![-2.0, 1.0, 2.0];
         let expected_b1_s2 = vec![-3.0, 2.0, 2.0];
@@ -3136,9 +2874,9 @@ mod tests {
         let b1_dh_sto_array = record_batch
             .column(1)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
-        assert_string_column(b1_dh_sto_array, &expected_b1_dh_sto, "b1,dh_sto");
+        assert_time_stamp_column(b1_dh_sto_array, &expected_b1_dh_sto, "b1,dh_sto");
 
         // Assert 'b1,s1' column
         let b1_s1_array = record_batch
@@ -3291,10 +3029,10 @@ mod tests {
         print_batches(&batches);
 
         // Expected result DataFrame
-        let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00",
-            "2022-04-20T01:00:00+00:00",
-            "2022-04-20T02:00:00+00:00",
+        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+            Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
         ];
         let expected_fcr_up_s1 = vec![0.27, 0.27, 0.27];
         let expected_fcr_up_s2 = vec![0.27, 0.27, 0.29];
@@ -3304,11 +3042,20 @@ mod tests {
         let t_array = record_batch
             .column(0)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
-        assert_string_column(t_array, &expected_t_values, "t");
+        assert_time_stamp_column(t_array, &expected_t_values, "t");
 
         // Assert 'fcr_up,s1' column
+        assert_eq!(
+            record_batch
+                .schema()
+                .fields
+                .find("fcr_up,s1")
+                .expect("expected field fcr_up,s1 not found")
+                .0,
+            1
+        );
         let fcr_up_s1_array = record_batch
             .column(1)
             .as_any()
@@ -3346,10 +3093,10 @@ mod tests {
         print_batches(&batches);
 
         // Expected result DataFrame
-        let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00",
-            "2022-04-20T01:00:00+00:00",
-            "2022-04-20T02:00:00+00:00",
+        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+            Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
         ];
         let expected_fcr_up_s1 = vec![1.0, 2.0, 3.0];
         let expected_fcr_up_s2 = vec![1.0, 2.0, 3.0];
@@ -3359,9 +3106,9 @@ mod tests {
         let t_array = record_batch
             .column(0)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
-        assert_string_column(t_array, &expected_t_values, "t");
+        assert_time_stamp_column(t_array, &expected_t_values, "t");
 
         // Assert 'fcr_up,s1' column
         let fcr_up_s1_array = record_batch
@@ -3564,10 +3311,10 @@ mod tests {
         print_batches(&batches);
 
         // Expected result DataFrame
-        let expected_t = vec![
-            "2022-04-20T00:00:00+00:00",
-            "2022-04-20T01:00:00+00:00",
-            "2022-04-20T02:00:00+00:00",
+        let expected_t: Vec<DateTime<FixedOffset>> = vec![
+            Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
         ];
 
         let expected_hp1_elc_s1 = vec![5.0, 4.285714285714286, 4.285714285714286];
@@ -3578,9 +3325,9 @@ mod tests {
         let t_array = record_batch
             .column(0)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
-        assert_string_column(t_array, &expected_t, "t");
+        assert_time_stamp_column(t_array, &expected_t, "t");
 
         // Assert 'hp1,elc,s1' column
         let hp1_elc_s1_array = record_batch
@@ -3620,10 +3367,10 @@ mod tests {
         print_batches(&batches);
 
         // Expected result DataFrame
-        let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00",
-            "2022-04-20T01:00:00+00:00",
-            "2022-04-20T02:00:00+00:00",
+        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+            Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
         ];
         let expected_c1_s1 = vec![0.0, 0.0, 0.0];
         let expected_c1_s2 = vec![0.0, 0.0, 0.0];
@@ -3645,9 +3392,9 @@ mod tests {
         let t_array = record_batch
             .column(0)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
-        assert_string_column(t_array, &expected_t_values, "t");
+        assert_time_stamp_column(t_array, &expected_t_values, "t");
 
         // Assert other columns in lexicographical order
         let column_c1_s1 = record_batch
@@ -3829,43 +3576,24 @@ mod tests {
 
     #[test]
     fn test_bid_slots_to_arrow() {
-        let input_data = load_test_data(); // Load the test data from the provided JSON file.
-
-        let bid_slots = &input_data.bid_slots;
-
-        for (market, bid_slot) in bid_slots {
-            println!("Market: {}", market);
-            println!("Time Steps: {:?}", bid_slot.time_steps);
-            println!("Slots: {:?}", bid_slot.slots);
-            println!("Prices:");
-
-            for ((time, slot), price) in &bid_slot.prices {
-                println!("({}, {}) => {}", time, slot, price);
-            }
-        }
-
-        // Convert bid slots to Arrow RecordBatch
+        let input_data = load_test_data();
         let record_batch =
             bid_slots_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-
-        // Expected result DataFrame
-        let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00",
-            "2022-04-20T01:00:00+00:00",
-            "2022-04-20T02:00:00+00:00",
+        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+            Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
         ];
         let expected_npe_p0 = vec![45.0, 58.0, 55.0];
         let expected_npe_p1 = vec![45.0, 58.0, 65.0];
         let expected_npe_p2 = vec![50.0, 62.0, 88.0];
         let expected_npe_p3 = vec![50.0, 62.0, 91.0];
-
-        // Assert 't' column
         let t_array = record_batch
             .column(0)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
-        assert_string_column(t_array, &expected_t_values, "t");
+        assert_time_stamp_column(t_array, &expected_t_values, "t");
 
         // Assert other columns (in the expected order)
         let column_npe_p0 = record_batch
@@ -3906,10 +3634,10 @@ mod tests {
             processes_cf_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Expected result DataFrame
-        let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00",
-            "2022-04-20T01:00:00+00:00",
-            "2022-04-20T02:00:00+00:00",
+        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+            Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
         ];
         let expected_pv1_s1_s2_s3 = vec![0.0, 0.4, 0.5];
 
@@ -3917,9 +3645,9 @@ mod tests {
         let t_array = record_batch
             .column(0)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
-        assert_string_column(t_array, &expected_t_values, "t");
+        assert_time_stamp_column(t_array, &expected_t_values, "t");
 
         // Assert the capacity factor column for 'pv1,s1,s2,s3'
         let column_pv1_s1_s2_s3 = record_batch
@@ -3932,17 +3660,13 @@ mod tests {
 
     #[test]
     fn test_market_price_to_arrow() {
-        let input_data = load_test_data(); // Load the test data from the provided JSON file.
-
-        // Convert market price data to Arrow RecordBatch
+        let input_data = load_test_data();
         let record_batch =
             market_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-
-        // Expected result DataFrame with columns in BTreeMap lexicographical order
-        let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00",
-            "2022-04-20T01:00:00+00:00",
-            "2022-04-20T02:00:00+00:00",
+        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+            Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
         ];
         let expected_fcr_up_s1 = vec![4.0, 56.0, 44.0];
         let expected_fcr_up_s2 = vec![4.0, 56.0, 52.8];
@@ -3955,9 +3679,9 @@ mod tests {
         let t_array = record_batch
             .column(0)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
-        assert_string_column(t_array, &expected_t_values, "t");
+        assert_time_stamp_column(t_array, &expected_t_values, "t");
 
         // Assert 'fcr_up,s1' column
         let fcr_up_s1_array = record_batch
@@ -4017,10 +3741,10 @@ mod tests {
             nodes_commodity_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Expected result DataFrame
-        let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00",
-            "2022-04-20T01:00:00+00:00",
-            "2022-04-20T02:00:00+00:00",
+        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+            Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
         ];
         let expected_ng_all = vec![12.0, 12.0, 12.0];
 
@@ -4028,9 +3752,9 @@ mod tests {
         let t_array = record_batch
             .column(0)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
-        assert_string_column(t_array, &expected_t_values, "t");
+        assert_time_stamp_column(t_array, &expected_t_values, "t");
 
         // Assert 'ng,ALL' column
         let ng_all_array = record_batch
@@ -4050,24 +3774,20 @@ mod tests {
             processes_eff_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Expected result DataFrame
-        let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00",
-            "2022-04-20T01:00:00+00:00",
-            "2022-04-20T02:00:00+00:00",
+        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+            Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
         ];
         let expected_hp1_s1 = vec![3.0, 3.5, 3.5];
         let expected_hp1_s2 = vec![3.0, 3.5, 3.5];
         let expected_hp1_s3 = vec![3.0, 3.5, 3.5];
-
-        // Assert 't' column
         let t_array = record_batch
             .column(0)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
-        assert_string_column(t_array, &expected_t_values, "t");
-
-        // Assert 'hp1,s1' column
+        assert_time_stamp_column(t_array, &expected_t_values, "t");
         let hp1_s1_array = record_batch
             .column(1)
             .as_any()
@@ -4103,10 +3823,10 @@ mod tests {
             market_balance_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Expected result DataFrame with columns in BTreeMap lexicographical order
-        let expected_t_values = vec![
-            "2022-04-20T00:00:00+00:00",
-            "2022-04-20T01:00:00+00:00",
-            "2022-04-20T02:00:00+00:00",
+        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+            Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
         ];
         let expected_npe_dw_s1 = vec![43.2, 54.0, 52.2];
         let expected_npe_dw_s2 = vec![43.2, 54.0, 78.3];
@@ -4119,9 +3839,9 @@ mod tests {
         let t_array = record_batch
             .column(0)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<TimestampMillisecondArray>()
             .unwrap();
-        assert_string_column(t_array, &expected_t_values, "t");
+        assert_time_stamp_column(t_array, &expected_t_values, "t");
 
         // Assert 'npe,dw,s1' column
         let npe_dw_s1_array = record_batch
@@ -4190,9 +3910,6 @@ mod tests {
             "common_timesteps",
             "common_scenario_name",
         ];
-
-        let expected_values = vec!["1", "1", "1", "1", "1", "10000", "10000", "2", "s_all"];
-
         // Assert parameter values
         let batches = vec![record_batch];
         let parameter_array = batches[0]
@@ -4205,13 +3922,54 @@ mod tests {
         }
 
         // Assert value values
+        let expected_bools = vec![true, true, true, true, true];
+        let expected_floats = vec![10000.0, 10000.0];
+        let expected_ints = vec![2];
+        let expected_strings = vec!["s_all".to_string()];
         let value_array = batches[0]
             .column(1)
             .as_any()
-            .downcast_ref::<StringArray>()
+            .downcast_ref::<UnionArray>()
             .unwrap();
-        for (i, expected) in expected_values.iter().enumerate() {
-            assert_eq!(value_array.value(i), *expected);
+        let mut base = 0;
+        for (i, expected) in expected_bools.iter().enumerate() {
+            let value = value_array
+                .value(base + i)
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .unwrap()
+                .value(0);
+            assert_eq!(value, *expected);
+        }
+        base += expected_bools.len();
+        for (i, expected) in expected_floats.iter().enumerate() {
+            let value = value_array
+                .value(base + i)
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap()
+                .value(0);
+            assert_eq!(value, *expected);
+        }
+        base += expected_floats.len();
+        for (i, expected) in expected_ints.iter().enumerate() {
+            let value = value_array
+                .value(base + i)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap()
+                .value(0);
+            assert_eq!(value, *expected);
+        }
+        base += expected_ints.len();
+        for (i, expected) in expected_strings.iter().enumerate() {
+            let inner_array = value_array.value(base + i);
+            let value = inner_array
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap()
+                .value(0);
+            assert_eq!(value, *expected);
         }
     }
 }

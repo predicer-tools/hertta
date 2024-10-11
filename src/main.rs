@@ -9,11 +9,8 @@ mod utilities;
 use chrono::{Duration as ChronoDuration, FixedOffset, Timelike, Utc};
 use clap::Parser;
 use input_data::{DataTable, InputData, OptimizationData};
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
-use reqwest::Client;
 use serde_json;
 use serde_json::from_str;
-use serde_json::json;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
@@ -43,72 +40,6 @@ fn write_default_settings_to_file(settings_file_path: &PathBuf) -> Result<(), Bo
     let serialized_settings = toml::to_string_pretty(&default_settings)?;
     let mut settings_file = File::create(settings_file_path)?;
     settings_file.write_all(&serialized_settings.into_bytes())?;
-    Ok(())
-}
-
-/// This function is used to make post request to Home Assistant in the Hertta development phase
-///
-/// Sends a POST request to control light brightness.
-///
-/// This asynchronous function sends a POST request to a given URL to control the brightness of a specified light entity.
-/// It includes necessary headers for content type and authorization and sends a JSON payload containing the entity ID and desired brightness level.
-///
-/// # Parameters
-/// - `url`: The URL of the light control service.
-/// - `entity_id`: The identifier of the light entity to be controlled.
-/// - `token`: Authentication token required for the POST request.
-/// - `brightness`: Desired brightness level.
-///
-/// # Returns
-/// Returns `Ok(())` if the POST request is successfully sent and processed.
-/// Returns `PostRequestError` if any error occurs during the request construction, sending, or processing.
-///
-/// # Errors
-/// - Errors in header construction or during the sending of the request are converted to `PostRequestError`.
-/// - Errors in the response status (e.g., non-successful HTTP status codes) are also converted to `PostRequestError`.
-///
-async fn _make_post_request(
-    url: &str,
-    entity_id: &str,
-    token: &str,
-    brightness: f64,
-) -> Result<(), errors::PostRequestError> {
-    // Check if the token is valid for HTTP headers
-    if !utilities::_is_valid_http_header_value(token) {
-        return Err(errors::PostRequestError("Invalid token header".to_string()));
-    }
-
-    // Construct the request headers, including content type and authorization.
-    let mut headers = HeaderMap::new();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-
-    // Handle the creation of the token header safely, converting any error into a `PostRequestError`.
-    let token_header = HeaderValue::from_str(&format!("{}", token))
-        .map_err(|e| errors::PostRequestError(format!("Invalid token header: {}", e)))?;
-    headers.insert(AUTHORIZATION, token_header);
-
-    // Construct the JSON payload with the light entity's ID and the desired brightness level.
-    let payload = json!({
-        "entity_id": entity_id,
-        "brightness": brightness,
-    });
-
-    // Send the POST request using the constructed headers and payload.
-    let client = Client::new();
-    let response = client
-        .post(url)
-        .headers(headers)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(errors::PostRequestError::from)?;
-
-    // Check the response status, converting any error (e.g., non-2XX status) into a `PostRequestError`.
-    if let Err(err) = response.error_for_status() {
-        eprintln!("Error making POST request: {:?}", err);
-        return Err(errors::PostRequestError::from(err));
-    }
-
     Ok(())
 }
 
@@ -216,8 +147,8 @@ pub fn create_time_data() -> input_data::TimeData {
     let mut series = Vec::new();
     let mut current_time = start_time;
     while current_time <= end_time {
-        series.push(current_time.format("%Y-%m-%dT%H:%M:%S").to_string());
-        current_time = current_time + ChronoDuration::hours(1); // Adjust this duration to 60 minutes
+        series.push(current_time);
+        current_time = current_time + ChronoDuration::hours(1);
     }
 
     input_data::TimeData {
