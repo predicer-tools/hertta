@@ -1,33 +1,8 @@
 use crate::input_data;
 
-use arrow::array::{Array, ArrayRef, Float64Array, Int32Array, StringArray};
 use chrono::{DateTime, FixedOffset};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
-//POISTETTAVA
-
-pub fn column_value_to_string(column: &ArrayRef, row_index: usize) -> String {
-    if column.is_null(row_index) {
-        return "NULL".to_string();
-    }
-
-    match column.data_type() {
-        arrow::datatypes::DataType::Utf8 => {
-            let array = column.as_any().downcast_ref::<StringArray>().unwrap();
-            array.value(row_index).to_string()
-        }
-        arrow::datatypes::DataType::Float64 => {
-            let array = column.as_any().downcast_ref::<Float64Array>().unwrap();
-            array.value(row_index).to_string()
-        }
-        arrow::datatypes::DataType::Int32 => {
-            let array = column.as_any().downcast_ref::<Int32Array>().unwrap();
-            array.value(row_index).to_string()
-        }
-        _ => "Unsupported type".to_string(),
-    }
-}
 
 fn check_series(
     ts_data: &input_data::TimeSeries,

@@ -11,69 +11,9 @@ use arrow::{error::ArrowError, record_batch::RecordBatch};
 use arrow_errors::DataConversionError;
 use arrow_ipc::writer::StreamWriter;
 use chrono::{DateTime, FixedOffset};
-use prettytable::{Cell, Row, Table};
 use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
-use std::error::Error;
 use std::sync::Arc;
-
-pub fn _print_record_batches(batches: &HashMap<String, RecordBatch>) -> Result<(), Box<dyn Error>> {
-    for (name, batch) in batches {
-        println!("Batch: {}", name);
-
-        let mut table = Table::new();
-
-        let header: Vec<Cell> = batch
-            .schema()
-            .fields()
-            .iter()
-            .map(|field| Cell::new(&field.name()))
-            .collect();
-        table.add_row(Row::new(header));
-
-        let num_rows = batch.num_rows();
-
-        for row_idx in 0..num_rows {
-            let mut row = Vec::new();
-
-            for col_idx in 0..batch.num_columns() {
-                let column = batch.column(col_idx);
-
-                let cell_value = match column.data_type() {
-                    DataType::Utf8 => {
-                        let string_array = column.as_any().downcast_ref::<StringArray>().unwrap();
-                        string_array.value(row_idx).to_string()
-                    }
-                    DataType::Float64 => {
-                        let float_array = column.as_any().downcast_ref::<Float64Array>().unwrap();
-                        if float_array.is_null(row_idx) {
-                            "NULL".to_string()
-                        } else {
-                            float_array.value(row_idx).to_string()
-                        }
-                    }
-                    DataType::Boolean => {
-                        let bool_array = column.as_any().downcast_ref::<BooleanArray>().unwrap();
-                        if bool_array.is_null(row_idx) {
-                            "NULL".to_string()
-                        } else {
-                            bool_array.value(row_idx).to_string()
-                        }
-                    }
-                    _ => "Unsupported data type".to_string(),
-                };
-
-                row.push(Cell::new(&cell_value));
-            }
-
-            table.add_row(Row::new(row));
-        }
-
-        table.printstd();
-        println!("\n");
-    }
-    Ok(())
-}
 
 // Function to create and serialize multiple RecordBatches
 pub fn create_and_serialize_record_batches(

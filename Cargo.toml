@@ -18,7 +18,6 @@ chrono-tz = "0.8"
 arrow = { version = "53.1", features = ["chrono-tz", "ipc"] }
 serde_arrow = "0.11"
 thiserror = "1.0.60"
-prettytable = "0.10.0"
 clap = { version = "4.5", features = ["derive"] }
 arrow-ipc = "53.1"
 zmq = "0.10"

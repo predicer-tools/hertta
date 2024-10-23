@@ -6,22 +6,22 @@ mod input_data;
 mod settings;
 mod utilities;
 
-use chrono::{Duration as ChronoDuration, FixedOffset, Timelike, Utc};
+use crate::event_loop::{OptimizationState, ResultData};
 use clap::Parser;
-use input_data::{DataTable, InputData, OptimizationData};
-use serde_json;
-use serde_json::from_str;
+use input_data::{InputData, OptimizationData};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Write;
+use std::marker::{Send, Sync};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
+use tokio::sync::watch;
+use tokio::sync::Semaphore;
 use warp::Filter;
-use zmq;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -43,131 +43,119 @@ fn write_default_settings_to_file(settings_file_path: &PathBuf) -> Result<(), Bo
     Ok(())
 }
 
-pub fn start_hass_backend_server() {
-    Command::new("python")
-        .arg("hass_backend/server.py") // Replace with the actual path to your Python file
-        .spawn() // Spawns the command as a new process, not blocking the current thread
-        .expect("HASS backend server failed to start");
-}
-
-pub fn start_weather_forecast_server() {
-    // Start Python server 2
-    Command::new("python")
-        .arg("forecasts/weather_forecast.py") // Replace with the actual path to your Python file
-        .spawn() // Spawns the command as a new process, not blocking the current thread
-        .expect("Weather forecast failed to start");
-}
-
-pub fn json_to_inputdata(json_file_path: &str) -> Result<input_data::InputData, Box<dyn Error>> {
-    let mut file = File::open(json_file_path)?;
-    let mut data = String::new();
-    file.read_to_string(&mut data)?;
-
-    let input_data: input_data::InputData = from_str(&data)?;
-    Ok(input_data)
-}
-
-// Function to send serialized batches
-pub fn send_serialized_batches(
-    serialized_batches: &HashMap<String, Vec<u8>>,
-    zmq_context: &zmq::Context,
-) -> Result<(), Box<dyn Error>> {
-    let push_socket = zmq_context.socket(zmq::PUSH)?;
-    push_socket.connect("tcp://127.0.0.1:5555")?;
-
-    for (key, batch) in serialized_batches {
-        println!("Sending batch: {}", key); // Debug print
-        push_socket.send(batch, 0)?;
+async fn send_optimization_data_to_event_loop(
+    job_id: usize,
+    params: HashMap<String, String>,
+    input_data: InputData,
+    tx_optimize: mpsc::Sender<(usize, OptimizationData)>,
+) -> Result<(), String> {
+    let fetch_time_data = params.get("fetch_time_data").map_or(false, |v| v == "true");
+    let fetch_weather_data = params
+        .get("fetch_weather_data")
+        .map_or(false, |v| v == "true");
+    let fetch_elec_data = params
+        .get("fetch_elec_data")
+        .map_or(false, |v| v == "elering" || v == "entsoe");
+    let elec_price_source = params.get("fetch_elec_data").cloned();
+    let country = params.get("country").cloned();
+    let location = params.get("location").cloned();
+    println!("Received optimization request with options:");
+    println!("Fetch time data: {}", fetch_time_data);
+    println!("Fetch weather data: {}", fetch_weather_data);
+    println!("Fetch electricity data: {}", fetch_elec_data);
+    println!("Electricity price source: {:?}", elec_price_source);
+    println!("Country: {:?}", country);
+    println!("Location: {:?}", location);
+    let optimization_data = OptimizationData {
+        fetch_weather_data,
+        fetch_elec_data,
+        fetch_time_data,
+        country,
+        location,
+        timezone: None,
+        elec_price_source: None,
+        model_data: Some(input_data),
+        time_data: None,
+        weather_data: None,
+        elec_price_data: None,
+        control_results: None,
+        input_data_batch: None,
+    };
+    if tx_optimize.send((job_id, optimization_data)).await.is_err() {
+        return Err("Failed to send optimization data".to_string());
     }
-
     Ok(())
 }
 
-pub fn find_available_port() -> u16 {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("Failed to bind to address");
-    listener.local_addr().unwrap().port()
+fn inject_clone<T: Clone + Send + Sync + 'static>(x: T) -> warp::filters::BoxedFilter<(T,)> {
+    warp::any().map(move || x.clone()).boxed()
 }
 
-/*
-pub fn receive_data(endpoint: &str, zmq_context: &zmq::Context, data_store: &Arc<Mutex<Vec<DataTable>>>) -> Result<(), Box<dyn Error>> {
-    let receiver = zmq_context.socket(zmq::PULL)?;
-    receiver.connect(endpoint)?;
-    let flags = 0;
-
-    let pull_result = receiver.recv_bytes(flags)?;
-    let reader = StreamReader::try_new(pull_result.as_slice(), None).expect("Failed to construct Arrow reader");
-
-    for record_batch_result in reader {
-        let record_batch = record_batch_result.expect("Failed to read record batch");
-        let data_table = DataTable::from_record_batch(&record_batch);
-
-        let mut data_store = data_store.lock().unwrap();
-        data_store.push(data_table);
-    }
-
-    Ok(())
+#[derive(Serialize)]
+struct JobId {
+    job_id: usize,
 }
-*/
 
-pub fn print_data_table(data_table: &DataTable) {
-    // Print the column headers
-    for column in &data_table.columns {
-        print!("{:<20}", column);
-    }
-    println!();
+#[derive(Serialize)]
+struct IdleReply {
+    status: String,
+}
 
-    // Print a line separator
-    for _ in &data_table.columns {
-        print!("{:<20}", "--------------------");
-    }
-    println!();
-
-    // Print the rows
-    for row in &data_table.data {
-        for cell in row {
-            print!("{:<20}", cell);
+impl IdleReply {
+    fn new() -> Self {
+        IdleReply {
+            status: "idle".to_string(),
         }
-        println!();
     }
 }
 
-pub fn create_time_data() -> input_data::TimeData {
-    // Get the current time and round it to the latest hour
-    let start_time = Utc::now()
-        .with_timezone(&FixedOffset::east_opt(0).unwrap())
-        .with_minute(0)
-        .unwrap()
-        .with_second(0)
-        .unwrap()
-        .with_nanosecond(0)
-        .unwrap();
-    let end_time = start_time + ChronoDuration::hours(12);
+#[derive(Serialize)]
+struct InProgressReply {
+    status: String,
+    job_id: usize,
+}
 
-    // Generate a series of timestamps every 60 minutes
-    let mut series = Vec::new();
-    let mut current_time = start_time;
-    while current_time <= end_time {
-        series.push(current_time);
-        current_time = current_time + ChronoDuration::hours(1);
-    }
-
-    input_data::TimeData {
-        start_time,
-        end_time,
-        series,
+impl InProgressReply {
+    fn new(job_id: usize) -> Self {
+        InProgressReply {
+            status: "in_progress".to_string(),
+            job_id,
+        }
     }
 }
 
-pub fn run_python_script() -> Result<(), Box<dyn Error>> {
-    let status = Command::new("python").arg("input_data.py").status()?;
+#[derive(Serialize)]
+struct FinishedReply<'a> {
+    status: String,
+    job_id: usize,
+    results: &'a ResultData,
+}
 
-    if status.success() {
-        println!("Python script executed successfully.");
-    } else {
-        println!("Python script failed to execute.");
+impl<'a> FinishedReply<'a> {
+    fn new(job_id: usize, results: &'a ResultData) -> Self {
+        FinishedReply {
+            status: "finished".to_string(),
+            job_id,
+            results,
+        }
     }
+}
 
-    Ok(())
+#[derive(Serialize)]
+struct ErrorReply {
+    status: String,
+    job_id: usize,
+    message: String,
+}
+
+impl ErrorReply {
+    fn new(job_id: usize, message: &str) -> Self {
+        ErrorReply {
+            status: "error".to_string(),
+            job_id,
+            message: message.to_string(),
+        }
+    }
 }
 
 #[tokio::main]
@@ -179,91 +167,92 @@ async fn main() -> Result<(), Box<dyn Error>> {
         println!("Settings written to {}", settings_file_path.display());
         return Ok(());
     }
-    let settings = settings::make_settings(
+    let settings = Arc::new(settings::make_settings(
         &settings::map_from_environment_variables(),
         &settings::make_settings_file_path(),
-    )?;
+    )?);
     if !settings.predicer_runner_project.is_empty() {
         fs::create_dir_all(Path::new(&settings.predicer_runner_project))?;
     }
     settings::validate_settings(&settings)?;
-    // Define a route with query parameters for optimization
-    let optimize_route = warp::path("optimize")
+    let (tx_optimize, rx_optimize) = mpsc::channel::<(usize, OptimizationData)>(1);
+    let (tx_state, rx_state) = watch::channel::<OptimizationState>(OptimizationState::Idle);
+    tokio::spawn(async move {
+        event_loop::event_loop(settings, rx_optimize, tx_state).await;
+    });
+    let optimize_permit = Arc::new(Semaphore::new(1));
+    let job_id = Arc::new(Mutex::new(0usize));
+    let optimize_route = warp::path("api")
+        .and(warp::path("optimize"))
         .and(warp::post())
         .and(warp::query::<HashMap<String, String>>())
         .and(warp::body::json())
+        .and(inject_clone(optimize_permit))
+        .and(inject_clone(job_id))
+        .and(inject_clone(rx_state.clone()))
+        .and(inject_clone(tx_optimize))
         .and_then(
-            |params: HashMap<String, String>, input_data: InputData| async move {
-                let fetch_time_data = params.get("fetch_time_data").map_or(false, |v| v == "true");
-                let fetch_weather_data = params
-                    .get("fetch_weather_data")
-                    .map_or(false, |v| v == "true");
-                let fetch_elec_data = params
-                    .get("fetch_elec_data")
-                    .map_or(false, |v| v == "elering" || v == "entsoe");
-                let elec_price_source = params.get("fetch_elec_data").cloned();
-                let country = params.get("country").cloned();
-                let location = params.get("location").cloned();
-
-                println!("Received optimization request with options:");
-                println!("Fetch time data: {}", fetch_time_data);
-                println!("Fetch weather data: {}", fetch_weather_data);
-                println!("Fetch electricity data: {}", fetch_elec_data);
-                println!("Electricity price source: {:?}", elec_price_source);
-                println!("Country: {:?}", country);
-                println!("Location: {:?}", location);
-
-                // Create OptimizationData instance
-                let optimization_data = OptimizationData {
-                    fetch_weather_data,
-                    fetch_elec_data,
-                    fetch_time_data,
-                    country,
-                    location,
-                    timezone: None,
-                    elec_price_source: None,
-                    model_data: Some(input_data),
-                    time_data: None,
-                    weather_data: None,
-                    elec_price_data: None,
-                    control_results: None,
-                    input_data_batch: None,
-                };
-
-                let settings = settings::make_settings(
-                    &settings::map_from_environment_variables(),
-                    &settings::make_settings_file_path(),
-                )
-                .expect("failed to make settings");
-                match settings::validate_settings(&settings) {
-                    Ok(..) => (),
-                    Err(error) => panic!("{}", error),
-                };
-                let (tx, rx) = mpsc::channel::<OptimizationData>(32);
-                let tx = Arc::new(Mutex::new(tx));
-                tokio::spawn(async move {
-                    event_loop::event_loop(settings, rx).await;
-                });
-
-                let tx_clone = Arc::clone(&tx);
-                tokio::spawn(async move {
-                    let optimization_data = optimization_data.clone(); // Cloning the data to avoid ownership issues
-                    let tx = tx_clone.lock().await;
-                    if tx.send(optimization_data).await.is_err() {
-                        eprintln!("Failed to send optimization data");
+            |params: HashMap<String, String>,
+             input_data: InputData,
+             optimize_permit: Arc<Semaphore>,
+             job_id: Arc<Mutex<usize>>,
+             rx_state: watch::Receiver<OptimizationState>,
+             tx_optimize: mpsc::Sender<(usize, OptimizationData)>| async move {
+                let current_job_id: usize;
+                {
+                    let _permit = optimize_permit.acquire().await.unwrap();
+                    if let OptimizationState::InProgress(..) = *rx_state.borrow() {
+                        return Ok::<_, warp::Rejection>(warp::reply::with_status(
+                            warp::reply::json(&()),
+                            warp::http::StatusCode::SERVICE_UNAVAILABLE,
+                        ));
                     }
-                });
-
-                // Return a response
-                Ok::<_, warp::Rejection>(warp::reply::json(&"Optimization started"))
+                    {
+                        let mut mutable_id = job_id.lock().unwrap();
+                        current_job_id = *mutable_id;
+                        *mutable_id += 1;
+                    }
+                    tokio::spawn(async move {
+                        send_optimization_data_to_event_loop(
+                            current_job_id,
+                            params,
+                            input_data,
+                            tx_optimize,
+                        )
+                        .await
+                        .unwrap();
+                    });
+                }
+                Ok::<_, warp::Rejection>(warp::reply::with_status(
+                    warp::reply::json(&JobId {
+                        job_id: current_job_id,
+                    }),
+                    warp::http::StatusCode::OK,
+                ))
             },
         );
-
-    // Combine the routes
-    let routes = warp::path("api").and(optimize_route);
-
-    // Start the server
-    warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
-
+    let progress_route = warp::path("api")
+        .and(warp::path("progress"))
+        .and(warp::get())
+        .and(inject_clone(rx_state.clone()))
+        .and_then(|rx_state: watch::Receiver<OptimizationState>| async move {
+            match *rx_state.borrow() {
+                OptimizationState::Idle => {
+                    Ok::<_, warp::Rejection>(warp::reply::json(&IdleReply::new()))
+                }
+                OptimizationState::InProgress(job_id) => {
+                    Ok::<_, warp::Rejection>(warp::reply::json(&InProgressReply::new(job_id)))
+                }
+                OptimizationState::Finished(job_id, ref result_data) => Ok::<_, warp::Rejection>(
+                    warp::reply::json(&FinishedReply::new(job_id, &result_data)),
+                ),
+                OptimizationState::Error(job_id, ref error) => {
+                    Ok::<_, warp::Rejection>(warp::reply::json(&ErrorReply::new(job_id, &error)))
+                }
+            }
+        });
+    let routes = optimize_route.or(progress_route);
+    let server_handle = warp::serve(routes).run(([127, 0, 0, 1], 3030));
+    server_handle.await;
     Ok(())
 }
