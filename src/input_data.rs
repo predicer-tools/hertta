@@ -1,12 +1,8 @@
-use crate::utilities;
-
-use arrow::record_batch::RecordBatch;
 use chrono::{DateTime, FixedOffset};
 use serde::de::{self, MapAccess, Visitor};
 use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct OptimizationData {
@@ -42,6 +38,19 @@ pub struct InputData {
     pub inflow_blocks: BTreeMap<String, InflowBlock>,
     pub bid_slots: BTreeMap<String, BidSlot>,
     pub gen_constraints: BTreeMap<String, GenConstraint>,
+}
+
+pub fn find_input_node_names<'a>(nodes: impl Iterator<Item = &'a Node>) -> Vec<String> {
+    nodes
+        .filter(|node| {
+            !node.is_commodity
+                && !node.is_market
+                && !node.is_state
+                && !node.is_res
+                && !node.is_inflow
+        })
+        .map(|node| node.name.clone())
+        .collect()
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -310,19 +319,6 @@ pub struct TimeSeries {
     pub series: BTreeMap<DateTime<FixedOffset>, f64>,
 }
 
-impl TimeSeriesData {
-    pub fn from_temporals(temporals_t: &[DateTime<FixedOffset>], scenario: String) -> Self {
-        let mut series = BTreeMap::new();
-        for time in temporals_t {
-            series.insert(time.clone(), 1.0);
-        }
-        let time_series = TimeSeries { scenario, series };
-        TimeSeriesData {
-            ts_data: vec![time_series],
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ConFactor {
     pub var_type: String,
@@ -338,30 +334,6 @@ pub struct DataTable {
 
 unsafe impl Send for DataTable {}
 unsafe impl Sync for DataTable {}
-
-impl DataTable {
-    pub fn _from_record_batch(batch: Arc<RecordBatch>) -> Self {
-        let columns = batch
-            .schema()
-            .fields()
-            .iter()
-            .map(|field| field.name().clone())
-            .collect::<Vec<_>>();
-
-        let mut data = Vec::new();
-
-        for row_index in 0..batch.num_rows() {
-            let mut row = Vec::new();
-            for column in batch.columns() {
-                let value = utilities::column_value_to_string(column, row_index);
-                row.push(value);
-            }
-            data.push(row);
-        }
-
-        DataTable { columns, data }
-    }
-}
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct WeatherData {
@@ -433,4 +405,60 @@ pub struct ElecPriceSource {
     pub country: Option<String>,
     pub bidding_in_domain: Option<String>,
     pub bidding_out_domain: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    mod find_input_node_names {
+        use super::*;
+        #[test]
+        fn no_nodes_means_no_names() {
+            let names = find_input_node_names(Vec::<Node>::new().iter());
+            assert!(names.is_empty());
+        }
+        #[test]
+        fn test_non_input_nodes_are_filtered() {
+            let commodity_nodes = vec![Node {
+                name: "commodity".to_string(),
+                is_commodity: true,
+                ..Node::default()
+            }];
+            assert!(find_input_node_names(commodity_nodes.iter()).is_empty());
+            let market_nodes = vec![Node {
+                name: "market".to_string(),
+                is_market: true,
+                ..Node::default()
+            }];
+            assert!(find_input_node_names(market_nodes.iter()).is_empty());
+            let state_nodes = vec![Node {
+                name: "state".to_string(),
+                is_state: true,
+                ..Node::default()
+            }];
+            assert!(find_input_node_names(state_nodes.iter()).is_empty());
+            let res_nodes = vec![Node {
+                name: "res".to_string(),
+                is_res: true,
+                ..Node::default()
+            }];
+            assert!(find_input_node_names(res_nodes.iter()).is_empty());
+            let inflow_nodes = vec![Node {
+                name: "inflow".to_string(),
+                is_inflow: true,
+                ..Node::default()
+            }];
+            assert!(find_input_node_names(inflow_nodes.iter()).is_empty());
+        }
+        #[test]
+        fn true_input_node_gets_found() {
+            let input_nodes = vec![Node {
+                name: "input".to_string(),
+                ..Node::default()
+            }];
+            let input_nodes = find_input_node_names(input_nodes.iter());
+            assert_eq!(input_nodes.len(), 1);
+            assert_eq!(input_nodes[0], "input");
+        }
+    }
 }

@@ -1,11 +1,15 @@
 use crate::arrow_input;
 use crate::input_data;
-use crate::input_data::OptimizationData;
+use crate::input_data::{InputData, OptimizationData, Process};
 use crate::settings::Settings;
 use crate::utilities;
-use arrow::array::RecordBatch;
+use arrow::array::timezone::Tz;
+use arrow::array::types::{Float64Type, TimestampMillisecondType};
+use arrow::array::{self, RecordBatch};
+use arrow::datatypes::{DataType, TimeUnit};
 use arrow::ipc::reader::StreamReader;
 use chrono::{DateTime, FixedOffset, Utc};
+use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::io;
@@ -14,79 +18,245 @@ use std::sync::Arc;
 use std::thread;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
+use tokio::sync::watch;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tokio::time::sleep;
-use tokio::time::{self, Duration};
+use tokio::time;
 use zmq::{Context, Socket};
 
 const PREDICER_SEND_FLAGS: i32 = 0;
 const PREDICER_RECEIVE_FLAGS: i32 = 0;
 
-pub async fn event_loop(settings: Settings, mut rx: mpsc::Receiver<input_data::OptimizationData>) {
-    let (tx_weather, rx_weather) = mpsc::channel::<OptimizationData>(32);
-    let (tx_elec, rx_elec) = mpsc::channel::<OptimizationData>(32);
-    let (tx_update, rx_update) = mpsc::channel::<OptimizationData>(32);
-    let (tx_batches, rx_batches) = mpsc::channel::<OptimizationData>(32);
-    let (tx_optimization, rx_optimization) = mpsc::channel::<OptimizationData>(32);
-    tokio::spawn(async move {
-        fetch_weather_data_task(rx_weather, tx_elec).await; // Output sent to fetch_elec_price_task
-    });
-    tokio::spawn(async move {
-        fetch_elec_price_task(rx_elec, tx_update).await; // Final output sent to update_model_data_task
-    });
-    tokio::spawn(async move {
-        // Adjust the function signature of update_model_data_task to accept tx_optimization
-        update_model_data_task(rx_update, tx_batches).await;
-    });
-    tokio::spawn(async move {
-        data_conversion_task(rx_batches, tx_optimization).await;
-    });
-    let mut zmq_port = settings.predicer_port;
-    if zmq_port == 0 {
-        zmq_port = find_available_port()
-            .await
-            .expect("failed to find available ZMQ port");
-    }
-    let optimization_task_handle =
-        tokio::spawn(async move { optimization_task(rx_optimization, zmq_port).await });
-    tokio::spawn(async move {
-        while let Some(data) = rx.recv().await {
-            if tx_weather.send(data).await.is_err() {
+#[derive(Serialize)]
+pub struct ResultData {
+    t: Vec<DateTime<Tz>>,
+    controls: BTreeMap<String, Vec<f64>>,
+}
+
+pub enum OptimizationState {
+    Idle,
+    InProgress(usize),
+    Finished(usize, ResultData),
+    Error(usize, String),
+}
+
+pub async fn event_loop(
+    settings: Arc<Settings>,
+    mut rx_input: mpsc::Receiver<(usize, OptimizationData)>,
+    tx_state: watch::Sender<OptimizationState>,
+) {
+    while let Some((job_id, data)) = rx_input.recv().await {
+        tx_state
+            .send(OptimizationState::InProgress(job_id))
+            .unwrap();
+        let control_processes = match expected_control_processes(&data.model_data) {
+            Ok(names) => names,
+            Err(error) => {
+                tx_state
+                    .send(OptimizationState::Error(job_id, error))
+                    .unwrap();
+                continue;
+            }
+        };
+        let (tx_weather, rx_weather) = oneshot::channel::<OptimizationData>();
+        let (tx_elec, rx_elec) = oneshot::channel::<OptimizationData>();
+        let (tx_update, rx_update) = oneshot::channel::<OptimizationData>();
+        let (tx_batches, rx_batches) = oneshot::channel::<OptimizationData>();
+        let (tx_optimization, rx_optimization) = oneshot::channel::<OptimizationData>();
+        tokio::spawn(async move {
+            fetch_weather_data_task(rx_weather, tx_elec).await; // Output sent to fetch_elec_price_task
+        });
+        tokio::spawn(async move {
+            fetch_elec_price_task(rx_elec, tx_update).await; // Final output sent to update_model_data_task
+        });
+        tokio::spawn(async move {
+            // Adjust the function signature of update_model_data_task to accept tx_optimization
+            update_model_data_task(rx_update, tx_batches).await;
+        });
+        tokio::spawn(async move {
+            data_conversion_task(rx_batches, tx_optimization).await;
+        });
+        let mut zmq_port = settings.predicer_port;
+        if zmq_port == 0 {
+            zmq_port = find_available_port()
+                .await
+                .expect("failed to find available ZMQ port");
+        }
+        let optimization_task_handle =
+            tokio::spawn(async move { optimization_task(rx_optimization, zmq_port).await });
+        tokio::spawn(async move {
+            if tx_weather.send(data).is_err() {
                 eprintln!("Failed to send data to weather task");
             }
-
-            // Simulate some work with a delay
-            sleep(Duration::from_secs(1)).await;
-        }
-    });
-    tokio::spawn(async move {
-        match start_julia_local(
-            &settings.julia_exec,
-            &settings.predicer_runner_project,
-            &settings.predicer_project,
-            &settings.predicer_runner_script,
-            zmq_port,
-        )
-        .await
-        {
-            Ok(status) => {
-                if !status.success() {
-                    eprintln!("Julia process failed with status: {:?}", status);
+        });
+        let settings_clone = Arc::clone(&settings);
+        tokio::spawn(async move {
+            match start_julia_local(
+                &settings_clone.julia_exec,
+                &settings_clone.predicer_runner_project,
+                &settings_clone.predicer_project,
+                &settings_clone.predicer_runner_script,
+                zmq_port,
+            )
+            .await
+            {
+                Ok(status) => {
+                    if !status.success() {
+                        eprintln!("Julia process failed with status: {:?}", status);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to start Julia process: {:?}", e);
                 }
             }
-            Err(e) => {
-                eprintln!("Failed to start Julia process: {:?}", e);
+        });
+        if let Some(results) = optimization_task_handle.await.unwrap() {
+            match results.get("v_flow") {
+                Some(result_batch) => {
+                    let time_stamps = match result_batch.column_by_name("t") {
+                        Some(time_stamp_column) => match time_stamp_column.data_type() {
+                            DataType::Timestamp(TimeUnit::Millisecond, Some(time_zone)) => {
+                                let time_stamp_array =
+                                    array::as_primitive_array::<TimestampMillisecondType>(
+                                        time_stamp_column,
+                                    );
+                                let mut time_stamps_in_vec: Vec<DateTime<Tz>> =
+                                    Vec::with_capacity(time_stamp_array.len());
+                                let tz: Tz = time_zone.parse().unwrap();
+                                for i in 0..time_stamp_array.len() {
+                                    let stamp =
+                                        time_stamp_array.value_as_datetime_with_tz(i, tz).unwrap();
+                                    time_stamps_in_vec.push(stamp.into());
+                                }
+                                time_stamps_in_vec
+                            }
+                            unexpected_type => {
+                                let message = format!(
+                                    "unexpected data type in 't' column: '{}'",
+                                    unexpected_type.to_string()
+                                );
+                                tx_state
+                                    .send(OptimizationState::Error(job_id, message))
+                                    .unwrap();
+                                continue;
+                            }
+                        },
+                        None => {
+                            let message = "no 't' column in v_flow".to_string();
+                            tx_state
+                                .send(OptimizationState::Error(job_id, message))
+                                .unwrap();
+                            continue;
+                        }
+                    };
+                    let mut control_data = BTreeMap::<String, Vec<f64>>::new();
+                    for control_process in control_processes {
+                        match result_batch.column_by_name(&control_process.column_name) {
+                            Some(column) => match column.data_type() {
+                                DataType::Float64 => {
+                                    let float_array =
+                                        array::as_primitive_array::<Float64Type>(column);
+                                    let data_as_vec = float_array
+                                        .into_iter()
+                                        .map(|x| x.unwrap())
+                                        .collect::<Vec<f64>>();
+                                    control_data.insert(control_process.name, data_as_vec);
+                                }
+                                unexpected_type => {
+                                    let message = format!(
+                                        "unexpected data type in '{}' column: '{}'",
+                                        control_process.column_name,
+                                        unexpected_type.to_string()
+                                    );
+                                    tx_state
+                                        .send(OptimizationState::Error(job_id, message))
+                                        .unwrap();
+                                    continue;
+                                }
+                            },
+                            None => {
+                                let message = format!(
+                                    "no '{}' column in v_flow",
+                                    control_process.column_name
+                                );
+                                tx_state
+                                    .send(OptimizationState::Error(job_id, message))
+                                    .unwrap();
+                                continue;
+                            }
+                        }
+                    }
+                    tx_state
+                        .send(OptimizationState::Finished(
+                            job_id,
+                            ResultData {
+                                t: time_stamps,
+                                controls: control_data,
+                            },
+                        ))
+                        .unwrap();
+                }
+                None => {
+                    let message = "no v_flow in result batch".to_string();
+                    tx_state
+                        .send(OptimizationState::Error(job_id, message))
+                        .unwrap();
+                    continue;
+                }
+            }
+        } else {
+            let message = "did not get any results at all".to_string();
+            tx_state
+                .send(OptimizationState::Error(job_id, message))
+                .unwrap();
+        }
+    }
+}
+
+struct ProcessInfo {
+    name: String,
+    column_name: String,
+}
+
+fn processes_and_column_prefixes<'a>(
+    processes: impl Iterator<Item = &'a Process>,
+    input_node_names: &Vec<String>,
+) -> Vec<(String, String)> {
+    let mut process_names = Vec::new();
+    for process in processes {
+        for topology in &process.topos {
+            if input_node_names.contains(&topology.source) && process.name == topology.sink {
+                let prefix = format!("{}_{}_{}", &process.name, &topology.source, &process.name);
+                process_names.push((process.name.clone(), prefix));
             }
         }
-    });
-    if let Some(results) = optimization_task_handle.await.unwrap() {
-        println!("Result tables:");
-        for key in results.keys() {
-            println!("{}", key);
-        }
-    } else {
-        println!("did not get any results at all");
+    }
+    process_names
+}
+
+fn expected_control_processes(model_data: &Option<InputData>) -> Result<Vec<ProcessInfo>, String> {
+    match model_data {
+        Some(ref model_data) => Ok({
+            let process_names = processes_and_column_prefixes(
+                &mut model_data.processes.values(),
+                &input_data::find_input_node_names(model_data.nodes.values()),
+            );
+            let first_scenario_name = match model_data.scenarios.keys().next() {
+                Some(name) => name.clone(),
+                None => {
+                    return Err("no scenarios in model data".to_string());
+                }
+            };
+            process_names
+                .iter()
+                .map(|name| ProcessInfo {
+                    name: name.0.clone(),
+                    column_name: format!("{}_{}", name.1, first_scenario_name),
+                })
+                .collect()
+        }),
+        None => Err("no model data in optimization data".to_string()),
     }
 }
 
@@ -113,7 +283,7 @@ pub async fn start_julia_local(
 }
 
 pub async fn optimization_task(
-    mut zmq_rx: mpsc::Receiver<OptimizationData>,
+    zmq_rx: oneshot::Receiver<OptimizationData>,
     zmq_port: u16,
 ) -> Option<BTreeMap<String, RecordBatch>> {
     let zmq_context: Context = Context::new();
@@ -122,48 +292,50 @@ pub async fn optimization_task(
     let mut is_running = true;
     let mut result = None;
     // Server loop to handle requests
-    while is_running {
-        let request_result = reply_socket.recv_string(PREDICER_RECEIVE_FLAGS);
-        match request_result {
-            Ok(inner_result) => match inner_result {
-                Ok(command) => {
-                    if command == "Hello" {
-                        if let Some(data) = zmq_rx.recv().await {
-                            if let Some(batches) = data.input_data_batch {
+    if let Ok(data) = zmq_rx.await {
+        while is_running {
+            let request_result = reply_socket.recv_string(PREDICER_RECEIVE_FLAGS);
+            match request_result {
+                Ok(inner_result) => match inner_result {
+                    Ok(command) => {
+                        if command == "Hello" {
+                            if let Some(ref batches) = data.input_data_batch {
                                 if let Err(error) = send_predicer_batches(&reply_socket, &batches) {
                                     eprintln!("Failed to send batches {:?}", error);
                                     is_running = false;
                                 }
                             }
+                        } else if command == "Ready to receive?" {
+                            send_acknowledgement(&reply_socket)
+                                .expect("failed to confirm readiness for input");
+                            match receive_predicer_results(&reply_socket) {
+                                Ok(optimization_result) => result = Some(optimization_result),
+                                Err(error) => eprintln!("Failed to receive data: {:?}", error),
+                            };
+                            is_running = false;
+                        } else {
+                            println!("Received unknown command {}", command);
                         }
-                    } else if command == "Ready to receive?" {
-                        send_acknowledgement(&reply_socket)
-                            .expect("failed to confirm readiness for input");
-                        match receive_predicer_results(&reply_socket) {
-                            Ok(optimization_result) => result = Some(optimization_result),
-                            Err(error) => eprintln!("Failed to receive data: {:?}", error),
-                        };
-                        is_running = false;
-                    } else {
-                        println!("Received unknown command {}", command);
                     }
+                    Err(_) => println!("Received absolute gibberish"),
+                },
+                Err(e) => {
+                    println!("Failed to receive data: {:?}", e);
+                    thread::sleep(time::Duration::from_secs(1));
                 }
-                Err(_) => println!("Received absolute gibberish"),
-            },
-            Err(e) => {
-                println!("Failed to receive data: {:?}", e);
-                thread::sleep(time::Duration::from_secs(1));
             }
         }
+        result
+    } else {
+        None
     }
-    result
 }
 
 pub async fn data_conversion_task(
-    mut rx: mpsc::Receiver<OptimizationData>,
-    tx: mpsc::Sender<OptimizationData>,
+    rx: oneshot::Receiver<OptimizationData>,
+    tx: oneshot::Sender<OptimizationData>,
 ) {
-    while let Some(optimization_data) = rx.recv().await {
+    if let Ok(optimization_data) = rx.await {
         let optimization_data_arc = Arc::new(Mutex::new(optimization_data.clone()));
 
         let data_clone = Arc::clone(&optimization_data_arc);
@@ -176,7 +348,7 @@ pub async fn data_conversion_task(
             match arrow_input::create_and_serialize_record_batches(model_data) {
                 Ok(serialized_batches) => {
                     updated_data.input_data_batch = Some(serialized_batches);
-                    if tx.send(updated_data.clone()).await.is_err() {
+                    if tx.send(updated_data.clone()).is_err() {
                         eprintln!("Failed to send converted OptimizationData");
                     } else {
                         println!("OptimizationData converted and sent successfully.");
@@ -274,10 +446,10 @@ fn receive_single_predicer_result(socket: &Socket) -> Result<RecordBatch, Box<dy
 }
 
 async fn update_model_data_task(
-    mut rx: mpsc::Receiver<OptimizationData>,
-    tx: mpsc::Sender<OptimizationData>,
+    rx: oneshot::Receiver<OptimizationData>,
+    tx: oneshot::Sender<OptimizationData>,
 ) {
-    while let Some(mut optimization_data) = rx.recv().await {
+    if let Ok(mut optimization_data) = rx.await {
         // Conditionally update temporals to model data
         if optimization_data.fetch_time_data {
             if let Err(e) = update_timeseries(&mut optimization_data) {
@@ -303,7 +475,7 @@ async fn update_model_data_task(
         }
 
         // Send the updated OptimizationData to the next task
-        if tx.send(optimization_data).await.is_err() {
+        if tx.send(optimization_data).is_err() {
             eprintln!("Failed to send updated OptimizationData to model data update");
         } else {
             println!("OptimizationData updated and sent successfully.");
@@ -363,46 +535,49 @@ pub fn update_npe_market_prices(
 }
 
 async fn fetch_weather_data_task(
-    mut rx: mpsc::Receiver<OptimizationData>,
-    tx: mpsc::Sender<OptimizationData>,
+    rx: oneshot::Receiver<OptimizationData>,
+    tx: oneshot::Sender<OptimizationData>,
 ) {
-    loop {
-        tokio::select! {
-            Some(mut optimization_data) = rx.recv() => {
-                if !optimization_data.fetch_weather_data {
-                    // If fetch_weather_data is false, directly forward the data to the next task
-                    if tx.send(optimization_data).await.is_err() {
-                        eprintln!("Failed to send optimization data from weather task without processing");
-                    }
-                    continue;
-                }
-
-                if let Some(time_data) = &optimization_data.time_data {
-                    let location = optimization_data.location.clone().unwrap_or_default();
-
-                    // Format start_time and end_time to the desired string representation
-                    let start_time_formatted = time_data.start_time.format("%Y-%m-%dT%H:00:00Z").to_string();
-                    let end_time_formatted = time_data.end_time.format("%Y-%m-%dT%H:00:00Z").to_string();
-
-                    // Fetch weather data using the formatted times
-                    match fetch_weather_data(start_time_formatted, end_time_formatted, location).await {
-                        Ok(weather_values) => {
-                            // Create and update WeatherData
-                            create_and_update_weather_data(&mut optimization_data, &weather_values);
-                        },
-                        Err(e) => eprintln!("fetch_weather_data_task: Failed to fetch weather data: {}", e),
-                    }
-
-                    // Attempt to send the updated optimization data back
-                    if tx.send(optimization_data).await.is_err() {
-                        eprintln!("Failed to send updated optimization data from weather task");
-                    }
-                } else {
-                    eprintln!("fetch_weather_data_task: Time data is missing.");
-                }
-            },
-            else => break,
+    if let Ok(mut optimization_data) = rx.await {
+        if !optimization_data.fetch_weather_data {
+            // If fetch_weather_data is false, directly forward the data to the next task
+            if tx.send(optimization_data).is_err() {
+                eprintln!("Failed to send optimization data from weather task without processing");
+            }
+            return;
         }
+
+        if let Some(time_data) = &optimization_data.time_data {
+            let location = optimization_data.location.clone().unwrap_or_default();
+
+            // Format start_time and end_time to the desired string representation
+            let start_time_formatted = time_data
+                .start_time
+                .format("%Y-%m-%dT%H:00:00Z")
+                .to_string();
+            let end_time_formatted = time_data.end_time.format("%Y-%m-%dT%H:00:00Z").to_string();
+
+            // Fetch weather data using the formatted times
+            match fetch_weather_data(start_time_formatted, end_time_formatted, location).await {
+                Ok(weather_values) => {
+                    // Create and update WeatherData
+                    create_and_update_weather_data(&mut optimization_data, &weather_values);
+                }
+                Err(e) => eprintln!(
+                    "fetch_weather_data_task: Failed to fetch weather data: {}",
+                    e
+                ),
+            }
+
+            // Attempt to send the updated optimization data back
+            if tx.send(optimization_data).is_err() {
+                eprintln!("Failed to send updated optimization data from weather task");
+            }
+        } else {
+            eprintln!("fetch_weather_data_task: Time data is missing.");
+        }
+    } else {
+        eprintln!("Channel closed.")
     }
 }
 
@@ -652,62 +827,52 @@ pub fn create_modified_price_series_data(
 }
 
 async fn fetch_elec_price_task(
-    mut rx: mpsc::Receiver<OptimizationData>,
-    tx: mpsc::Sender<OptimizationData>,
+    rx: oneshot::Receiver<OptimizationData>,
+    tx: oneshot::Sender<OptimizationData>,
 ) {
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
-
-    loop {
-        interval.tick().await;
-
-        if let Some(mut optimization_data) = rx.recv().await {
-            if !optimization_data.fetch_elec_data {
-                // If fetch_elec_data is false, directly forward the data to the next task
-                if tx.send(optimization_data).await.is_err() {
-                    eprintln!("Failed to send optimization data from elec task without processing");
-                }
-                continue;
+    if let Ok(mut optimization_data) = rx.await {
+        if !optimization_data.fetch_elec_data {
+            // If fetch_elec_data is false, directly forward the data to the next task
+            if tx.send(optimization_data).is_err() {
+                eprintln!("Failed to send optimization data from elec task without processing");
             }
+            return;
+        }
 
-            if let (Some(country), Some(time_data)) =
-                (&optimization_data.country, &optimization_data.time_data)
-            {
-                // Convert start_time and end_time to strings in the format "%Y-%m-%dT%H:00:00Z"
-                let start_time_str = time_data
-                    .start_time
-                    .format("%Y-%m-%dT%H:00:00Z")
-                    .to_string();
-                let end_time_str = time_data.end_time.format("%Y-%m-%dT%H:00:00Z").to_string();
+        if let (Some(country), Some(time_data)) =
+            (&optimization_data.country, &optimization_data.time_data)
+        {
+            // Convert start_time and end_time to strings in the format "%Y-%m-%dT%H:00:00Z"
+            let start_time_str = time_data
+                .start_time
+                .format("%Y-%m-%dT%H:00:00Z")
+                .to_string();
+            let end_time_str = time_data.end_time.format("%Y-%m-%dT%H:00:00Z").to_string();
 
-                match fetch_electricity_prices(start_time_str, end_time_str, country.clone()).await
-                {
-                    Ok(prices) => {
-                        create_and_update_elec_price_data(&mut optimization_data, &prices);
-                        if tx.send(optimization_data).await.is_err() {
-                            eprintln!(
-                                "Failed to send updated optimization data in electricity prices"
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "Failed to fetch electricity price data for country '{}': {:?}",
-                            country, e
-                        );
+            match fetch_electricity_prices(start_time_str, end_time_str, country.clone()).await {
+                Ok(prices) => {
+                    create_and_update_elec_price_data(&mut optimization_data, &prices);
+                    if tx.send(optimization_data).is_err() {
+                        eprintln!("Failed to send updated optimization data in electricity prices");
                     }
                 }
-            } else {
-                if optimization_data.country.is_none() {
-                    eprintln!("Country data is missing.");
-                }
-                if optimization_data.time_data.is_none() {
-                    eprintln!("Time data is missing.");
+                Err(e) => {
+                    eprintln!(
+                        "Failed to fetch electricity price data for country '{}': {:?}",
+                        country, e
+                    );
                 }
             }
         } else {
-            println!("Channel closed, stopping task.");
-            break;
+            if optimization_data.country.is_none() {
+                eprintln!("Country data is missing.");
+            }
+            if optimization_data.time_data.is_none() {
+                eprintln!("Time data is missing.");
+            }
         }
+    } else {
+        println!("Channel closed.");
     }
 }
 
@@ -953,6 +1118,30 @@ mod tests {
                 &[-1, 0, 1]
             );
             Ok(())
+        }
+    }
+    mod processes_and_column_prefixes {
+        use super::*;
+        use crate::input_data::Topology;
+        #[test]
+        fn column_prefix_gets_generated() {
+            let processes = vec![Process {
+                name: "control_process".to_string(),
+                topos: vec![Topology {
+                    source: "input_node".to_string(),
+                    sink: "control_process".to_string(),
+                    ..Topology::default()
+                }],
+                ..Process::default()
+            }];
+            let input_node_names = vec!["input_node".to_string()];
+            let process_names = processes_and_column_prefixes(processes.iter(), &input_node_names);
+            assert_eq!(process_names.len(), 1);
+            assert_eq!(process_names[0].0, "control_process");
+            assert_eq!(
+                process_names[0].1,
+                "control_process_input_node_control_process"
+            );
         }
     }
 }

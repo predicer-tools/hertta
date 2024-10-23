@@ -118,14 +118,19 @@ end
 function send_results(socket::Socket, results::Dict{Any, Any})
     ZMQ.send(socket, "Ready to receive?")
     receive_acknowledgement(socket)
+    result_time_stamp_format = dateformat"yyyy-mm-ddTHH:MM:SSzzzz"
     for (type, df) in results
+        if type != "v_flow"
+            continue
+        end
+        df[!,:t] = (t -> ZonedDateTime(t, result_time_stamp_format)).(df[!,:t])
         ZMQ.send(socket, "Receive $(type)")
-        df = results[type]
         buffer = IOBuffer()
         Arrow.write(buffer, df)
         receive_acknowledgement(socket)
         ZMQ.send(socket, take!(buffer))
         receive_acknowledgement(socket)
+        break
     end
     ZMQ.send(socket, "End")
     receive_acknowledgement(socket)
