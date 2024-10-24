@@ -5,7 +5,7 @@ use crate::settings::Settings;
 use crate::utilities;
 use arrow::array::timezone::Tz;
 use arrow::array::types::{Float64Type, TimestampMillisecondType};
-use arrow::array::{self, RecordBatch};
+use arrow::array::{self, Array, RecordBatch};
 use arrow::datatypes::{DataType, TimeUnit};
 use arrow::ipc::reader::StreamReader;
 use chrono::{DateTime, FixedOffset, Utc};
@@ -114,79 +114,25 @@ pub async fn event_loop(
         if let Some(results) = optimization_task_handle.await.unwrap() {
             match results.get("v_flow") {
                 Some(result_batch) => {
-                    let time_stamps = match result_batch.column_by_name("t") {
-                        Some(time_stamp_column) => match time_stamp_column.data_type() {
-                            DataType::Timestamp(TimeUnit::Millisecond, Some(time_zone)) => {
-                                let time_stamp_array =
-                                    array::as_primitive_array::<TimestampMillisecondType>(
-                                        time_stamp_column,
-                                    );
-                                let mut time_stamps_in_vec: Vec<DateTime<Tz>> =
-                                    Vec::with_capacity(time_stamp_array.len());
-                                let tz: Tz = time_zone.parse().unwrap();
-                                for i in 0..time_stamp_array.len() {
-                                    let stamp =
-                                        time_stamp_array.value_as_datetime_with_tz(i, tz).unwrap();
-                                    time_stamps_in_vec.push(stamp.into());
-                                }
-                                time_stamps_in_vec
-                            }
-                            unexpected_type => {
-                                let message = format!(
-                                    "unexpected data type in 't' column: '{}'",
-                                    unexpected_type.to_string()
-                                );
-                                tx_state
-                                    .send(OptimizationState::Error(job_id, message))
-                                    .unwrap();
-                                continue;
-                            }
-                        },
-                        None => {
-                            let message = "no 't' column in v_flow".to_string();
+                    let time_stamps = match time_stamps_from_result_batch(&result_batch) {
+                        Ok(stamps) => stamps,
+                        Err(error) => {
                             tx_state
-                                .send(OptimizationState::Error(job_id, message))
+                                .send(OptimizationState::Error(job_id, error))
                                 .unwrap();
                             continue;
                         }
                     };
-                    let mut control_data = BTreeMap::<String, Vec<f64>>::new();
-                    for control_process in control_processes {
-                        match result_batch.column_by_name(&control_process.column_name) {
-                            Some(column) => match column.data_type() {
-                                DataType::Float64 => {
-                                    let float_array =
-                                        array::as_primitive_array::<Float64Type>(column);
-                                    let data_as_vec = float_array
-                                        .into_iter()
-                                        .map(|x| x.unwrap())
-                                        .collect::<Vec<f64>>();
-                                    control_data.insert(control_process.name, data_as_vec);
-                                }
-                                unexpected_type => {
-                                    let message = format!(
-                                        "unexpected data type in '{}' column: '{}'",
-                                        control_process.column_name,
-                                        unexpected_type.to_string()
-                                    );
-                                    tx_state
-                                        .send(OptimizationState::Error(job_id, message))
-                                        .unwrap();
-                                    continue;
-                                }
-                            },
-                            None => {
-                                let message = format!(
-                                    "no '{}' column in v_flow",
-                                    control_process.column_name
-                                );
+                    let control_data =
+                        match controls_from_result_batch(&result_batch, control_processes) {
+                            Ok(data) => data,
+                            Err(error) => {
                                 tx_state
-                                    .send(OptimizationState::Error(job_id, message))
+                                    .send(OptimizationState::Error(job_id, error))
                                     .unwrap();
                                 continue;
                             }
-                        }
-                    }
+                        };
                     tx_state
                         .send(OptimizationState::Finished(
                             job_id,
@@ -260,13 +206,79 @@ fn expected_control_processes(model_data: &Option<InputData>) -> Result<Vec<Proc
     }
 }
 
-pub async fn find_available_port() -> Result<u16, io::Error> {
+fn time_stamps_from_result_batch(batch: &RecordBatch) -> Result<Vec<DateTime<Tz>>, String> {
+    match batch.column_by_name("t") {
+        Some(time_stamp_column) => match time_stamp_column.data_type() {
+            DataType::Timestamp(TimeUnit::Millisecond, Some(time_zone)) => Ok(
+                convert_time_stamp_column_to_vec(time_stamp_column, time_zone),
+            ),
+            unexpected_type => {
+                let message = format!(
+                    "unexpected data type in 't' column: '{}'",
+                    unexpected_type.to_string()
+                );
+                Err(message)
+            }
+        },
+        None => {
+            let message = "no 't' column in v_flow".to_string();
+            Err(message)
+        }
+    }
+}
+
+fn convert_time_stamp_column_to_vec(column: &dyn Array, time_zone: &str) -> Vec<DateTime<Tz>> {
+    let time_stamp_array = array::as_primitive_array::<TimestampMillisecondType>(column);
+    let mut time_stamps_in_vec = Vec::with_capacity(time_stamp_array.len());
+    let tz: Tz = time_zone.parse().unwrap();
+    for i in 0..time_stamp_array.len() {
+        let stamp = time_stamp_array.value_as_datetime_with_tz(i, tz).unwrap();
+        time_stamps_in_vec.push(stamp.into());
+    }
+    time_stamps_in_vec
+}
+
+fn controls_from_result_batch(
+    batch: &RecordBatch,
+    control_processes: Vec<ProcessInfo>,
+) -> Result<BTreeMap<String, Vec<f64>>, String> {
+    let mut control_data = BTreeMap::new();
+    for control_process in control_processes {
+        match batch.column_by_name(&control_process.column_name) {
+            Some(column) => match column.data_type() {
+                DataType::Float64 => {
+                    let float_array = array::as_primitive_array::<Float64Type>(column);
+                    let data_as_vec = float_array
+                        .into_iter()
+                        .map(|x| x.unwrap())
+                        .collect::<Vec<f64>>();
+                    control_data.insert(control_process.name, data_as_vec);
+                }
+                unexpected_type => {
+                    let message = format!(
+                        "unexpected data type in '{}' column: '{}'",
+                        control_process.column_name,
+                        unexpected_type.to_string()
+                    );
+                    return Err(message);
+                }
+            },
+            None => {
+                let message = format!("no '{}' column in v_flow", control_process.column_name);
+                return Err(message);
+            }
+        }
+    }
+    Ok(control_data)
+}
+
+async fn find_available_port() -> Result<u16, io::Error> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
     Ok(port)
 }
 
-pub async fn start_julia_local(
+async fn start_julia_local(
     julia_exec: &String,
     predicer_runner_project: &String,
     predicer_project: &String,
@@ -282,7 +294,7 @@ pub async fn start_julia_local(
     Ok(status)
 }
 
-pub async fn optimization_task(
+async fn optimization_task(
     zmq_rx: oneshot::Receiver<OptimizationData>,
     zmq_port: u16,
 ) -> Option<BTreeMap<String, RecordBatch>> {
@@ -331,7 +343,7 @@ pub async fn optimization_task(
     }
 }
 
-pub async fn data_conversion_task(
+async fn data_conversion_task(
     rx: oneshot::Receiver<OptimizationData>,
     tx: oneshot::Sender<OptimizationData>,
 ) {
