@@ -33,7 +33,7 @@ end
 function receive_acknowledgement(socket::Socket)
     acknowledgement = String(ZMQ.recv(socket))
     if acknowledgement != "Ok"
-        eprintln("unknown acknowledgement $acknowledgement")
+        println(stderr, "unknown acknowledgement $acknowledgement")
     end
 end
 
@@ -47,11 +47,14 @@ function receive_data(socket::Socket)
         message = String(data)
         if message == "End"
             break
+        elseif message == "Abort"
+            println(stderr, "aborted")
+            exit()
         end
         send_acknowledgement(socket)
         message, key = split(message)
         if message != "Receive"
-            eprintln!("expected 'Receive', got '$message' from Hertta")
+            println(stderr, "expected 'Receive', got '$message' from Hertta")
             continue
         end
         data = ZMQ.recv(socket)
@@ -69,13 +72,13 @@ function convert_time_stamps!(df::DataFrame)
             try
                 df.t = Dates.format.(df.t, time_stamp_format)
             catch e
-                println("Error converting 't' column: ", e)
+                println(stderr, "error converting 't' column: ", e)
             end
         elseif eltype(df.t) == Union{Missing, DateTime}
             try
                 df.t = coalesce.(Dates.format.(df.t, time_stamp_format), missing)
             catch e
-                println("Error converting 't' column with missing values: ", e)
+                println(stderr, "error converting 't' column with missing values: ", e)
             end
         end
     end
@@ -106,11 +109,11 @@ function split_data_to_system_and_time_series(data::OrderedDict{String, DataFram
             timeseries_data[key] = df
             println("Added to timeseries_data: ", key)
         else
-            eprintln("Unknown keyword: ", key)
+            println("unknown keyword: ", key)
         end
     end
     if !isempty(sheetnames_system) || !isempty(sheetnames_timeseries)
-        eprintln("did not receive all data frames")
+        println(stderr, "did not receive all data frames")
     end
     system_data, timeseries_data
 end
