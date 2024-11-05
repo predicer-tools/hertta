@@ -1,10 +1,14 @@
 use config::builder::{ConfigBuilder, DefaultState};
 use config::{Config, ConfigError};
+use juniper::{
+    graphql_object, Context, EmptyMutation, EmptySubscription, FieldResult, GraphQLObject, RootNode,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::path;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub const JULIA_EXEC_FIELD: &str = "julia_exec";
 pub const PREDICER_RUNNER_PROJECT_FIELD: &str = "predicer_runner_project";
@@ -165,6 +169,45 @@ pub fn validate_settings(settings: &Settings) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[derive(GraphQLObject)]
+#[graphql(description = "Predicer settings.")]
+struct PredicerSettings {
+    #[graphql(description = "Internal network port for communication with Predicer.")]
+    port: i32,
+}
+
+pub struct HerttaContext {
+    settings: Arc<Settings>,
+}
+
+impl Context for HerttaContext {}
+
+impl HerttaContext {
+    pub fn new(settings: &Arc<Settings>) -> Self {
+        HerttaContext {
+            settings: Arc::clone(settings),
+        }
+    }
+}
+
+pub struct Query;
+
+#[graphql_object]
+#[graphql(context = HerttaContext)]
+impl Query {
+    fn api_version() -> &'static str {
+        "0.9"
+    }
+    fn predicer_settings(context: &HerttaContext) -> FieldResult<PredicerSettings> {
+        Ok(PredicerSettings {
+            port: context.settings.predicer_port as i32,
+        })
+    }
+}
+
+pub type Schema =
+    RootNode<'static, Query, EmptyMutation<HerttaContext>, EmptySubscription<HerttaContext>>;
 
 #[cfg(test)]
 mod tests {

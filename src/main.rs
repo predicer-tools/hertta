@@ -7,8 +7,10 @@ mod settings;
 mod utilities;
 
 use crate::event_loop::{OptimizationState, ResultData};
+use crate::settings::{HerttaContext, Query, Schema};
 use clap::Parser;
 use input_data::{InputData, OptimizationData};
+use juniper::{EmptyMutation, EmptySubscription, RootNode};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::error::Error;
@@ -28,6 +30,8 @@ use warp::Filter;
 struct CommandLineArgs {
     #[arg(long, help = "write settings file and exit")]
     write_settings: bool,
+    #[arg(long, help = "write GraphQL schema in JSON and exit")]
+    write_schema: bool,
 }
 
 fn write_default_settings_to_file(settings_file_path: &PathBuf) -> Result<(), Box<dyn Error>> {
@@ -158,13 +162,33 @@ impl ErrorReply {
     }
 }
 
+fn write_settings_file() -> Result<(), Box<dyn Error>> {
+    let settings_file_path = settings::make_settings_file_path();
+    write_default_settings_to_file(&settings_file_path)?;
+    println!("Settings written to {}", settings_file_path.display());
+    Ok(())
+}
+
+fn print_schema_json() -> Result<(), Box<dyn Error>> {
+    let schema = RootNode::new(
+        Query,
+        EmptyMutation::<HerttaContext>::new(),
+        EmptySubscription::<HerttaContext>::new(),
+    );
+    let schema_definition = schema.as_sdl();
+    println!("{}", schema_definition);
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = CommandLineArgs::parse();
     if args.write_settings {
-        let settings_file_path = settings::make_settings_file_path();
-        write_default_settings_to_file(&settings_file_path)?;
-        println!("Settings written to {}", settings_file_path.display());
+        write_settings_file()?;
+        return Ok(());
+    }
+    if args.write_schema {
+        print_schema_json()?;
         return Ok(());
     }
     let settings = Arc::new(settings::make_settings(
@@ -177,8 +201,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     settings::validate_settings(&settings)?;
     let (tx_optimize, rx_optimize) = mpsc::channel::<(usize, OptimizationData)>(1);
     let (tx_state, rx_state) = watch::channel::<OptimizationState>(OptimizationState::Idle);
+    let settings_clone = Arc::clone(&settings);
     tokio::spawn(async move {
-        event_loop::event_loop(settings, rx_optimize, tx_state).await;
+        event_loop::event_loop(settings_clone, rx_optimize, tx_state).await;
     });
     let optimize_permit = Arc::new(Semaphore::new(1));
     let job_id = Arc::new(Mutex::new(0usize));
@@ -251,7 +276,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         });
-    let routes = optimize_route.or(progress_route);
+    let schema = Arc::new(Schema::new(
+        Query,
+        EmptyMutation::new(),
+        EmptySubscription::new(),
+    ));
+    let settings_clone = Arc::clone(&settings);
+    let graphql_route = warp::path("graphql").and(juniper_warp::make_graphql_filter(
+        schema,
+        warp::any().map(move || HerttaContext::new(&settings_clone)),
+    ));
+    let routes = optimize_route.or(progress_route).or(graphql_route);
     let server_handle = warp::serve(routes).run(([127, 0, 0, 1], 3030));
     server_handle.await;
     Ok(())
