@@ -1,16 +1,9 @@
-mod arrow_errors;
-mod arrow_input;
-mod errors;
-mod event_loop;
-mod input_data;
-mod settings;
-mod utilities;
-
-use crate::event_loop::{OptimizationState, ResultData};
-use crate::settings::{HerttaContext, Query, Schema};
 use clap::Parser;
-use input_data::{InputData, OptimizationData};
-use juniper::{EmptyMutation, EmptySubscription, RootNode};
+use hertta::event_loop::{self, OptimizationState, ResultData};
+use hertta::graphql::{HerttaContext, Mutation, Query, Schema};
+use hertta::input_data::{InputData, OptimizationData};
+use hertta::settings;
+use juniper::{EmptySubscription, RootNode};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::error::Error;
@@ -30,8 +23,8 @@ use warp::Filter;
 struct CommandLineArgs {
     #[arg(long, help = "write settings file and exit")]
     write_settings: bool,
-    #[arg(long, help = "write GraphQL schema in JSON and exit")]
-    write_schema: bool,
+    #[arg(long, help = "print GraphQL schema in JSON and exit")]
+    print_schema: bool,
 }
 
 fn write_default_settings_to_file(settings_file_path: &PathBuf) -> Result<(), Box<dyn Error>> {
@@ -53,36 +46,15 @@ async fn send_optimization_data_to_event_loop(
     input_data: InputData,
     tx_optimize: mpsc::Sender<(usize, OptimizationData)>,
 ) -> Result<(), String> {
-    let fetch_time_data = params.get("fetch_time_data").map_or(false, |v| v == "true");
-    let fetch_weather_data = params
-        .get("fetch_weather_data")
-        .map_or(false, |v| v == "true");
     let fetch_elec_data = params
         .get("fetch_elec_data")
         .map_or(false, |v| v == "elering" || v == "entsoe");
-    let elec_price_source = params.get("fetch_elec_data").cloned();
-    let country = params.get("country").cloned();
-    let location = params.get("location").cloned();
-    println!("Received optimization request with options:");
-    println!("Fetch time data: {}", fetch_time_data);
-    println!("Fetch weather data: {}", fetch_weather_data);
-    println!("Fetch electricity data: {}", fetch_elec_data);
-    println!("Electricity price source: {:?}", elec_price_source);
-    println!("Country: {:?}", country);
-    println!("Location: {:?}", location);
     let optimization_data = OptimizationData {
-        fetch_weather_data,
         fetch_elec_data,
-        fetch_time_data,
-        country,
-        location,
-        timezone: None,
-        elec_price_source: None,
         model_data: Some(input_data),
         time_data: None,
         weather_data: None,
         elec_price_data: None,
-        control_results: None,
         input_data_batch: None,
     };
     if tx_optimize.send((job_id, optimization_data)).await.is_err() {
@@ -170,11 +142,7 @@ fn write_settings_file() -> Result<(), Box<dyn Error>> {
 }
 
 fn print_schema_json() -> Result<(), Box<dyn Error>> {
-    let schema = RootNode::new(
-        Query,
-        EmptyMutation::<HerttaContext>::new(),
-        EmptySubscription::<HerttaContext>::new(),
-    );
+    let schema = RootNode::new(Query, Mutation, EmptySubscription::<HerttaContext>::new());
     let schema_definition = schema.as_sdl();
     println!("{}", schema_definition);
     Ok(())
@@ -187,18 +155,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
         write_settings_file()?;
         return Ok(());
     }
-    if args.write_schema {
+    if args.print_schema {
         print_schema_json()?;
         return Ok(());
     }
-    let settings = Arc::new(settings::make_settings(
+    let settings = Arc::new(Mutex::new(settings::make_settings(
         &settings::map_from_environment_variables(),
         &settings::make_settings_file_path(),
-    )?);
-    if !settings.predicer_runner_project.is_empty() {
-        fs::create_dir_all(Path::new(&settings.predicer_runner_project))?;
+    )?));
+    {
+        let settings = settings.lock().unwrap();
+        if !settings.predicer_runner_project.is_empty() {
+            fs::create_dir_all(Path::new(&settings.predicer_runner_project))?;
+        }
+        settings::validate_settings(&settings)?;
     }
-    settings::validate_settings(&settings)?;
     let (tx_optimize, rx_optimize) = mpsc::channel::<(usize, OptimizationData)>(1);
     let (tx_state, rx_state) = watch::channel::<OptimizationState>(OptimizationState::Idle);
     let settings_clone = Arc::clone(&settings);
@@ -276,11 +247,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         });
-    let schema = Arc::new(Schema::new(
-        Query,
-        EmptyMutation::new(),
-        EmptySubscription::new(),
-    ));
+    let schema = Arc::new(Schema::new(Query, Mutation, EmptySubscription::new()));
     let settings_clone = Arc::clone(&settings);
     let graphql_route = warp::path("graphql").and(juniper_warp::make_graphql_filter(
         schema,

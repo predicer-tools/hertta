@@ -1,19 +1,20 @@
+use chrono::TimeDelta;
 use config::builder::{ConfigBuilder, DefaultState};
 use config::{Config, ConfigError};
-use juniper::{
-    graphql_object, Context, EmptyMutation, EmptySubscription, FieldResult, GraphQLObject, RootNode,
-};
-use serde::{Deserialize, Serialize};
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::env;
+use std::fmt;
 use std::path;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 pub const JULIA_EXEC_FIELD: &str = "julia_exec";
 pub const PREDICER_RUNNER_PROJECT_FIELD: &str = "predicer_runner_project";
 pub const PREDICER_PROJECT_FIELD: &str = "predicer_project";
 pub const JULIA_DEFAULT_PROJECT: &str = "@";
+pub const PYTHON_EXEC_FIELD: &str = "python_exec";
+pub const TIME_LINE_FIELD: &str = "time_line";
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Settings {
@@ -25,6 +26,12 @@ pub struct Settings {
     pub predicer_runner_script: String,
     #[serde(default = "default_predicer_port")]
     pub predicer_port: u16,
+    pub python_exec: String,
+    #[serde(skip, default = "default_weather_fetcher_script")]
+    pub weather_fetcher_script: String,
+    #[serde(default)]
+    pub time_line: TimeLineSettings,
+    pub location: Option<LocationSettings>,
 }
 
 impl Default for Settings {
@@ -35,6 +42,10 @@ impl Default for Settings {
             predicer_project: default_predicer_project(),
             predicer_runner_script: default_predicer_runner_script(),
             predicer_port: default_predicer_port(),
+            python_exec: String::new(),
+            weather_fetcher_script: default_weather_fetcher_script(),
+            time_line: TimeLineSettings::default(),
+            location: None,
         }
     }
 }
@@ -63,6 +74,13 @@ fn default_predicer_runner_script() -> String {
 
 fn default_predicer_port() -> u16 {
     0
+}
+
+fn default_weather_fetcher_script() -> String {
+    let path = ["src", "fmi_opendata.py"].iter().collect::<PathBuf>();
+    path.to_str()
+        .expect("weather fetcher script path contains unknown characters")
+        .to_string()
 }
 
 fn path_to_string(path: &PathBuf) -> String {
@@ -95,14 +113,27 @@ fn make_config_builder(
     let julia_exec_from_path = environment_variables
         .get("PATH")
         .map_or_else(String::new, |paths| {
-            julia_exec_from(&paths).map_or_else(String::new, |path| path_to_string(&path))
+            exec_from(&paths, "julia").map_or_else(String::new, |path| path_to_string(&path))
         });
     let config = config
         .set_default(JULIA_EXEC_FIELD, julia_exec_from_path)
-        .expect("failed to add default Julia executable to config builder");
-    config
+        .expect("failed to add default Julia executable to config builder")
         .set_default(PREDICER_PROJECT_FIELD, default_predicer_project())
-        .expect("failed to add default Predicer project to config builder")
+        .expect("failed to add default Predicer project to config builder");
+    let python_exec = match env::consts::OS {
+        "windows" => "python",
+        _ => "python3",
+    };
+    let python_exec_from_path =
+        environment_variables
+            .get("PATH")
+            .map_or_else(String::new, |paths| {
+                exec_from(&paths, python_exec)
+                    .map_or_else(String::new, |path| path_to_string(&path))
+            });
+    config
+        .set_default(PYTHON_EXEC_FIELD, python_exec_from_path)
+        .expect("failed to add default Julia executable to config builder")
 }
 
 pub fn make_settings(
@@ -123,9 +154,9 @@ pub fn make_settings(
     config.try_deserialize::<Settings>()
 }
 
-fn julia_exec_from(path_variable: &str) -> Option<PathBuf> {
+fn exec_from(path_variable: &str, exec: &str) -> Option<PathBuf> {
     for path in env::split_paths(&path_variable) {
-        let mut path = path.join("julia");
+        let mut path = path.join(exec);
         path.set_extension(env::consts::EXE_EXTENSION);
         if path.exists() {
             return Some(path);
@@ -167,47 +198,73 @@ pub fn validate_settings(settings: &Settings) -> Result<(), String> {
             &settings.predicer_runner_script
         ));
     }
+    if !Path::new(&settings.weather_fetcher_script).exists() {
+        return Err(format!(
+            "invalid path to weather fetcher script '{}'",
+            &settings.weather_fetcher_script
+        ));
+    }
     Ok(())
 }
 
-#[derive(GraphQLObject)]
-#[graphql(description = "Predicer settings.")]
-struct PredicerSettings {
-    #[graphql(description = "Internal network port for communication with Predicer.")]
-    port: i32,
+#[derive(Clone, Deserialize, Serialize)]
+pub struct TimeLineSettings {
+    #[serde(
+        deserialize_with = "deserialize_time_delta",
+        serialize_with = "serialize_time_delta"
+    )]
+    pub step: TimeDelta,
+    #[serde(
+        deserialize_with = "deserialize_time_delta",
+        serialize_with = "serialize_time_delta"
+    )]
+    pub duration: TimeDelta,
 }
 
-pub struct HerttaContext {
-    settings: Arc<Settings>,
-}
-
-impl Context for HerttaContext {}
-
-impl HerttaContext {
-    pub fn new(settings: &Arc<Settings>) -> Self {
-        HerttaContext {
-            settings: Arc::clone(settings),
+impl Default for TimeLineSettings {
+    fn default() -> Self {
+        TimeLineSettings {
+            step: TimeDelta::minutes(15),
+            duration: TimeDelta::hours(4),
         }
     }
 }
 
-pub struct Query;
-
-#[graphql_object]
-#[graphql(context = HerttaContext)]
-impl Query {
-    fn api_version() -> &'static str {
-        "0.9"
+fn deserialize_time_delta<'de, D>(deserializer: D) -> Result<TimeDelta, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct MillisecondVisitor;
+    impl<'d> Visitor<'d> for MillisecondVisitor {
+        type Value = i64;
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a duration in milliseconds")
+        }
+        fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
+            if value > 0 {
+                Ok(value)
+            } else {
+                Err(E::custom("non-positive duration".to_string()))
+            }
+        }
     }
-    fn predicer_settings(context: &HerttaContext) -> FieldResult<PredicerSettings> {
-        Ok(PredicerSettings {
-            port: context.settings.predicer_port as i32,
-        })
-    }
+    Ok(TimeDelta::milliseconds(
+        deserializer.deserialize_i64(MillisecondVisitor)?,
+    ))
 }
 
-pub type Schema =
-    RootNode<'static, Query, EmptyMutation<HerttaContext>, EmptySubscription<HerttaContext>>;
+fn serialize_time_delta<S: Serializer>(
+    duration: &TimeDelta,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_i64(duration.num_milliseconds())
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct LocationSettings {
+    pub country: String,
+    pub place: String,
+}
 
 #[cfg(test)]
 mod tests {
@@ -248,7 +305,7 @@ mod tests {
         .expect("paths should be joinable")
         .into_string()
         .expect("test PATH should be valid string");
-        assert!(julia_exec_from(&path_string).is_none());
+        assert!(exec_from(&path_string, "julia").is_none());
     }
     #[test]
     fn julia_found_in_path_when_its_executable_exists() {
@@ -258,7 +315,7 @@ mod tests {
             .into_string()
             .expect("test PATH should be a valid string");
         assert_eq!(
-            julia_exec_from(&path_string).expect("Julia should have been in PATH"),
+            exec_from(&path_string, "julia").expect("Julia should have been in PATH"),
             julia_exec_path_from(&temp_julia_dir)
         );
     }
@@ -369,6 +426,24 @@ mod tests {
                 assert_eq!(
                     error,
                     "invalid path to Predicer runner script ''".to_string()
+                );
+                Ok(())
+            }
+        }
+    }
+    #[test]
+    fn invalid_weather_fetcher_script_is_caught() -> Result<(), Box<dyn Error>> {
+        let temp_julia_dir = create_temporary_julia_exe();
+        let julia_path_string = path_to_string(&julia_exec_path_from(&temp_julia_dir));
+        let mut settings = Settings::default();
+        settings.julia_exec = julia_path_string;
+        settings.weather_fetcher_script = String::new();
+        match validate_settings(&settings) {
+            Ok(..) => Err("expected settings to be invalid".to_string().into()),
+            Err(error) => {
+                assert_eq!(
+                    error,
+                    "invalid path to weather fetcher script ''".to_string()
                 );
                 Ok(())
             }

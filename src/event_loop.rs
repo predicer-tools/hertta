@@ -1,25 +1,28 @@
 use crate::arrow_input;
 use crate::input_data;
-use crate::input_data::{InputData, OptimizationData, Process};
-use crate::settings::Settings;
+use crate::input_data::{InputData, OptimizationData, Process, TimeSeries};
+use crate::settings::{LocationSettings, Settings, TimeLineSettings};
+use crate::time_axis;
 use crate::utilities;
 use arrow::array::timezone::Tz;
 use arrow::array::types::{Float64Type, TimestampMillisecondType};
 use arrow::array::{self, Array, RecordBatch};
 use arrow::datatypes::{DataType, TimeUnit};
 use arrow::ipc::reader::StreamReader;
-use chrono::{DateTime, FixedOffset, Utc};
-use serde::Serialize;
+use chrono::round::DurationRound;
+use chrono::{DateTime, FixedOffset, LocalResult, NaiveDateTime, TimeDelta, TimeZone, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::io;
 use std::process::{Command, ExitStatus};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::watch;
-use tokio::sync::Mutex;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 use zmq::{Context, Socket};
 
@@ -40,7 +43,7 @@ pub enum OptimizationState {
 }
 
 pub async fn event_loop(
-    settings: Arc<Settings>,
+    vanilla_settings: Arc<Mutex<Settings>>,
     mut rx_input: mpsc::Receiver<(usize, OptimizationData)>,
     tx_state: watch::Sender<OptimizationState>,
 ) {
@@ -48,6 +51,11 @@ pub async fn event_loop(
         tx_state
             .send(OptimizationState::InProgress(job_id))
             .unwrap();
+        let settings_snapshot = Arc::new(vanilla_settings.lock().unwrap().clone());
+        let start_time: DateTime<FixedOffset> = Utc::now()
+            .duration_trunc(TimeDelta::try_hours(1).unwrap())
+            .unwrap()
+            .into();
         let control_processes = match expected_control_processes(&data.model_data) {
             Ok(names) => names,
             Err(error) => {
@@ -57,7 +65,7 @@ pub async fn event_loop(
                 continue;
             }
         };
-        let mut zmq_port = settings.predicer_port;
+        let mut zmq_port = settings_snapshot.predicer_port;
         if zmq_port == 0 {
             zmq_port = match find_available_port().await {
                 Ok(port) => port,
@@ -72,22 +80,63 @@ pub async fn event_loop(
                 }
             }
         }
+        let (tx_time_line, rx_time_line) = oneshot::channel::<OptimizationData>();
         let (tx_weather, rx_weather) = oneshot::channel::<OptimizationData>();
         let (tx_elec, rx_elec) = oneshot::channel::<OptimizationData>();
         let (tx_update, rx_update) = oneshot::channel::<OptimizationData>();
         let (tx_batches, rx_batches) = oneshot::channel::<OptimizationData>();
         let (tx_optimization, rx_optimization) = oneshot::channel::<OptimizationData>();
-        let fetch_weather_data_handle =
-            tokio::spawn(async move { fetch_weather_data_task(rx_weather, tx_elec).await });
-        let fetch_electricity_price_handle =
-            tokio::spawn(async move { fetch_electricity_price_task(rx_elec, tx_update).await });
+        let settings_clone = Arc::clone(&settings_snapshot);
+        let start_time_clone = start_time.clone();
+        let update_time_line_handle = tokio::spawn(async move {
+            update_time_line_task(
+                start_time_clone,
+                &settings_clone.time_line,
+                rx_time_line,
+                tx_weather,
+            )
+            .await
+        });
+        let settings_clone = Arc::clone(&settings_snapshot);
+        let start_time_clone = start_time.clone();
+        let fetch_weather_data_handle = tokio::spawn(async move {
+            let location = settings_clone
+                .location
+                .as_ref()
+                .ok_or("cannot fetch weather data: no location set".to_string())?;
+            fetch_weather_data_task(
+                location,
+                &start_time_clone,
+                &settings_clone.time_line,
+                &settings_clone.python_exec,
+                &settings_clone.weather_fetcher_script,
+                rx_weather,
+                tx_elec,
+            )
+            .await
+        });
+        let settings_clone = Arc::clone(&settings_snapshot);
+        let fetch_electricity_price_handle = tokio::spawn(async move {
+            let location = settings_clone
+                .location
+                .as_ref()
+                .ok_or("cannot fetch electricity price data: no location set".to_string())?;
+            fetch_electricity_price_task(
+                location,
+                &start_time,
+                &settings_clone.time_line,
+                rx_elec,
+                tx_update,
+            )
+            .await
+        });
         let update_model_data_handle =
             tokio::spawn(async move { update_model_data_task(rx_update, tx_batches).await });
         let data_conversion_handle =
             tokio::spawn(async move { data_conversion_task(rx_batches, tx_optimization).await });
         let optimization_handle =
             tokio::spawn(async move { optimization_task(rx_optimization, zmq_port).await });
-        if tx_weather.send(data).is_err() {
+        if tx_time_line.send(data).is_err() {
             tx_state
                 .send(OptimizationState::Error(
                     job_id,
@@ -96,7 +145,7 @@ pub async fn event_loop(
                 .unwrap();
             continue;
         }
-        let settings_clone = Arc::clone(&settings);
+        let settings_clone = Arc::clone(&settings_snapshot);
         tokio::spawn(async move {
             match start_julia_local(
                 &settings_clone.julia_exec,
@@ -118,6 +167,7 @@ pub async fn event_loop(
             }
         });
         if let Err(error) = tokio::try_join!(
+            flatten_handle(update_time_line_handle),
             flatten_handle(fetch_weather_data_handle),
             flatten_handle(fetch_electricity_price_handle),
             flatten_handle(update_model_data_handle),
@@ -348,6 +398,27 @@ fn abort_julia_process(reply_socket: Socket) -> Result<(), String> {
     Ok(())
 }
 
+async fn update_time_line_task(
+    start_time: DateTime<FixedOffset>,
+    time_line: &TimeLineSettings,
+    rx: oneshot::Receiver<OptimizationData>,
+    tx: oneshot::Sender<OptimizationData>,
+) -> Result<(), String> {
+    if let Ok(mut optimization_data) = rx.await {
+        optimization_data.time_data = Some(time_axis::make_time_data(
+            start_time,
+            time_line.step,
+            time_line.duration,
+        ));
+        if tx.send(optimization_data).is_err() {
+            return Err("update_time_line_task: failed to send output data".to_string());
+        }
+        Ok(())
+    } else {
+        Err("update_time_line_taks: input channel failure".to_string())
+    }
+}
+
 async fn optimization_task(
     rx: oneshot::Receiver<OptimizationData>,
     zmq_port: u16,
@@ -419,7 +490,7 @@ async fn data_conversion_task(
     tx: oneshot::Sender<OptimizationData>,
 ) -> Result<(), String> {
     if let Ok(optimization_data) = rx.await {
-        let optimization_data_arc = Arc::new(Mutex::new(optimization_data.clone()));
+        let optimization_data_arc = Arc::new(AsyncMutex::new(optimization_data.clone()));
 
         let data_clone = Arc::clone(&optimization_data_arc);
         let check_handle: JoinHandle<()> = tokio::spawn(async move {
@@ -538,21 +609,17 @@ async fn update_model_data_task(
     tx: oneshot::Sender<OptimizationData>,
 ) -> Result<(), String> {
     if let Ok(mut optimization_data) = rx.await {
-        if optimization_data.fetch_time_data {
-            if let Err(e) = update_timeseries(&mut optimization_data) {
-                return Err(format!(
-                    "update_model_data_task: failed to update timeseries: {}",
-                    e
-                ));
-            }
+        if let Err(e) = update_timeseries(&mut optimization_data) {
+            return Err(format!(
+                "update_model_data_task: failed to update timeseries: {}",
+                e
+            ));
         }
-        if optimization_data.fetch_weather_data {
-            if let Err(e) = update_outside_node_inflow(&mut optimization_data) {
-                return Err(format!(
-                    "update_model_data_task: failed to update outside node inflow: {}",
-                    e
-                ));
-            }
+        if let Err(e) = update_outside_node_inflow(&mut optimization_data) {
+            return Err(format!(
+                "update_model_data_task: failed to update outside node inflow: {}",
+                e
+            ));
         }
         if optimization_data.fetch_elec_data {
             if let Err(e) = update_npe_market_prices(&mut optimization_data) {
@@ -576,12 +643,12 @@ fn update_timeseries(optimization_data: &mut OptimizationData) -> Result<(), &'s
     let time_data = optimization_data
         .time_data
         .as_ref()
-        .ok_or("Time data is not available.")?;
+        .ok_or("time data is not available")?;
     if let Some(model_data) = &mut optimization_data.model_data {
-        model_data.temporals.t = time_data.series.clone();
+        model_data.temporals.t = time_data.clone();
         Ok(())
     } else {
-        Err("Model data is not available.")
+        Err("model data is not available")
     }
 }
 
@@ -592,7 +659,7 @@ fn update_npe_market_prices(
         let model_data = optimization_data
             .model_data
             .as_mut()
-            .ok_or("Model data is not available.")?;
+            .ok_or("model data is not available")?;
         let markets = &mut model_data.markets;
         if let Some(npe_market) = markets.get_mut("npe") {
             if let Some(price_data) = &electricity_price_data.price_data {
@@ -606,37 +673,44 @@ fn update_npe_market_prices(
             }
             return Ok(());
         } else {
-            return Err("NPE market not found in markets.");
+            return Err("NPE market not found in markets");
         }
     } else {
-        return Err("Electricity price data is not available.");
+        return Err("electricity price data is not available");
     }
 }
 
 async fn fetch_weather_data_task(
+    location: &LocationSettings,
+    start_time: &DateTime<FixedOffset>,
+    time_line: &TimeLineSettings,
+    python_exec: &String,
+    weather_fetcher_script: &String,
     rx: oneshot::Receiver<OptimizationData>,
     tx: oneshot::Sender<OptimizationData>,
 ) -> Result<(), String> {
     if let Ok(mut optimization_data) = rx.await {
-        if optimization_data.fetch_weather_data {
-            if let Some(time_data) = &optimization_data.time_data {
-                let location = optimization_data.location.clone().unwrap_or_default();
-                let format_string = "%Y-%m-%dT%H:00:00Z";
-                let start_time_formatted = time_data.start_time.format(&format_string).to_string();
-                let end_time_formatted = time_data.end_time.format(&format_string).to_string();
-                match fetch_weather_data(start_time_formatted, end_time_formatted, location).await {
-                    Ok(weather_values) => {
-                        create_and_update_weather_data(&mut optimization_data, &weather_values);
-                    }
-                    Err(e) => {
-                        return Err(format!(
-                            "fetch_weather_data_task: failed to fetch weather data: {}",
-                            e
-                        ))
-                    }
-                }
-            } else {
-                return Err("fetch_weather_data_task: time data is missing".to_string());
+        match fetch_weather_data(
+            &location.place,
+            start_time,
+            &time_line,
+            python_exec,
+            weather_fetcher_script,
+        ) {
+            Ok(weather_values) => {
+                let series = optimization_data
+                    .time_data
+                    .as_ref()
+                    .ok_or("series missing from time data".to_string())?;
+                let values = time_axis::extract_values_from_pairs_checked(&weather_values, &series)
+                    .or_else(|e| Err(format!("fetch_weather_data: {}", e)))?;
+                optimization_data.weather_data = Some(update_weather_data(series, &values));
+            }
+            Err(e) => {
+                return Err(format!(
+                    "fetch_weather_data_task: failed to fetch weather data: {}",
+                    e
+                ))
             }
         }
         return match tx.send(optimization_data) {
@@ -653,79 +727,46 @@ async fn fetch_weather_data_task(
 fn update_outside_node_inflow(
     optimization_data: &mut OptimizationData,
 ) -> Result<(), &'static str> {
-    // Check if weather_data is Some
     if let Some(weather_data) = &optimization_data.weather_data {
-        // Ensure model_data is available and contains the "outside" node
         let model_data = optimization_data
             .model_data
             .as_mut()
-            .ok_or("Model data is not available.")?;
+            .ok_or("model data is not available")?;
         let nodes = &mut model_data.nodes;
-
-        // Find the node named "outside"
         if let Some(outside_node) = nodes.get_mut("outside") {
-            // Check if the node is supposed to have inflow data
             if outside_node.is_inflow {
-                // Update the outside node's inflow with the weather_data
-                outside_node.inflow = weather_data.weather_data.clone(); // Assuming this is the TimeSeriesData you want to use
+                outside_node.inflow.ts_data = weather_data.clone();
                 return Ok(());
             } else {
-                return Err("Outside node is not marked for inflow.");
+                return Err("outside node is not marked for inflow");
             }
         } else {
-            // "outside" node not found
-            return Err("Outside node not found in nodes.");
+            return Err("outside node not found in nodes");
         }
     } else {
-        // weather_data is None
-        return Err("Weather data is not available.");
+        return Err("weather data is not available");
     }
 }
 
 // Function to create TimeSeriesData from weather values and update the weather_data field in optimization_data
-fn create_and_update_weather_data(optimization_data: &mut OptimizationData, values: &[f64]) {
-    if let Some(time_data) = &optimization_data.time_data {
-        // Extract series from TimeData
-        let series = &time_data.series;
-
-        // Use the extracted series and the provided values to pair them together
-        let paired_series = pair_timeseries_with_values(series, values);
-
-        // Generate TimeSeriesData from the paired series
-        let ts_data = create_time_series_data_with_scenarios(paired_series);
-
-        // Assuming you have the place information somewhere in optimization_data. If not, adjust as necessary.
-        let place = optimization_data.location.clone().unwrap_or_default();
-
-        // Update the weather_data field in optimization_data with the new TimeSeriesData and place
-        optimization_data.weather_data = Some(input_data::WeatherData {
-            place,
-            weather_data: ts_data,
-        });
-    } else {
-        eprintln!("TimeData is missing in optimization_data. Cannot update weather_data.");
-    }
+fn update_weather_data(time_data: &Vec<DateTime<FixedOffset>>, values: &[f64]) -> Vec<TimeSeries> {
+    let paired_series = pair_timeseries_with_values(time_data, values);
+    create_time_series_data_with_scenarios(paired_series)
 }
 
 // Function to create TimeSeriesData with scenarios "s1" and "s2" using paired series
 fn create_time_series_data_with_scenarios(
     paired_series: BTreeMap<DateTime<FixedOffset>, f64>,
-) -> input_data::TimeSeriesData {
-    // Create TimeSeries instances for scenarios "s1" and "s2" with the same series data
+) -> Vec<TimeSeries> {
     let time_series_s1 = input_data::TimeSeries {
         scenario: "s1".to_string(),
-        series: paired_series.clone(), // Clone to use the series data for both TimeSeries
+        series: paired_series.clone(),
     };
-
     let time_series_s2 = input_data::TimeSeries {
         scenario: "s2".to_string(),
-        series: paired_series, // Use the original series data here
+        series: paired_series,
     };
-
-    // Bundle the two TimeSeries into TimeSeriesData
-    input_data::TimeSeriesData {
-        ts_data: vec![time_series_s1, time_series_s2],
-    }
+    return vec![time_series_s1, time_series_s2];
 }
 
 fn pair_timeseries_with_values(
@@ -739,56 +780,103 @@ fn pair_timeseries_with_values(
         .collect()
 }
 
-async fn fetch_weather_data(
-    start_time: String,
-    end_time: String,
-    place: String,
-) -> Result<Vec<f64>, Box<dyn std::error::Error + Send + Sync>> {
-    //println!("Fetching weather data for place: {}, start time: {}, end time: {}", place, start_time, end_time);
+#[derive(Deserialize)]
+pub struct WeatherDataResponse {
+    pub place: String,
+    pub weather_values: Vec<f64>,
+}
 
-    let client = reqwest::Client::new();
-    let url = format!(
-        "http://localhost:8001/get_weather_data?start_time={}&end_time={}&place={}",
-        start_time, end_time, place
-    );
-
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
-
-    //println!("Response status: {}", response.status());
-
-    let response_body = response
-        .text()
-        .await
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
-    //println!("Raw response body: {}", response_body);
-
-    match serde_json::from_str::<input_data::WeatherDataResponse>(&response_body) {
-        Ok(fmi_data) => {
-            //println!("Deserialized Weather Data: {:?}", fmi_data.weather_values);
-            // Convert temperatures from Celsius to Kelvin
-            let temperatures_in_kelvin: Vec<f64> = fmi_data
-                .weather_values
-                .iter()
-                .map(|&celsius| celsius + 273.15)
-                .collect();
-            //println!("Temperatures in Kelvin: {:?}", temperatures_in_kelvin);
-            Ok(temperatures_in_kelvin)
+fn parse_weather_fetcher_output(
+    output: &str,
+    time_zone: &impl TimeZone,
+) -> Result<Vec<(DateTime<FixedOffset>, f64)>, String> {
+    let parsed_json = match serde_json::from_str(output) {
+        Ok(parsed) => parsed,
+        Err(..) => {
+            println!("{}", output);
+            return Err("failed to parse output".to_string());
         }
-        Err(e) => {
-            eprintln!("Error deserializing response body: {}", e);
-            Err(Box::new(e))
+    };
+    if let Value::Array(time_series) = parsed_json {
+        let mut forecast = Vec::with_capacity(time_series.len());
+        for row in time_series {
+            if let Value::Array(pair) = row {
+                if pair.len() != 2 {
+                    return Err("failed to parse time series".to_string());
+                }
+                if let Value::String(ref stamp) = pair[0] {
+                    let time_stamp = match NaiveDateTime::parse_from_str(stamp, "%Y-%m-%dT%H:%M:%S")
+                    {
+                        Ok(date_time) => match date_time.and_local_timezone(time_zone.clone()) {
+                            LocalResult::Single(t) => t.fixed_offset(),
+                            _ => return Err("ambiguous time stamp or gap in time".to_string()),
+                        },
+                        Err(..) => {
+                            return Err(format!("failed to parse stamp from string {}", stamp))
+                        }
+                    };
+                    if let Value::Number(ref value) = pair[1] {
+                        if let Some(temperature) = value.as_f64() {
+                            forecast.push((time_stamp, temperature));
+                        } else {
+                            return Err("failed to convert temperature to float".to_string());
+                        }
+                    } else {
+                        return Err("failed to parse temperature".to_string());
+                    }
+                } else {
+                    return Err("failed to parse time stamp".to_string());
+                }
+            } else {
+                return Err("failed to parse data pair in time series".to_string());
+            }
         }
+        Ok(forecast)
+    } else {
+        Err("failed to parse array from output".to_string())
     }
+}
+
+fn fetch_weather_data(
+    place: &String,
+    start_time: &DateTime<FixedOffset>,
+    time_line: &TimeLineSettings,
+    python_exec: &String,
+    weather_data_script: &String,
+) -> Result<Vec<(DateTime<FixedOffset>, f64)>, String> {
+    let end_time = *start_time + time_line.duration;
+    let format_string = "%Y-%m-%dT%H:00:00Z";
+    let step = time_line.step.num_minutes();
+    let mut command = Command::new(python_exec);
+    command
+        .arg(weather_data_script)
+        .arg(start_time.format(&format_string).to_string())
+        .arg(end_time.format(&format_string).to_string())
+        .arg(format!("{}", step))
+        .arg(place);
+    let output = match command.output() {
+        Ok(bytes) => bytes,
+        Err(error) => return Err(format!("Python failed: {}", error)),
+    };
+    if !output.status.success() {
+        println!("{}", String::from_utf8(output.stdout).unwrap());
+        println!("{}", String::from_utf8(output.stderr).unwrap());
+        return Err("weather fetching returned non-zero exit status".into());
+    }
+    let output = match String::from_utf8(output.stdout) {
+        Ok(json_out) => json_out,
+        Err(..) => return Err("non-utf-8 characters in output".to_string()),
+    };
+    Ok(parse_weather_fetcher_output(
+        &output,
+        &start_time.timezone(),
+    )?)
 }
 
 async fn fetch_electricity_prices(
     start_time: String,
     end_time: String,
-    country: String,
+    country: &String,
 ) -> Result<BTreeMap<DateTime<FixedOffset>, f64>, Box<dyn std::error::Error + Send + Sync>> {
     let client = reqwest::Client::new();
     let url = format!(
@@ -814,10 +902,10 @@ async fn fetch_electricity_prices(
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
     // Extract only the prices for the specified country
-    let country_data = api_response.get(&country).ok_or_else(|| {
+    let country_data = api_response.get(country).ok_or_else(|| {
         Box::new(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            "Country data not found",
+            "country data not found",
         )) as Box<dyn std::error::Error + Send + Sync>
     })?;
 
@@ -838,37 +926,28 @@ async fn fetch_electricity_prices(
     Ok(series)
 }
 
-pub fn create_and_update_elec_price_data(
+fn create_and_update_elec_price_data(
     optimization_data: &mut OptimizationData,
     price_series: &BTreeMap<DateTime<FixedOffset>, f64>,
 ) {
     if let Some(_time_data) = &optimization_data.time_data {
-        // Generating modified TimeSeriesData for original, up, and down price scenarios
         let original_ts_data = Some(create_modified_price_series_data(price_series, 1.0));
         let up_price_ts_data = Some(create_modified_price_series_data(price_series, 1.1));
         let down_price_ts_data = Some(create_modified_price_series_data(price_series, 0.9));
-
-        // Assuming the country is defined somewhere within optimization_data, for example in the location field
-        let country = optimization_data.location.clone().unwrap_or_default();
-
-        // Constructing the ElectricityPriceData structure
         let electricity_price_data = input_data::ElectricityPriceData {
             api_source: Some(String::new()),
             api_key: Some(String::new()),
-            country: Some(country),
             price_data: original_ts_data,
             up_price_data: up_price_ts_data,
             down_price_data: down_price_ts_data,
         };
-
-        // Updating the elec_price_data in optimization_data
         optimization_data.elec_price_data = Some(electricity_price_data);
     } else {
         eprintln!("TimeData is missing in optimization_data. Cannot update elec_price_data.");
     }
 }
 
-pub fn create_modified_price_series_data(
+fn create_modified_price_series_data(
     original_series: &BTreeMap<DateTime<FixedOffset>, f64>,
     multiplier: f64,
 ) -> input_data::TimeSeriesData {
@@ -896,38 +975,30 @@ pub fn create_modified_price_series_data(
 }
 
 async fn fetch_electricity_price_task(
+    location: &LocationSettings,
+    start_time: &DateTime<FixedOffset>,
+    time_line: &TimeLineSettings,
     rx: oneshot::Receiver<OptimizationData>,
     tx: oneshot::Sender<OptimizationData>,
 ) -> Result<(), String> {
     if let Ok(mut optimization_data) = rx.await {
         if optimization_data.fetch_elec_data {
-            if let (Some(country), Some(time_data)) =
-                (&optimization_data.country, &optimization_data.time_data)
-            {
-                let format_string = "%Y-%m-%dT%H:00:00Z";
-                let start_time_str = time_data.start_time.format(&format_string).to_string();
-                let end_time_str = time_data.end_time.format(&format_string).to_string();
-                match fetch_electricity_prices(start_time_str, end_time_str, country.clone()).await
-                {
-                    Ok(prices) => {
-                        create_and_update_elec_price_data(&mut optimization_data, &prices);
-                        if tx.send(optimization_data).is_err() {
-                            return Err("fetch_electricity_price_task: failed to send updated optimization data in electricity prices".to_string());
-                        }
-                    }
-                    Err(e) => {
-                        return Err(format!(
-                            "fetch_electricity_price_task: failed to fetch electricity price data for country '{}': {:?}",
-                            country, e
-                        ));
+            let format_string = "%Y-%m-%dT%H:00:00Z";
+            let start_time_str = start_time.format(&format_string).to_string();
+            let end_time = *start_time + time_line.duration;
+            let end_time_str = end_time.format(&format_string).to_string();
+            match fetch_electricity_prices(start_time_str, end_time_str, &location.country).await {
+                Ok(prices) => {
+                    create_and_update_elec_price_data(&mut optimization_data, &prices);
+                    if tx.send(optimization_data).is_err() {
+                        return Err("fetch_electricity_price_task: failed to send updated optimization data in electricity prices".to_string());
                     }
                 }
-            } else {
-                if optimization_data.country.is_none() {
-                    return Err("fetch_electricity_price_task: country data is missing".to_string());
-                }
-                if optimization_data.time_data.is_none() {
-                    return Err("fetch_electricity_price_task: time data is missing".to_string());
+                Err(e) => {
+                    return Err(format!(
+                        "fetch_electricity_price_task: failed to fetch electricity price data: {}",
+                        e
+                    ));
                 }
             }
         } else if tx.send(optimization_data).is_err() {
@@ -1207,6 +1278,66 @@ mod tests {
                 process_names[0].1,
                 "control_process_input_node_control_process"
             );
+        }
+    }
+    mod parse_weather_fetcher_output {
+        use super::*;
+        use chrono_tz::Europe;
+        #[test]
+        fn parses_data_correctly() {
+            let fetcher_output = r#"
+                [
+                        ["2024-11-08T11:00:00", 6.5],
+                        ["2024-11-08T12:00:00", 6.6],
+                        ["2024-11-08T13:00:00", 6.2],
+                        ["2024-11-08T14:00:00", 5.9],
+                        ["2024-11-08T15:00:00", 6.1],
+                        ["2024-11-08T16:00:00", 6.3],
+                        ["2024-11-08T17:00:00", 6.4],
+                        ["2024-11-08T18:00:00", 6.7]
+                ]"#;
+            let weather_series = parse_weather_fetcher_output(fetcher_output, &Europe::Helsinki)
+                .expect("parsing output should not fail");
+            let expected_time_stamps = [
+                Europe::Helsinki
+                    .with_ymd_and_hms(2024, 11, 8, 11, 0, 0)
+                    .single()
+                    .unwrap(),
+                Europe::Helsinki
+                    .with_ymd_and_hms(2024, 11, 8, 12, 0, 0)
+                    .single()
+                    .unwrap(),
+                Europe::Helsinki
+                    .with_ymd_and_hms(2024, 11, 8, 13, 0, 0)
+                    .single()
+                    .unwrap(),
+                Europe::Helsinki
+                    .with_ymd_and_hms(2024, 11, 8, 14, 0, 0)
+                    .single()
+                    .unwrap(),
+                Europe::Helsinki
+                    .with_ymd_and_hms(2024, 11, 8, 15, 0, 0)
+                    .single()
+                    .unwrap(),
+                Europe::Helsinki
+                    .with_ymd_and_hms(2024, 11, 8, 16, 0, 0)
+                    .single()
+                    .unwrap(),
+                Europe::Helsinki
+                    .with_ymd_and_hms(2024, 11, 8, 17, 0, 0)
+                    .single()
+                    .unwrap(),
+                Europe::Helsinki
+                    .with_ymd_and_hms(2024, 11, 8, 18, 0, 0)
+                    .single()
+                    .unwrap(),
+            ];
+            let expected_temperatures = [6.5, 6.6, 6.2, 5.9, 6.1, 6.3, 6.4, 6.7];
+            assert_eq!(weather_series.len(), expected_temperatures.len());
+            for (i, pair) in weather_series.iter().enumerate() {
+                assert_eq!(pair.0, expected_time_stamps[i]);
+                assert_eq!(pair.1, expected_temperatures[i]);
+            }
         }
     }
 }

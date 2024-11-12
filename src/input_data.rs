@@ -1,23 +1,16 @@
 use chrono::{DateTime, FixedOffset};
 use serde::de::{self, MapAccess, Visitor};
-use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{self, Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct OptimizationData {
-    pub fetch_weather_data: bool,
     pub fetch_elec_data: bool,
-    pub fetch_time_data: bool,
-    pub country: Option<String>,
-    pub location: Option<String>,
-    pub timezone: Option<String>,
-    pub elec_price_source: Option<String>,
     pub model_data: Option<InputData>,
-    pub time_data: Option<TimeData>,
-    pub weather_data: Option<WeatherData>,
+    pub time_data: Option<Vec<DateTime<FixedOffset>>>,
+    pub weather_data: Option<Vec<TimeSeries>>,
     pub elec_price_data: Option<ElectricityPriceData>,
-    pub control_results: Option<Vec<DataTable>>,
     pub input_data_batch: Option<Vec<(String, Vec<u8>)>>,
 }
 
@@ -337,49 +330,13 @@ unsafe impl Sync for DataTable {}
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct WeatherData {
-    pub place: String,
     pub weather_data: TimeSeriesData,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct WeatherDataResponse {
-    pub place: String,
-    pub weather_values: Vec<f64>,
-}
-
-// Serialization function for DateTime<FixedOffset>
-fn serialize<S>(date: &DateTime<FixedOffset>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let s = date.to_rfc3339();
-    serializer.serialize_str(&s)
-}
-
-// Deserialization function for DateTime<FixedOffset>
-fn deserialize<'de, D>(deserializer: D) -> Result<DateTime<FixedOffset>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    s.parse::<DateTime<FixedOffset>>()
-        .map_err(serde::de::Error::custom)
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct TimeData {
-    #[serde(serialize_with = "serialize", deserialize_with = "deserialize")]
-    pub start_time: DateTime<FixedOffset>,
-    #[serde(serialize_with = "serialize", deserialize_with = "deserialize")]
-    pub end_time: DateTime<FixedOffset>,
-    pub series: Vec<DateTime<FixedOffset>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ElectricityPriceData {
     pub api_source: Option<String>,
     pub api_key: Option<String>,
-    pub country: Option<String>,
     pub price_data: Option<TimeSeriesData>,
     pub up_price_data: Option<TimeSeriesData>,
     pub down_price_data: Option<TimeSeriesData>,
@@ -389,7 +346,6 @@ pub struct ElectricityPriceData {
 pub struct ElecPriceData {
     pub api_source: String,
     pub api_key: Option<String>,
-    pub country: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -402,7 +358,6 @@ pub struct EleringData {
 pub struct ElecPriceSource {
     pub api_source: String,
     pub token: Option<String>,
-    pub country: Option<String>,
     pub bidding_in_domain: Option<String>,
     pub bidding_out_domain: Option<String>,
 }
