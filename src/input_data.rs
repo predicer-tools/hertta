@@ -319,15 +319,6 @@ pub struct ConFactor {
     pub data: TimeSeriesData,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct DataTable {
-    pub columns: Vec<String>,
-    pub data: Vec<Vec<String>>,
-}
-
-unsafe impl Send for DataTable {}
-unsafe impl Sync for DataTable {}
-
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct WeatherData {
     pub weather_data: TimeSeriesData,
@@ -335,31 +326,9 @@ pub struct WeatherData {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ElectricityPriceData {
-    pub api_source: Option<String>,
-    pub api_key: Option<String>,
     pub price_data: Option<TimeSeriesData>,
     pub up_price_data: Option<TimeSeriesData>,
     pub down_price_data: Option<TimeSeriesData>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct ElecPriceData {
-    pub api_source: String,
-    pub api_key: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct EleringData {
-    pub success: bool,
-    pub data: TimeSeriesData,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct ElecPriceSource {
-    pub api_source: String,
-    pub token: Option<String>,
-    pub bidding_in_domain: Option<String>,
-    pub bidding_out_domain: Option<String>,
 }
 
 #[cfg(test)]

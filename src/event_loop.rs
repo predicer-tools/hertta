@@ -935,8 +935,6 @@ fn create_and_update_elec_price_data(
         let up_price_ts_data = Some(create_modified_price_series_data(price_series, 1.1));
         let down_price_ts_data = Some(create_modified_price_series_data(price_series, 0.9));
         let electricity_price_data = input_data::ElectricityPriceData {
-            api_source: Some(String::new()),
-            api_key: Some(String::new()),
             price_data: original_ts_data,
             up_price_data: up_price_ts_data,
             down_price_data: down_price_ts_data,
