@@ -1,4 +1,5 @@
-use crate::settings::{LocationSettings, Settings};
+use crate::settings::{LocationSettings, Settings, TimeLineSettings};
+use chrono::TimeDelta;
 use juniper::{
     graphql_object, Context, EmptySubscription, FieldResult, GraphQLInputObject, GraphQLObject,
     RootNode,
@@ -13,8 +14,8 @@ struct Predicer {
 }
 
 #[derive(GraphQLObject)]
-#[graphql(description = "Optimization settings.")]
-struct Optimization {
+#[graphql(description = "Optimization time line settings.")]
+struct TimeLine {
     #[graphql(description = "Time line duration in milliseconds.")]
     duration: i32,
     #[graphql(description = "Time step in milliseconds.")]
@@ -31,12 +32,21 @@ struct Location {
 }
 
 #[derive(GraphQLInputObject)]
-#[graphql(description = "Location settings.")]
+#[graphql(description = "Location input.")]
 struct LocationInput {
     #[graphql(description = "Country name.")]
     country: String,
     #[graphql(description = "Place name.")]
     place: String,
+}
+
+#[derive(GraphQLInputObject)]
+#[graphql(description = "Optimization time line input.")]
+struct TimeLineInput {
+    #[graphql(description = "Time line duration in milliseconds.")]
+    duration: i32,
+    #[graphql(description = "Time step in milliseconds.")]
+    step: i32,
 }
 
 pub struct HerttaContext {
@@ -66,9 +76,9 @@ impl Query {
             port: context.settings.lock().unwrap().predicer_port as i32,
         })
     }
-    fn optimization(context: &HerttaContext) -> FieldResult<Optimization> {
+    fn optimization(context: &HerttaContext) -> FieldResult<TimeLine> {
         let settings = context.settings.lock().unwrap();
-        Ok(Optimization {
+        Ok(TimeLine {
             duration: settings.time_line.duration.num_milliseconds() as i32,
             step: settings.time_line.step.num_milliseconds() as i32,
         })
@@ -100,6 +110,21 @@ impl Mutation {
         Ok(Location {
             country: new_location.country,
             place: new_location.place,
+        })
+    }
+    fn set_time_line(
+        new_time_line: TimeLineInput,
+        context: &HerttaContext,
+    ) -> FieldResult<TimeLine> {
+        let mut settings = context.settings.lock().unwrap();
+        let time_line = TimeLineSettings {
+            step: TimeDelta::milliseconds(new_time_line.step as i64),
+            duration: TimeDelta::milliseconds(new_time_line.duration as i64),
+        };
+        settings.time_line = time_line;
+        Ok(TimeLine {
+            duration: new_time_line.duration,
+            step: new_time_line.step,
         })
     }
 }
