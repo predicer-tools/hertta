@@ -130,3 +130,59 @@ impl Mutation {
 }
 
 pub type Schema = RootNode<'static, Query, Mutation, EmptySubscription<HerttaContext>>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_location_updates_settings() {
+        let input = LocationInput {
+            country: "Puurtila".to_string(),
+            place: "Akun puoti".to_string(),
+        };
+        let settings = Arc::new(Mutex::new(Settings::default()));
+        let context = HerttaContext::new(&settings);
+        let output =
+            Mutation::set_location(input, &context).expect("setting location shouldn't fail");
+        assert_eq!(output.country, "Puurtila".to_string());
+        assert_eq!(output.place, "Akun puoti".to_string());
+        {
+            let settings = settings.lock().unwrap();
+            assert_eq!(
+                settings
+                    .location
+                    .as_ref()
+                    .expect("location should be set")
+                    .country,
+                "Puurtila"
+            );
+            assert_eq!(
+                settings
+                    .location
+                    .as_ref()
+                    .expect("location should be set")
+                    .place,
+                "Akun puoti"
+            );
+        }
+    }
+    #[test]
+    fn set_time_line_updates_settings() {
+        let input = TimeLineInput {
+            duration: 60 * 60000,
+            step: 15 * 60000,
+        };
+        let settings = Arc::new(Mutex::new(Settings::default()));
+        let context = HerttaContext::new(&settings);
+        let output =
+            Mutation::set_time_line(input, &context).expect("setting time line shouldn't fail");
+        assert_eq!(output.duration, 60 * 60000);
+        assert_eq!(output.step, 15 * 60000);
+        {
+            let settings = settings.lock().unwrap();
+            assert_eq!(settings.time_line.duration, TimeDelta::minutes(60));
+            assert_eq!(settings.time_line.step, TimeDelta::minutes(15));
+        }
+    }
+}
