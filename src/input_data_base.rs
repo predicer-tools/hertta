@@ -2,7 +2,7 @@ use chrono::{DateTime, FixedOffset};
 use serde::{self, Deserialize, Serialize};
 use std::collections::BTreeMap;
 use crate::input_data;
-use input_data::TimeSeriesData;
+
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct BaseInputData {
@@ -92,7 +92,7 @@ pub struct BaseNodeDiffusion {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct BaseNodeHistory {
     pub node: String,
-    pub steps: f64, 
+    pub steps: f64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -102,17 +102,17 @@ pub struct BaseMarket {
     pub node: String,
     pub processgroup: String,
     pub direction: String,
-    pub realisation: f64, 
+    pub realisation: f64,
     pub reserve_type: String,
     pub is_bid: bool,
     pub is_limited: bool,
     pub min_bid: f64,
     pub max_bid: f64,
     pub fee: f64,
-    pub price: f64, 
-    pub up_price: f64, 
-    pub down_price: f64, 
-    pub reserve_activation_price: f64, 
+    pub price: f64,
+    pub up_price: f64,
+    pub down_price: f64,
+    pub reserve_activation_price: f64,
     pub fixed: Vec<(String, f64)>,
 }
 

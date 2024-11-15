@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
+use std::iter;
 use std::io;
 use std::process::{Command, ExitStatus};
 use std::sync::{Arc, Mutex};
@@ -57,6 +58,7 @@ pub async fn event_loop(
             .duration_trunc(TimeDelta::try_hours(1).unwrap())
             .unwrap()
             .into();
+        let time_line = time_axis::make_time_data(start_time, settings_snapshot.time_line.step, settings_snapshot.time_line.duration);
         let control_processes = match expected_control_processes(&data.model_data) {
             Ok(names) => names,
             Err(error) => {
@@ -99,7 +101,7 @@ pub async fn event_loop(
             .await
         });
         let settings_clone = Arc::clone(&settings_snapshot);
-        let start_time_clone = start_time.clone();
+        let time_line_clone = time_line.clone();
         let fetch_weather_data_handle = tokio::spawn(async move {
             let location = settings_clone
                 .location
@@ -107,7 +109,7 @@ pub async fn event_loop(
                 .ok_or("cannot fetch weather data: no location set".to_string())?;
             fetch_weather_data_task(
                 location,
-                &start_time_clone,
+                time_line_clone,
                 &settings_clone.time_line,
                 &settings_clone.python_exec,
                 &settings_clone.weather_fetcher_script,
@@ -681,10 +683,22 @@ fn update_npe_market_prices(
     }
 }
 
+fn check_stamps_match(forecast: &Vec<(DateTime<FixedOffset>, f64)>, time_line: &Vec<DateTime<FixedOffset>>) -> Result<(), String>{
+    if forecast.len() != time_line.len() {
+        return Err("weather forecast length doesn't match time line".to_string());
+    }
+    for (forecast_pair, time_stamp) in iter::zip(forecast, time_line) {
+        if forecast_pair.0 != *time_stamp {
+            return Err("weather forecast time stamp doesn't match time line".to_string());
+        }
+    }
+    Ok(())
+}
+
 async fn fetch_weather_data_task(
     location: &LocationSettings,
-    start_time: &DateTime<FixedOffset>,
-    time_line: &TimeLineSettings,
+    time_line: Vec<DateTime<FixedOffset>>,
+    time_line_settings: &TimeLineSettings,
     python_exec: &String,
     weather_fetcher_script: &String,
     rx: oneshot::Receiver<OptimizationData>,
@@ -693,8 +707,8 @@ async fn fetch_weather_data_task(
     if let Ok(mut optimization_data) = rx.await {
         match fetch_weather_data(
             &location.place,
-            start_time,
-            &time_line,
+            &time_line[0],
+            &time_line_settings,
             python_exec,
             weather_fetcher_script,
         ) {
@@ -703,6 +717,9 @@ async fn fetch_weather_data_task(
                     .time_data
                     .as_ref()
                     .ok_or("series missing from time data".to_string())?;
+                if let Err(error) = check_stamps_match(&weather_values, &time_line) {
+                    return Err(error);
+                }
                 let values = time_axis::extract_values_from_pairs_checked(&weather_values, &series)
                     .or_else(|e| Err(format!("fetch_weather_data: {}", e)))?;
                 optimization_data.weather_data = Some(update_weather_data(series, &values));
