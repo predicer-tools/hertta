@@ -77,7 +77,7 @@ fn default_predicer_port() -> u16 {
 }
 
 fn default_weather_fetcher_script() -> String {
-    let path = ["src", "fmi_opendata.py"].iter().collect::<PathBuf>();
+    let path = ["forecasts", "weather_forecast.py"].iter().collect::<PathBuf>();
     path.to_str()
         .expect("weather fetcher script path contains unknown characters")
         .to_string()

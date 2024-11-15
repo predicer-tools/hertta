@@ -1,91 +1,59 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import urllib.parse as urlparse
+# /// script
+# dependencies = [
+#   "fmiopendata",
+#   "pandas",
+# ]
+# ///
+import argparse
+from datetime import datetime
 import json
-import datetime as dt
+
 import pandas as pd
+import numpy as np
 from fmiopendata.wfs import download_stored_query
-import requests
 
-# Set display options for pandas
-pd.set_option('display.max_rows', 500)
-pd.set_option('display.min_rows', 500)
 
-class WeatherHandler(BaseHTTPRequestHandler):
-
-    def do_GET(self):
-        # Parse the URL path and query components
-        parsed_path = urlparse.urlparse(self.path)
-        path = parsed_path.path
-        query = parsed_path.query
-        query_components = urlparse.parse_qs(query)
-
-        # Handling the '/get_weather_data' endpoint
-        if path == '/get_weather_data':
-            start_time = query_components.get('start_time', [None])[0]
-            end_time = query_components.get('end_time', [None])[0]
-            place = query_components.get('place', [None])[0]
-
-            # Check for missing parameters
-            if None in (start_time, end_time, place):
-                self.send_response(400)
-                self.end_headers()
-                self.wfile.write(b'Bad Request: Missing parameters')
-            else:
-                # Collect and reshape data to return only the values as a list of f64
-                data = collect_data(start_time, end_time, place)
-                values_list = reshape_dict(data, list(data.keys()))
-
-                # Construct the response with just the values
-                response_data = {
-                    'place': place,
-                    'weather_values': values_list
-                }
-
-                # Send the response
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps(response_data).encode())
-        else:
-            # Handle unknown paths
-            self.send_response(404)
-            self.end_headers()
-            self.wfile.write(b'Not Found')
-
-def run_server(server_class=HTTPServer, handler_class=WeatherHandler):
-    server_address = ('', 8001)  # Host on all available interfaces on port 8000
-    httpd = server_class(server_address, handler_class)
-    print('Starting httpd...')
-    httpd.serve_forever()
-
-# Functions collect_data and reshape_dict remain the same as in your original script
-    
-def collect_data(start_time, end_time, place):
+def collect_data(start_time: str, end_time: str, place: str):
     collection_string = "fmi::forecast::harmonie::surface::point::multipointcoverage"
     parameters = ["Temperature"]
     parameters_str = ','.join(parameters)
-
     snd = download_stored_query(collection_string,
-                                args=["place=" + place,
-                                        "starttime=" + start_time,
-                                        "endtime=" + end_time,
-                                        'parameters=' + parameters_str])
-
-    return snd.data
-
-def reshape_dict(data, times):
-    values_list = []
-    for time in times:
-        for location_data in data[time].values():
-            for param_data in location_data.values():
-                value = param_data["value"]
-                if isinstance(value, (float, int)):  # Ensure the value is numeric
-                    values_list.append(value)
-    return values_list
+                                args=["place="+ place,
+                                      "starttime=" + start_time,
+                                      "endtime=" + end_time,
+                                      'parameters=' + parameters_str])
+    data = snd.data
+    return data
 
 
-if __name__ == '__main__':
-    run_server()
+def reshape_dict(data: dict[datetime, dict[str, dict[str, dict]]]) -> dict[str, dict[str, np.float64]]:
+    # Transform data output dict into stat-param-values form, with times separately
+    new_data_dict = {}
+    for timestep_data in data.values():
+        for location, parameters in timestep_data.items():
+            param_dict = new_data_dict.setdefault(location, {})
+            for param_name, param_value in parameters.items():
+                value = param_value["value"]
+                param_dict.setdefault(param_name, []).append(value)
+    return new_data_dict
+
+
+def main(start_time: str, end_time: str, step: int, place: str) -> None:
+    data = collect_data(start_time, end_time, place)
+    reshaped_data = reshape_dict(data)
+    df = pd.DataFrame(index=data.keys(), data=reshaped_data[place])
+    df['Air temperature'] += 273.15
+    mean_temperature = df['Air temperature'].resample(f'{step}min').nearest()
+    mean_temperature.index = mean_temperature.index.strftime('%Y-%m-%dT%H:%M:%S')
+    json_output = json.dumps([(time, temperature) for time, temperature in mean_temperature.to_dict().items()])
+    print(json_output)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Open Data collection for weather observations')
+    parser.add_argument('start_time', type=str, help='Start time for data collection in YYYY-MM-DD HH:MM format')
+    parser.add_argument('end_time', type=str, help='End time for data collection in YYYY-MM-DD HH:MM format')
+    parser.add_argument('step', type=int, help='Step between time stamps in minutes')
+    parser.add_argument('place', type=str, help='Name of the place')
+    args = parser.parse_args()
+    main(args.start_time, args.end_time, args.step, args.place)
