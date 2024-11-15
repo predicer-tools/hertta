@@ -49,7 +49,7 @@ pub fn find_input_node_names<'a>(nodes: impl Iterator<Item = &'a Node>) -> Vec<S
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Temporals {
     pub t: Vec<DateTime<FixedOffset>>,
-    pub dtf: f64,
+    pub dtf: f64, // in hours
     pub variable_dt: Option<Vec<(String, f64)>>,
 }
 

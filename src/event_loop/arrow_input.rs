@@ -1,4 +1,5 @@
-use crate::arrow_errors;
+mod arrow_errors;
+
 use crate::input_data;
 use crate::input_data::{InputData, Market};
 use arrow::array::{
@@ -31,7 +32,7 @@ pub fn create_and_serialize_record_batches(
 }
 
 // Function to create RecordBatches (implement your Arrow conversion functions)
-pub fn create_record_batches(
+fn create_record_batches(
     input_data: &InputData,
 ) -> Result<Vec<(String, RecordBatch)>, Box<dyn std::error::Error + Send + Sync>> {
     let mut batches = Vec::new();
@@ -132,7 +133,7 @@ fn times_stamp_array_from_temporal_stamps(
     Arc::new(stamps.iter().map(|s| Some(s.timestamp_millis())).collect())
 }
 
-pub fn temps_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn temps_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let fields = vec![make_timestamp_field()];
     let schema = Arc::new(Schema::new(fields));
     let stamp_column = times_stamp_array_from_temporal_stamps(&input_data.temporals.t) as ArrayRef;
@@ -140,7 +141,7 @@ pub fn temps_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError>
     RecordBatch::try_new(schema, columns)
 }
 
-pub fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, DataConversionError> {
+fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, DataConversionError> {
     let setup = &input_data.setup;
     let parameters = vec![
         "use_market_bids",
@@ -209,7 +210,7 @@ pub fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, Da
 
 //What are the default values if State is None?
 //How to add the node.groups here?
-pub fn nodes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn nodes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let nodes = &input_data.nodes;
     let schema = Schema::new(vec![
         Field::new("node", DataType::Utf8, false),
@@ -321,7 +322,7 @@ pub fn nodes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError>
     Ok(record_batch)
 }
 
-pub fn processes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn processes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     //println!("processes");
     let processes = &input_data.processes;
     let contains_delay = input_data.setup.contains_delay;
@@ -433,7 +434,7 @@ pub fn processes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowEr
 }
 
 // Function to convert HashMap<String, Group> to RecordBatch
-pub fn groups_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn groups_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let groups = &input_data.groups;
 
     let schema = Schema::new(vec![
@@ -468,7 +469,7 @@ pub fn groups_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError
     Ok(record_batch)
 }
 
-pub fn process_topos_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn process_topos_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     //println!("processes_topos");
     let process_topologys = &input_data.processes;
 
@@ -561,7 +562,7 @@ pub fn process_topos_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
     record_batch
 }
 
-pub fn node_diffusion_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn node_diffusion_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let node_diffusions = &input_data.node_diffusion;
     let temporals_t = &input_data.temporals.t;
     let mut fields = vec![make_timestamp_field()];
@@ -599,7 +600,7 @@ pub fn node_diffusion_to_arrow(input_data: &InputData) -> Result<RecordBatch, Ar
 }
 
 // Function to convert node histories to Arrow RecordBatch
-pub fn node_histories_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn node_histories_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let node_histories = &input_data.node_histories;
     let mut fields = vec![Field::new("t", DataType::Int32, false)];
     let mut columns: Vec<ArrayRef> = Vec::new();
@@ -654,7 +655,7 @@ pub fn node_histories_to_arrow(input_data: &InputData) -> Result<RecordBatch, Ar
     Ok(record_batch)
 }
 
-pub fn node_delays_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn node_delays_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let node_delays = &input_data.node_delay;
     let schema = Schema::new(vec![
         Field::new("node1", DataType::Utf8, false),
@@ -709,7 +710,7 @@ pub fn node_delays_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arrow
     )
 }
 
-pub fn inflow_blocks_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn inflow_blocks_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let inflow_blocks = &input_data.inflow_blocks;
     if inflow_blocks.is_empty() {
         let schema = Arc::new(Schema::new(vec![Field::new("t", DataType::Int64, false)]));
@@ -836,7 +837,7 @@ pub fn inflow_blocks_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
     RecordBatch::try_new(schema, columns)
 }
 
-pub fn markets_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn markets_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let markets = &input_data.markets;
 
     // Define the schema for the Arrow RecordBatch
@@ -958,7 +959,7 @@ fn schema_fields_from_scenarios(
     fields
 }
 
-pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let markets = &input_data.markets;
     let temporals = &input_data.temporals;
     let (market_names, scenario_names) = sort_unique_market_and_scenario_names(markets);
@@ -1036,7 +1037,7 @@ pub fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch
     RecordBatch::try_new(schema, columns)
 }
 
-pub fn market_reserve_activation_price_to_arrow(
+fn market_reserve_activation_price_to_arrow(
     input_data: &input_data::InputData,
 ) -> Result<RecordBatch, ArrowError> {
     let markets = &input_data.markets;
@@ -1119,7 +1120,7 @@ pub fn market_reserve_activation_price_to_arrow(
     RecordBatch::try_new(schema, columns)
 }
 
-pub fn scenarios_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn scenarios_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     //println!("scenarios");
     let scenarios = &input_data.scenarios;
 
@@ -1160,7 +1161,7 @@ pub fn scenarios_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowEr
     Ok(record_batch)
 }
 
-pub fn processes_eff_fun_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn processes_eff_fun_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     //println!("eff fun");
     let processes = &input_data.processes;
 
@@ -1221,7 +1222,7 @@ pub fn processes_eff_fun_to_arrow(input_data: &InputData) -> Result<RecordBatch,
     RecordBatch::try_new(schema, columns)
 }
 
-pub fn reserve_type_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn reserve_type_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let reserve_type = &input_data.reserve_type;
     let schema = Schema::new(vec![
         Field::new("reserve_type", DataType::Utf8, false),
@@ -1238,7 +1239,7 @@ pub fn reserve_type_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
     RecordBatch::try_new(Arc::new(schema), vec![type_array, ramp_factor_array])
 }
 
-pub fn risk_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn risk_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     //println!("risk");
     // Extract risk data from input_data
     let risk = &input_data.risk;
@@ -1277,7 +1278,7 @@ pub fn risk_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> 
     Ok(record_batch)
 }
 
-pub fn processes_cap_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn processes_cap_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let temporals = &input_data.temporals;
     let processes = &input_data.processes;
 
@@ -1345,7 +1346,7 @@ pub fn processes_cap_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
     RecordBatch::try_new(schema, columns)
 }
 
-pub fn gen_constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn gen_constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let temporals = &input_data.temporals;
     let gen_constraints = &input_data.gen_constraints;
 
@@ -1414,7 +1415,7 @@ pub fn gen_constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, A
     RecordBatch::try_new(schema, columns)
 }
 
-pub fn constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let gen_constraints = &input_data.gen_constraints;
 
     // Define the schema for the Arrow RecordBatch
@@ -1452,7 +1453,7 @@ pub fn constraints_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arrow
     )
 }
 
-pub fn bid_slots_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn bid_slots_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let bid_slots = &input_data.bid_slots;
     let temporals = &input_data.temporals;
     let timestamps = if let Some(bid_slot) = bid_slots.values().next() {
@@ -1494,7 +1495,7 @@ pub fn bid_slots_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowEr
     RecordBatch::try_new(schema, columns)
 }
 
-pub fn processes_cf_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn processes_cf_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let temporals = &input_data.temporals;
     let processes = &input_data.processes;
     let mut fields: Vec<Field> = vec![Field::new(
@@ -1550,7 +1551,7 @@ pub fn processes_cf_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
     RecordBatch::try_new(schema, columns)
 }
 
-pub fn market_fixed_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn market_fixed_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     //println!("fixed");
     let markets = &input_data.markets;
 
@@ -1607,7 +1608,7 @@ pub fn market_fixed_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
     RecordBatch::try_new(schema, columns)
 }
 
-pub fn market_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn market_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let temporals_t = &input_data.temporals.t;
     if temporals_t.is_empty() {
         return Err(ArrowError::InvalidArgumentError(
@@ -1681,7 +1682,7 @@ pub fn market_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
     Ok(record_batch)
 }
 
-pub fn market_balance_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn market_balance_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     //println!("market balance");
     let temporals_t = &input_data.temporals.t;
 
@@ -1754,7 +1755,7 @@ pub fn market_balance_price_to_arrow(input_data: &InputData) -> Result<RecordBat
 }
 
 // This function converts a HashMap<String, Node> of inflow TimeSeriesData to an Arrow RecordBatch
-pub fn nodes_inflow_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn nodes_inflow_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let temporals_t = &input_data.temporals.t;
     let nodes = &input_data.nodes;
 
@@ -1820,7 +1821,7 @@ pub fn nodes_inflow_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arro
     Ok(record_batch)
 }
 
-pub fn nodes_commodity_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn nodes_commodity_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     //println!("nodes commodity");
     let temporals_t = &input_data.temporals.t;
     let nodes = &input_data.nodes;
@@ -1886,7 +1887,7 @@ pub fn nodes_commodity_price_to_arrow(input_data: &InputData) -> Result<RecordBa
     Ok(record_batch)
 }
 
-pub fn processes_eff_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
+fn processes_eff_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let processes = &input_data.processes;
     let temporals_t = &input_data.temporals.t;
     if temporals_t.is_empty() {
@@ -1953,7 +1954,7 @@ pub fn processes_eff_to_arrow(input_data: &InputData) -> Result<RecordBatch, Arr
 }
 
 // Function to check timestamps match
-pub fn check_timestamps_match(
+fn check_timestamps_match(
     temporals_t: &Vec<DateTime<FixedOffset>>,
     time_series: &input_data::TimeSeries,
 ) -> Result<(), ArrowError> {

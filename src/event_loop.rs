@@ -1,8 +1,9 @@
-use crate::arrow_input;
+mod arrow_input;
+mod time_axis;
+
 use crate::input_data;
 use crate::input_data::{InputData, OptimizationData, Process, TimeSeries};
 use crate::settings::{LocationSettings, Settings, TimeLineSettings};
-use crate::time_axis;
 use crate::utilities;
 use arrow::array::timezone::Tz;
 use arrow::array::types::{Float64Type, TimestampMillisecondType};
