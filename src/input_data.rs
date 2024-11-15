@@ -1,8 +1,8 @@
 use chrono::{DateTime, FixedOffset};
 use serde::de::{self, MapAccess, Visitor};
 use serde::{self, Deserialize, Deserializer, Serialize};
-use std::collections::BTreeMap;
 use std::fmt;
+use std::collections::BTreeMap;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct OptimizationData {
@@ -173,12 +173,12 @@ pub struct BidSlot {
     pub market_price_allocation: BTreeMap<(String, DateTime<FixedOffset>), (String, String)>,
 }
 
-fn parse_time_stamp(key: &str) -> Result<DateTime<FixedOffset>, String> {
+pub fn parse_time_stamp(key: &str) -> Result<DateTime<FixedOffset>, String> {
     DateTime::parse_from_rfc3339(key.trim_matches(|c| c == '"'))
         .map_err(|error| format!("invalid time format {} for prices: {}", key, error))
 }
 
-fn deserialize_prices<'de, D>(
+pub fn deserialize_prices<'de, D>(
     deserializer: D,
 ) -> Result<BTreeMap<(DateTime<FixedOffset>, String), f64>, D::Error>
 where
@@ -221,7 +221,7 @@ where
     deserializer.deserialize_map(PricesVisitor)
 }
 
-fn deserialize_market_price_allocation<'de, D>(
+pub fn deserialize_market_price_allocation<'de, D>(
     deserializer: D,
 ) -> Result<BTreeMap<(String, DateTime<FixedOffset>), (String, String)>, D::Error>
 where
