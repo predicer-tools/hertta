@@ -2,9 +2,20 @@ use crate::settings::{LocationSettings, Settings, TimeLineSettings};
 use chrono::TimeDelta;
 use juniper::{
     graphql_object, Context, EmptySubscription, FieldResult, GraphQLInputObject, GraphQLObject,
-    RootNode,
+    GraphQLUnion, RootNode,
 };
 use std::sync::{Arc, Mutex};
+
+#[derive(GraphQLObject)]
+struct ValidationError {
+    field: String,
+    message: String,
+}
+
+#[derive(GraphQLObject)]
+struct ValidationErrors {
+    errors: Vec<ValidationError>,
+}
 
 #[derive(GraphQLObject)]
 #[graphql(description = "Predicer settings.")]
@@ -20,6 +31,21 @@ struct TimeLine {
     duration: i32,
     #[graphql(description = "Time step in milliseconds.")]
     step: i32,
+}
+
+#[derive(GraphQLInputObject)]
+#[graphql(description = "Optimization time line input.")]
+struct TimeLineInput {
+    #[graphql(description = "Time line duration in milliseconds.")]
+    duration: i32,
+    #[graphql(description = "Time step in milliseconds.")]
+    step: i32,
+}
+
+#[derive(GraphQLUnion)]
+enum TimeLineResult {
+    Ok(TimeLine),
+    Err(ValidationErrors),
 }
 
 #[derive(GraphQLObject)]
@@ -38,15 +64,6 @@ struct LocationInput {
     country: String,
     #[graphql(description = "Place name.")]
     place: String,
-}
-
-#[derive(GraphQLInputObject)]
-#[graphql(description = "Optimization time line input.")]
-struct TimeLineInput {
-    #[graphql(description = "Time line duration in milliseconds.")]
-    duration: i32,
-    #[graphql(description = "Time step in milliseconds.")]
-    step: i32,
 }
 
 pub struct HerttaContext {
@@ -100,29 +117,49 @@ pub struct Mutation;
 #[graphql_object]
 #[graphql(context = HerttaContext)]
 impl Mutation {
-    fn set_location(new_location: LocationInput, context: &HerttaContext) -> FieldResult<Location> {
+    fn set_location(new_location: LocationInput, context: &HerttaContext) -> Location {
         let mut settings = context.settings.lock().unwrap();
         let location = LocationSettings {
             country: new_location.country.clone(),
             place: new_location.place.clone(),
         };
         settings.location = Some(location);
-        Ok(Location {
+        Location {
             country: new_location.country,
             place: new_location.place,
-        })
+        }
     }
-    fn set_time_line(
-        new_time_line: TimeLineInput,
-        context: &HerttaContext,
-    ) -> FieldResult<TimeLine> {
+    fn set_time_line(new_time_line: TimeLineInput, context: &HerttaContext) -> TimeLineResult {
+        let mut errors = Vec::new();
+        if new_time_line.duration <= 0 {
+            errors.push(ValidationError {
+                field: "duration".to_string(),
+                message: "must be positive".to_string(),
+            });
+        } else {
+            if new_time_line.step <= 0 {
+                errors.push(ValidationError {
+                    field: "step".to_string(),
+                    message: "must be positive".to_string(),
+                });
+            }
+            if new_time_line.step >= new_time_line.duration {
+                errors.push(ValidationError {
+                    field: "step".to_string(),
+                    message: "must be less than or equal to duration".to_string(),
+                });
+            }
+        }
+        if !errors.is_empty() {
+            return TimeLineResult::Err(ValidationErrors { errors });
+        }
         let mut settings = context.settings.lock().unwrap();
         let time_line = TimeLineSettings {
             step: TimeDelta::milliseconds(new_time_line.step as i64),
             duration: TimeDelta::milliseconds(new_time_line.duration as i64),
         };
         settings.time_line = time_line;
-        Ok(TimeLine {
+        TimeLineResult::Ok(TimeLine {
             duration: new_time_line.duration,
             step: new_time_line.step,
         })
@@ -143,8 +180,7 @@ mod tests {
         };
         let settings = Arc::new(Mutex::new(Settings::default()));
         let context = HerttaContext::new(&settings);
-        let output =
-            Mutation::set_location(input, &context).expect("setting location shouldn't fail");
+        let output = Mutation::set_location(input, &context);
         assert_eq!(output.country, "Puurtila".to_string());
         assert_eq!(output.place, "Akun puoti".to_string());
         {
@@ -175,8 +211,10 @@ mod tests {
         };
         let settings = Arc::new(Mutex::new(Settings::default()));
         let context = HerttaContext::new(&settings);
-        let output =
-            Mutation::set_time_line(input, &context).expect("setting time line shouldn't fail");
+        let output = match Mutation::set_time_line(input, &context) {
+            TimeLineResult::Ok(time_line) => time_line,
+            TimeLineResult::Err(..) => panic!("setting time line should not fail"),
+        };
         assert_eq!(output.duration, 60 * 60000);
         assert_eq!(output.step, 15 * 60000);
         {
@@ -184,5 +222,73 @@ mod tests {
             assert_eq!(settings.time_line.duration, TimeDelta::minutes(60));
             assert_eq!(settings.time_line.step, TimeDelta::minutes(15));
         }
+    }
+
+    #[test]
+    fn setting_negative_duration_causes_error() {
+        let input = TimeLineInput {
+            duration: -1,
+            step: 1,
+        };
+        let settings = Arc::new(Mutex::new(Settings::default()));
+        let context = HerttaContext::new(&settings);
+        match Mutation::set_time_line(input, &context) {
+            TimeLineResult::Ok(..) => panic!("negative duration should cause error"),
+            TimeLineResult::Err(errors) => {
+                assert_eq!(errors.errors.len(), 1);
+                assert_eq!(errors.errors[0].field, "duration");
+                assert_eq!(errors.errors[0].message, "must be positive");
+            }
+        };
+        let settings = settings.lock().unwrap();
+        let vanilla_time_line = TimeLineSettings::default();
+        assert_eq!(settings.time_line.duration, vanilla_time_line.duration);
+        assert_eq!(settings.time_line.step, vanilla_time_line.step);
+    }
+
+    #[test]
+    fn setting_negative_step_causes_error() {
+        let input = TimeLineInput {
+            duration: 1,
+            step: -1,
+        };
+        let settings = Arc::new(Mutex::new(Settings::default()));
+        let context = HerttaContext::new(&settings);
+        match Mutation::set_time_line(input, &context) {
+            TimeLineResult::Ok(..) => panic!("negative step should cause error"),
+            TimeLineResult::Err(errors) => {
+                assert_eq!(errors.errors.len(), 1);
+                assert_eq!(errors.errors[0].field, "step");
+                assert_eq!(errors.errors[0].message, "must be positive");
+            }
+        };
+        let settings = settings.lock().unwrap();
+        let vanilla_time_line = TimeLineSettings::default();
+        assert_eq!(settings.time_line.duration, vanilla_time_line.duration);
+        assert_eq!(settings.time_line.step, vanilla_time_line.step);
+    }
+    #[test]
+    fn setting_step_longer_than_duration_causes_error() {
+        let input = TimeLineInput {
+            duration: 1,
+            step: 2,
+        };
+        let settings = Arc::new(Mutex::new(Settings::default()));
+        let context = HerttaContext::new(&settings);
+        match Mutation::set_time_line(input, &context) {
+            TimeLineResult::Ok(..) => panic!("too long step should cause error"),
+            TimeLineResult::Err(errors) => {
+                assert_eq!(errors.errors.len(), 1);
+                assert_eq!(errors.errors[0].field, "step");
+                assert_eq!(
+                    errors.errors[0].message,
+                    "must be less than or equal to duration"
+                );
+            }
+        };
+        let settings = settings.lock().unwrap();
+        let vanilla_time_line = TimeLineSettings::default();
+        assert_eq!(settings.time_line.duration, vanilla_time_line.duration);
+        assert_eq!(settings.time_line.step, vanilla_time_line.step);
     }
 }
