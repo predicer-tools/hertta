@@ -2,7 +2,7 @@ mod arrow_input;
 mod time_axis;
 
 use crate::input_data;
-use crate::input_data::{InputData, OptimizationData, Process, TimeSeries};
+use crate::input_data::{InputData, OptimizationData, Process, TimeSeries, TimeSeriesData};
 use crate::settings::{LocationSettings, Settings, TimeLineSettings};
 use crate::utilities;
 use arrow::array::timezone::Tz;
@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
-use std::iter;
 use std::io;
+use std::iter;
 use std::process::{Command, ExitStatus};
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
@@ -58,7 +58,11 @@ pub async fn event_loop(
             .duration_trunc(TimeDelta::try_hours(1).unwrap())
             .unwrap()
             .into();
-        let time_line = time_axis::make_time_data(start_time, settings_snapshot.time_line.step, settings_snapshot.time_line.duration);
+        let time_line = time_axis::make_time_data(
+            start_time,
+            settings_snapshot.time_line.step(),
+            settings_snapshot.time_line.duration(),
+        );
         let control_processes = match expected_control_processes(&data.model_data) {
             Ok(names) => names,
             Err(error) => {
@@ -119,19 +123,13 @@ pub async fn event_loop(
             .await
         });
         let settings_clone = Arc::clone(&settings_snapshot);
+        let time_line_clone = time_line.clone();
         let fetch_electricity_price_handle = tokio::spawn(async move {
             let location = settings_clone
                 .location
                 .as_ref()
                 .ok_or("cannot fetch electricity price data: no location set".to_string())?;
-            fetch_electricity_price_task(
-                location,
-                &start_time,
-                &settings_clone.time_line,
-                rx_elec,
-                tx_update,
-            )
-            .await
+            fetch_electricity_price_task(location, time_line_clone, rx_elec, tx_update).await
         });
         let update_model_data_handle =
             tokio::spawn(async move { update_model_data_task(rx_update, tx_batches).await });
@@ -410,8 +408,8 @@ async fn update_time_line_task(
     if let Ok(mut optimization_data) = rx.await {
         optimization_data.time_data = Some(time_axis::make_time_data(
             start_time,
-            time_line.step,
-            time_line.duration,
+            time_line.step(),
+            time_line.duration(),
         ));
         if tx.send(optimization_data).is_err() {
             return Err("update_time_line_task: failed to send output data".to_string());
@@ -683,7 +681,10 @@ fn update_npe_market_prices(
     }
 }
 
-fn check_stamps_match(forecast: &Vec<(DateTime<FixedOffset>, f64)>, time_line: &Vec<DateTime<FixedOffset>>) -> Result<(), String>{
+fn check_stamps_match(
+    forecast: &Vec<(DateTime<FixedOffset>, f64)>,
+    time_line: &Vec<DateTime<FixedOffset>>,
+) -> Result<(), String> {
     if forecast.len() != time_line.len() {
         return Err("weather forecast length doesn't match time line".to_string());
     }
@@ -705,10 +706,13 @@ async fn fetch_weather_data_task(
     tx: oneshot::Sender<OptimizationData>,
 ) -> Result<(), String> {
     if let Ok(mut optimization_data) = rx.await {
+        let start_time = time_line.first().ok_or("empty time line".to_string())?;
+        let end_time = time_line.last().ok_or("empty time line".to_string())?;
         match fetch_weather_data(
             &location.place,
-            &time_line[0],
-            &time_line_settings,
+            &start_time,
+            &end_time,
+            &time_line_settings.step(),
             python_exec,
             weather_fetcher_script,
         ) {
@@ -858,27 +862,24 @@ fn parse_weather_fetcher_output(
 fn fetch_weather_data(
     place: &String,
     start_time: &DateTime<FixedOffset>,
-    time_line: &TimeLineSettings,
+    end_time: &DateTime<FixedOffset>,
+    step: &TimeDelta,
     python_exec: &String,
     weather_data_script: &String,
 ) -> Result<Vec<(DateTime<FixedOffset>, f64)>, String> {
-    let end_time = *start_time + time_line.duration;
-    let format_string = "%Y-%m-%dT%H:00:00Z";
-    let step = time_line.step.num_minutes();
+    let format_string = "%Y-%m-%dT%H:%M:%S";
     let mut command = Command::new(python_exec);
     command
         .arg(weather_data_script)
         .arg(start_time.format(&format_string).to_string())
         .arg(end_time.format(&format_string).to_string())
-        .arg(format!("{}", step))
+        .arg(format!("{}", step.num_minutes()))
         .arg(place);
     let output = match command.output() {
         Ok(bytes) => bytes,
         Err(error) => return Err(format!("Python failed: {}", error)),
     };
     if !output.status.success() {
-        println!("{}", String::from_utf8(output.stdout).unwrap());
-        println!("{}", String::from_utf8(output.stderr).unwrap());
         return Err("weather fetching returned non-zero exit status".into());
     }
     let output = match String::from_utf8(output.stdout) {
@@ -947,7 +948,7 @@ async fn fetch_electricity_prices(
 fn create_and_update_elec_price_data(
     optimization_data: &mut OptimizationData,
     price_series: &BTreeMap<DateTime<FixedOffset>, f64>,
-) {
+) -> Result<(), String> {
     if let Some(_time_data) = &optimization_data.time_data {
         let original_ts_data = Some(create_modified_price_series_data(price_series, 1.0));
         let up_price_ts_data = Some(create_modified_price_series_data(price_series, 1.1));
@@ -959,53 +960,50 @@ fn create_and_update_elec_price_data(
         };
         optimization_data.elec_price_data = Some(electricity_price_data);
     } else {
-        eprintln!("TimeData is missing in optimization_data. Cannot update elec_price_data.");
+        return Err(
+            "time data is missing in optimization_data; cannot update elec_price_data".to_string(),
+        );
     }
+    Ok(())
 }
 
 fn create_modified_price_series_data(
     original_series: &BTreeMap<DateTime<FixedOffset>, f64>,
     multiplier: f64,
-) -> input_data::TimeSeriesData {
-    // Create a modified series by multiplying each price by the multiplier
+) -> TimeSeriesData {
     let modified_series: BTreeMap<DateTime<FixedOffset>, f64> = original_series
         .iter()
         .map(|(timestamp, price)| (timestamp.clone(), price * multiplier))
         .collect();
-
-    // Create TimeSeries instances for scenarios "s1" and "s2" with the modified series
-    let time_series_s1 = input_data::TimeSeries {
+    let time_series_s1 = TimeSeries {
         scenario: "s1".to_string(),
-        series: modified_series.clone(), // Clone for s1
+        series: modified_series.clone(),
     };
-
-    let time_series_s2 = input_data::TimeSeries {
+    let time_series_s2 = TimeSeries {
         scenario: "s2".to_string(),
-        series: modified_series, // Re-use for s2
+        series: modified_series,
     };
-
-    // Bundle the two TimeSeries into TimeSeriesData
-    input_data::TimeSeriesData {
+    TimeSeriesData {
         ts_data: vec![time_series_s1, time_series_s2],
     }
 }
 
 async fn fetch_electricity_price_task(
     location: &LocationSettings,
-    start_time: &DateTime<FixedOffset>,
-    time_line: &TimeLineSettings,
+    time_line: Vec<DateTime<FixedOffset>>,
     rx: oneshot::Receiver<OptimizationData>,
     tx: oneshot::Sender<OptimizationData>,
 ) -> Result<(), String> {
     if let Ok(mut optimization_data) = rx.await {
         if optimization_data.fetch_elec_data {
-            let format_string = "%Y-%m-%dT%H:00:00Z";
+            let format_string = "%Y-%m-%dT%H:%M:%S%.3fZ";
+            let start_time = time_line.first().ok_or("time line is empty")?;
             let start_time_str = start_time.format(&format_string).to_string();
-            let end_time = *start_time + time_line.duration;
+            let end_time = time_line.last().ok_or("time line is empty")?;
             let end_time_str = end_time.format(&format_string).to_string();
             match fetch_electricity_prices(start_time_str, end_time_str, &location.country).await {
                 Ok(prices) => {
-                    create_and_update_elec_price_data(&mut optimization_data, &prices);
+                    create_and_update_elec_price_data(&mut optimization_data, &prices)?;
                     if tx.send(optimization_data).is_err() {
                         return Err("fetch_electricity_price_task: failed to send updated optimization data in electricity prices".to_string());
                     }

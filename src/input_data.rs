@@ -1,8 +1,8 @@
 use chrono::{DateTime, FixedOffset};
 use serde::de::{self, MapAccess, Visitor};
 use serde::{self, Deserialize, Deserializer, Serialize};
-use std::fmt;
 use std::collections::BTreeMap;
+use std::fmt;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct OptimizationData {

@@ -1,8 +1,7 @@
+use crate::input_data;
 use chrono::{DateTime, FixedOffset};
 use serde::{self, Deserialize, Serialize};
 use std::collections::BTreeMap;
-use crate::input_data;
-
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct BaseInputData {

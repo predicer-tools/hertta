@@ -77,7 +77,9 @@ fn default_predicer_port() -> u16 {
 }
 
 fn default_weather_fetcher_script() -> String {
-    let path = ["forecasts", "weather_forecast.py"].iter().collect::<PathBuf>();
+    let path = ["forecasts", "weather_forecast.py"]
+        .iter()
+        .collect::<PathBuf>();
     path.to_str()
         .expect("weather fetcher script path contains unknown characters")
         .to_string()
@@ -204,41 +206,116 @@ pub fn validate_settings(settings: &Settings) -> Result<(), String> {
             &settings.weather_fetcher_script
         ));
     }
+    validate_time_line(&settings.time_line)?;
+    Ok(())
+}
+
+fn validate_time_line(time_line: &TimeLineSettings) -> Result<(), String> {
+    if time_line.duration <= TimeDelta::zero() {
+        return Err("time line duration should be positive".to_string());
+    }
+    if time_line.duration.num_hours() > 24 {
+        return Err("time line duration should not exceed 24 hours".to_string());
+    }
+    if time_line.step <= TimeDelta::zero() {
+        return Err("time line step should be positive".to_string());
+    }
+    if time_line.step > time_line.duration {
+        return Err("time line step should not exceed duration".to_string());
+    }
     Ok(())
 }
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct TimeLineSettings {
     #[serde(
-        deserialize_with = "deserialize_time_delta",
-        serialize_with = "serialize_time_delta"
+        deserialize_with = "deserialize_delta_hours",
+        serialize_with = "serialize_delta_hours"
     )]
-    pub step: TimeDelta,
+    duration: TimeDelta,
     #[serde(
-        deserialize_with = "deserialize_time_delta",
-        serialize_with = "serialize_time_delta"
+        deserialize_with = "deserialize_delta_minutes",
+        serialize_with = "serialize_delta_minutes"
     )]
-    pub duration: TimeDelta,
+    step: TimeDelta,
+}
+
+#[derive(Debug)]
+pub struct InvalidTimeLine {
+    pub field: &'static str,
+    pub message: String,
+}
+
+impl InvalidTimeLine {
+    fn invalid_duration(message: &str) -> Self {
+        InvalidTimeLine {
+            field: "duration",
+            message: message.into(),
+        }
+    }
+    fn invalid_step(message: &str) -> Self {
+        InvalidTimeLine {
+            field: "step",
+            message: message.into(),
+        }
+    }
+    pub fn field(&self) -> &str {
+        self.field
+    }
+    pub fn message(&self) -> &String {
+        &self.message
+    }
 }
 
 impl Default for TimeLineSettings {
     fn default() -> Self {
         TimeLineSettings {
-            step: TimeDelta::minutes(15),
             duration: TimeDelta::hours(4),
+            step: TimeDelta::minutes(15),
         }
     }
 }
 
-fn deserialize_time_delta<'de, D>(deserializer: D) -> Result<TimeDelta, D::Error>
+impl TimeLineSettings {
+    pub fn try_from_hours_minutes(
+        duration_hours: i64,
+        step_minutes: i64,
+    ) -> Result<Self, InvalidTimeLine> {
+        if duration_hours <= 0 {
+            return Err(InvalidTimeLine::invalid_duration("should be positive"));
+        }
+        if duration_hours > 24 {
+            return Err(InvalidTimeLine::invalid_duration(
+                "should not exceed 24 hours",
+            ));
+        }
+        let duration = TimeDelta::hours(duration_hours);
+        if step_minutes <= 0 {
+            return Err(InvalidTimeLine::invalid_step("should be positive"));
+        }
+        let step = TimeDelta::minutes(step_minutes);
+        if step > duration {
+            return Err(InvalidTimeLine::invalid_step("should not exceed duration"));
+        }
+        Ok(TimeLineSettings { duration, step })
+    }
+    pub fn duration(&self) -> TimeDelta {
+        self.duration
+    }
+    pub fn step(&self) -> TimeDelta {
+        self.step
+    }
+}
+
+fn deserialize_delta_hours<'de, D>(deserializer: D) -> Result<TimeDelta, D::Error>
 where
     D: Deserializer<'de>,
 {
-    struct MillisecondVisitor;
-    impl<'d> Visitor<'d> for MillisecondVisitor {
+    struct HourVisitor;
+    impl<'d> Visitor<'d> for HourVisitor {
         type Value = i64;
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a duration in milliseconds")
+            formatter.write_str("a duration in hours")
         }
         fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
             if value > 0 {
@@ -248,16 +325,44 @@ where
             }
         }
     }
-    Ok(TimeDelta::milliseconds(
-        deserializer.deserialize_i64(MillisecondVisitor)?,
-    ))
+    Ok(TimeDelta::hours(deserializer.deserialize_i64(HourVisitor)?))
 }
 
-fn serialize_time_delta<S: Serializer>(
+fn serialize_delta_hours<S: Serializer>(
     duration: &TimeDelta,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    serializer.serialize_i64(duration.num_milliseconds())
+    serializer.serialize_i64(duration.num_hours())
+}
+
+fn deserialize_delta_minutes<'de, D>(deserializer: D) -> Result<TimeDelta, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct MinuteVisitor;
+    impl<'d> Visitor<'d> for MinuteVisitor {
+        type Value = i64;
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a duration in minutes")
+        }
+        fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
+            if value > 0 {
+                Ok(value)
+            } else {
+                Err(E::custom("non-positive duration".to_string()))
+            }
+        }
+    }
+    Ok(TimeDelta::minutes(
+        deserializer.deserialize_i64(MinuteVisitor)?,
+    ))
+}
+
+fn serialize_delta_minutes<S: Serializer>(
+    duration: &TimeDelta,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_i64(duration.num_minutes())
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -448,5 +553,73 @@ mod tests {
                 Ok(())
             }
         }
+    }
+    mod time_line_settings {
+        use super::*;
+        mod try_from_hours_minutes {
+            use super::*;
+            #[test]
+            fn constructs_time_line_correctly() {
+                let time_line = TimeLineSettings::try_from_hours_minutes(13, 12)
+                    .expect("time line construction should succeed");
+                assert_eq!(time_line.duration().num_hours(), 13);
+                assert_eq!(time_line.step().num_minutes(), 12);
+            }
+        }
+    }
+    mod validate_time_line {
+        use super::*;
+        #[test]
+        fn rejects_non_positive_durations() -> Result<(), Box<dyn Error>> {
+            let time_line = TimeLineSettings {
+                duration: TimeDelta::hours(-1),
+                step: TimeDelta::minutes(15),
+            };
+            if let Err(message) = validate_time_line(&time_line) {
+                assert_eq!(message, "time line duration should be positive");
+            } else {
+                return Err("validation should have failed".into());
+            }
+            Ok(())
+        }
+        #[test]
+        fn rejects_too_long_durations() -> Result<(), Box<dyn Error>> {
+            let time_line = TimeLineSettings {
+                duration: TimeDelta::hours(25),
+                step: TimeDelta::minutes(30),
+            };
+            if let Err(message) = validate_time_line(&time_line) {
+                assert_eq!(message, "time line duration should not exceed 24 hours");
+            } else {
+                return Err("validation should have failed".into());
+            }
+            Ok(())
+        }
+        #[test]
+        fn rejects_non_positive_steps() -> Result<(), Box<dyn Error>> {
+            let time_line = TimeLineSettings {
+                duration: TimeDelta::hours(1),
+                step: TimeDelta::minutes(-1),
+            };
+            if let Err(message) = validate_time_line(&time_line) {
+                assert_eq!(message, "time line step should be positive");
+            } else {
+                return Err("validation should have failed".into());
+            }
+            Ok(())
+        }
+    }
+    #[test]
+    fn rejects_steps_that_are_longer_than_duration() -> Result<(), Box<dyn Error>> {
+        let time_line = TimeLineSettings {
+            duration: TimeDelta::hours(1),
+            step: TimeDelta::minutes(61),
+        };
+        if let Err(message) = validate_time_line(&time_line) {
+            assert_eq!(message, "time line step should not exceed duration");
+        } else {
+            return Err("validation should have failed".into());
+        }
+        Ok(())
     }
 }

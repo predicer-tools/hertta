@@ -1,5 +1,4 @@
 use crate::settings::{LocationSettings, Settings, TimeLineSettings};
-use chrono::TimeDelta;
 use juniper::{
     graphql_object, Context, EmptySubscription, FieldResult, GraphQLInputObject, GraphQLObject,
     GraphQLUnion, RootNode,
@@ -27,18 +26,18 @@ struct Predicer {
 #[derive(GraphQLObject)]
 #[graphql(description = "Optimization time line settings.")]
 struct TimeLine {
-    #[graphql(description = "Time line duration in milliseconds.")]
+    #[graphql(description = "Time line duration in hours.")]
     duration: i32,
-    #[graphql(description = "Time step in milliseconds.")]
+    #[graphql(description = "Time step in minutes.")]
     step: i32,
 }
 
 #[derive(GraphQLInputObject)]
 #[graphql(description = "Optimization time line input.")]
 struct TimeLineInput {
-    #[graphql(description = "Time line duration in milliseconds.")]
+    #[graphql(description = "Time line duration in hours.")]
     duration: i32,
-    #[graphql(description = "Time step in milliseconds.")]
+    #[graphql(description = "Time step in minutes.")]
     step: i32,
 }
 
@@ -96,8 +95,8 @@ impl Query {
     fn optimization(context: &HerttaContext) -> FieldResult<TimeLine> {
         let settings = context.settings.lock().unwrap();
         Ok(TimeLine {
-            duration: settings.time_line.duration.num_milliseconds() as i32,
-            step: settings.time_line.step.num_milliseconds() as i32,
+            duration: settings.time_line.duration().num_hours() as i32,
+            step: settings.time_line.step().num_minutes() as i32,
         })
     }
     fn location(context: &HerttaContext) -> FieldResult<Option<Location>> {
@@ -130,34 +129,21 @@ impl Mutation {
         }
     }
     fn set_time_line(new_time_line: TimeLineInput, context: &HerttaContext) -> TimeLineResult {
-        let mut errors = Vec::new();
-        if new_time_line.duration <= 0 {
-            errors.push(ValidationError {
-                field: "duration".to_string(),
-                message: "must be positive".to_string(),
-            });
-        } else {
-            if new_time_line.step <= 0 {
-                errors.push(ValidationError {
-                    field: "step".to_string(),
-                    message: "must be positive".to_string(),
-                });
+        let time_line = match TimeLineSettings::try_from_hours_minutes(
+            new_time_line.duration as i64,
+            new_time_line.step as i64,
+        ) {
+            Ok(time_line) => time_line,
+            Err(error) => {
+                return TimeLineResult::Err(ValidationErrors {
+                    errors: vec![ValidationError {
+                        field: error.field().into(),
+                        message: error.message().clone(),
+                    }],
+                })
             }
-            if new_time_line.step >= new_time_line.duration {
-                errors.push(ValidationError {
-                    field: "step".to_string(),
-                    message: "must be less than or equal to duration".to_string(),
-                });
-            }
-        }
-        if !errors.is_empty() {
-            return TimeLineResult::Err(ValidationErrors { errors });
-        }
-        let mut settings = context.settings.lock().unwrap();
-        let time_line = TimeLineSettings {
-            step: TimeDelta::milliseconds(new_time_line.step as i64),
-            duration: TimeDelta::milliseconds(new_time_line.duration as i64),
         };
+        let mut settings = context.settings.lock().unwrap();
         settings.time_line = time_line;
         TimeLineResult::Ok(TimeLine {
             duration: new_time_line.duration,
@@ -171,6 +157,7 @@ pub type Schema = RootNode<'static, Query, Mutation, EmptySubscription<HerttaCon
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeDelta;
 
     #[test]
     fn set_location_updates_settings() {
@@ -206,8 +193,8 @@ mod tests {
     #[test]
     fn set_time_line_updates_settings() {
         let input = TimeLineInput {
-            duration: 60 * 60000,
-            step: 15 * 60000,
+            duration: 1,
+            step: 15,
         };
         let settings = Arc::new(Mutex::new(Settings::default()));
         let context = HerttaContext::new(&settings);
@@ -215,12 +202,12 @@ mod tests {
             TimeLineResult::Ok(time_line) => time_line,
             TimeLineResult::Err(..) => panic!("setting time line should not fail"),
         };
-        assert_eq!(output.duration, 60 * 60000);
-        assert_eq!(output.step, 15 * 60000);
+        assert_eq!(output.duration, 1);
+        assert_eq!(output.step, 15);
         {
             let settings = settings.lock().unwrap();
-            assert_eq!(settings.time_line.duration, TimeDelta::minutes(60));
-            assert_eq!(settings.time_line.step, TimeDelta::minutes(15));
+            assert_eq!(settings.time_line.duration(), TimeDelta::hours(1));
+            assert_eq!(settings.time_line.step(), TimeDelta::minutes(15));
         }
     }
 
@@ -237,13 +224,13 @@ mod tests {
             TimeLineResult::Err(errors) => {
                 assert_eq!(errors.errors.len(), 1);
                 assert_eq!(errors.errors[0].field, "duration");
-                assert_eq!(errors.errors[0].message, "must be positive");
+                assert_eq!(errors.errors[0].message, "should be positive");
             }
         };
         let settings = settings.lock().unwrap();
         let vanilla_time_line = TimeLineSettings::default();
-        assert_eq!(settings.time_line.duration, vanilla_time_line.duration);
-        assert_eq!(settings.time_line.step, vanilla_time_line.step);
+        assert_eq!(settings.time_line.duration(), vanilla_time_line.duration());
+        assert_eq!(settings.time_line.step(), vanilla_time_line.step());
     }
 
     #[test]
@@ -259,19 +246,19 @@ mod tests {
             TimeLineResult::Err(errors) => {
                 assert_eq!(errors.errors.len(), 1);
                 assert_eq!(errors.errors[0].field, "step");
-                assert_eq!(errors.errors[0].message, "must be positive");
+                assert_eq!(errors.errors[0].message, "should be positive");
             }
         };
         let settings = settings.lock().unwrap();
         let vanilla_time_line = TimeLineSettings::default();
-        assert_eq!(settings.time_line.duration, vanilla_time_line.duration);
-        assert_eq!(settings.time_line.step, vanilla_time_line.step);
+        assert_eq!(settings.time_line.duration(), vanilla_time_line.duration());
+        assert_eq!(settings.time_line.step(), vanilla_time_line.step());
     }
     #[test]
     fn setting_step_longer_than_duration_causes_error() {
         let input = TimeLineInput {
             duration: 1,
-            step: 2,
+            step: 61,
         };
         let settings = Arc::new(Mutex::new(Settings::default()));
         let context = HerttaContext::new(&settings);
@@ -280,15 +267,12 @@ mod tests {
             TimeLineResult::Err(errors) => {
                 assert_eq!(errors.errors.len(), 1);
                 assert_eq!(errors.errors[0].field, "step");
-                assert_eq!(
-                    errors.errors[0].message,
-                    "must be less than or equal to duration"
-                );
+                assert_eq!(errors.errors[0].message, "should not exceed duration");
             }
         };
         let settings = settings.lock().unwrap();
         let vanilla_time_line = TimeLineSettings::default();
-        assert_eq!(settings.time_line.duration, vanilla_time_line.duration);
-        assert_eq!(settings.time_line.step, vanilla_time_line.step);
+        assert_eq!(settings.time_line.duration(), vanilla_time_line.duration());
+        assert_eq!(settings.time_line.step(), vanilla_time_line.step());
     }
 }

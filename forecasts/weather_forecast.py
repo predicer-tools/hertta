@@ -51,8 +51,8 @@ def main(start_time: str, end_time: str, step: int, place: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Open Data collection for weather observations')
-    parser.add_argument('start_time', type=str, help='Start time for data collection in YYYY-MM-DD HH:MM format')
-    parser.add_argument('end_time', type=str, help='End time for data collection in YYYY-MM-DD HH:MM format')
+    parser.add_argument('start_time', type=str, help='Start time for data collection in UTC and YYYY-MM-DD HH:MM format')
+    parser.add_argument('end_time', type=str, help='End time for data collection in UTC and YYYY-MM-DD HH:MM format')
     parser.add_argument('step', type=int, help='Step between time stamps in minutes')
     parser.add_argument('place', type=str, help='Name of the place')
     args = parser.parse_args()
