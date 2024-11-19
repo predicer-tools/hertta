@@ -1,15 +1,11 @@
 use crate::input_data;
+use crate::{TimeLine, TimeStamp};
 
-use chrono::{DateTime, FixedOffset};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-fn check_series(
-    ts_data: &input_data::TimeSeries,
-    temporals_t: &[DateTime<FixedOffset>],
-    context: &str,
-) {
-    let series_keys: Vec<DateTime<FixedOffset>> = ts_data.series.keys().cloned().collect();
+fn check_series(ts_data: &input_data::TimeSeries, temporals_t: &[TimeStamp], context: &str) {
+    let series_keys: TimeLine = ts_data.series.keys().cloned().collect();
     if series_keys != *temporals_t {
         println!("Mismatch in {}: {:?}", context, ts_data.scenario);
         println!("Expected: {:?}", temporals_t);

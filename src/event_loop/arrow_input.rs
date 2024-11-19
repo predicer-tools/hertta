@@ -2,6 +2,7 @@ mod arrow_errors;
 
 use crate::input_data;
 use crate::input_data::{InputData, Market};
+use crate::{TimeLine, TimeStamp};
 use arrow::array::{
     Array, ArrayRef, BooleanArray, Float64Array, Int32Array, Int64Array, StringArray,
     TimestampMillisecondArray, UnionArray,
@@ -11,7 +12,6 @@ use arrow::datatypes::{DataType, Field, Schema, TimeUnit, UnionFields};
 use arrow::{error::ArrowError, record_batch::RecordBatch};
 use arrow_errors::DataConversionError;
 use arrow_ipc::writer::StreamWriter;
-use chrono::{DateTime, FixedOffset};
 use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -127,9 +127,7 @@ fn make_timestamp_field() -> Field {
     Field::new("t", DataType::Timestamp(TimeUnit::Millisecond, None), false)
 }
 
-fn times_stamp_array_from_temporal_stamps(
-    stamps: &Vec<DateTime<FixedOffset>>,
-) -> Arc<TimestampMillisecondArray> {
+fn times_stamp_array_from_temporal_stamps(stamps: &TimeLine) -> Arc<TimestampMillisecondArray> {
     Arc::new(stamps.iter().map(|s| Some(s.timestamp_millis())).collect())
 }
 
@@ -604,7 +602,7 @@ fn node_histories_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowE
     let node_histories = &input_data.node_histories;
     let mut fields = vec![Field::new("t", DataType::Int32, false)];
     let mut columns: Vec<ArrayRef> = Vec::new();
-    let mut time_stamp_columns_data: BTreeMap<String, Vec<DateTime<FixedOffset>>> = BTreeMap::new();
+    let mut time_stamp_columns_data: BTreeMap<String, TimeLine> = BTreeMap::new();
     let mut float_columns_data: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     let mut total_rows = 0;
     for node_history in node_histories.values() {
@@ -628,7 +626,7 @@ fn node_histories_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowE
                 false,
             ));
             fields.push(Field::new(&column_name_float, DataType::Float64, false));
-            let mut timestamps = Vec::<DateTime<FixedOffset>>::with_capacity(total_rows);
+            let mut timestamps = Vec::<TimeStamp>::with_capacity(total_rows);
             let mut values = Vec::<f64>::with_capacity(total_rows);
             for (timestamp, value) in ts.series.iter() {
                 timestamps.push(timestamp.clone());
@@ -719,12 +717,12 @@ fn inflow_blocks_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowEr
         return RecordBatch::try_new(schema, vec![t_array]);
     }
     let mut scenario_names = BTreeMap::new(); // Use BTreeMap for consistent lexicographical ordering
-    let mut common_timestamps: Option<Vec<DateTime<FixedOffset>>> = None;
+    let mut common_timestamps: Option<TimeLine> = None;
     // Collect all unique scenario names and ensure timestamps are consistent across all inflow blocks
     for block in inflow_blocks.values() {
         for ts in &block.data.ts_data {
             scenario_names.insert(ts.scenario.clone(), ()); // BTreeMap will maintain lexicographical order
-            let timestamps: Vec<DateTime<FixedOffset>> = ts.series.keys().cloned().collect();
+            let timestamps: TimeLine = ts.series.keys().cloned().collect();
             if let Some(ref common_ts) = common_timestamps {
                 if *common_ts != timestamps {
                     return Err(ArrowError::ComputeError(
@@ -764,7 +762,7 @@ fn inflow_blocks_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowEr
 
     let running_number_for_t: Vec<i64> = (1..=common_timestamps.len() as i64).collect();
 
-    let mut start_times: BTreeMap<String, Vec<DateTime<FixedOffset>>> = BTreeMap::new(); // Use BTreeMap to preserve ordering
+    let mut start_times: BTreeMap<String, TimeLine> = BTreeMap::new(); // Use BTreeMap to preserve ordering
     let mut scenario_values: BTreeMap<String, BTreeMap<String, Vec<f64>>> = BTreeMap::new(); // Use BTreeMap to preserve ordering
 
     // Initialize data structures for each block and scenario
@@ -964,10 +962,8 @@ fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch, Ar
     let temporals = &input_data.temporals;
     let (market_names, scenario_names) = sort_unique_market_and_scenario_names(markets);
     let fields = schema_fields_from_scenarios(&market_names, &scenario_names);
-    let mut scenario_values: BTreeMap<
-        String,
-        BTreeMap<String, BTreeMap<DateTime<FixedOffset>, Option<f64>>>,
-    > = BTreeMap::new();
+    let mut scenario_values: BTreeMap<String, BTreeMap<String, BTreeMap<TimeStamp, Option<f64>>>> =
+        BTreeMap::new();
     // Handle the case where there are no realisation data
     let has_realisation_data = markets
         .values()
@@ -1044,10 +1040,8 @@ fn market_reserve_activation_price_to_arrow(
     let temporals = &input_data.temporals;
     let (market_names, scenario_names) = sort_unique_market_and_scenario_names(markets);
     let fields = schema_fields_from_scenarios(&market_names, &scenario_names);
-    let mut scenario_values: BTreeMap<
-        String,
-        BTreeMap<String, BTreeMap<DateTime<FixedOffset>, Option<f64>>>,
-    > = BTreeMap::new();
+    let mut scenario_values: BTreeMap<String, BTreeMap<String, BTreeMap<TimeStamp, Option<f64>>>> =
+        BTreeMap::new();
 
     // Handle the case where there are no reserve_activation_price data
     let has_reserve_activation_price_data = markets
@@ -1615,7 +1609,7 @@ fn market_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowErr
             "Temporals timestamps are empty".to_string(),
         ));
     }
-    let mut unique_timestamps: BTreeSet<DateTime<FixedOffset>> = BTreeSet::new();
+    let mut unique_timestamps: BTreeSet<TimeStamp> = BTreeSet::new();
     for market in input_data.markets.values() {
         for time_series in &market.price.ts_data {
             check_timestamps_match(temporals_t, &time_series)?;
@@ -1625,7 +1619,7 @@ fn market_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowErr
         }
     }
 
-    let sorted_timestamps: Vec<DateTime<FixedOffset>> = temporals_t.clone();
+    let sorted_timestamps: TimeLine = temporals_t.clone();
 
     // If there are no unique timestamps, return an empty RecordBatch
     if sorted_timestamps.is_empty() {
@@ -1955,7 +1949,7 @@ fn processes_eff_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowEr
 
 // Function to check timestamps match
 fn check_timestamps_match(
-    temporals_t: &Vec<DateTime<FixedOffset>>,
+    temporals_t: &TimeLine,
     time_series: &input_data::TimeSeries,
 ) -> Result<(), ArrowError> {
     if temporals_t.len() != time_series.series.len() {
@@ -2078,7 +2072,7 @@ mod tests {
 
     fn assert_time_stamp_column(
         array: &TimestampMillisecondArray,
-        expected_values: &[DateTime<FixedOffset>],
+        expected_values: &[TimeStamp],
         column_name: &str,
     ) {
         for (i, expected) in expected_values.iter().enumerate() {
@@ -2538,17 +2532,17 @@ mod tests {
 
         // Expected result DataFrame
         let expected_t_values = vec![1, 2];
-        let expected_timestamp_s1: Vec<DateTime<FixedOffset>> = vec![
+        let expected_timestamp_s1: TimeLine = vec![
             Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
         ];
         let expected_value_s1 = vec![1.0, 1.0];
-        let expected_timestamp_s2: Vec<DateTime<FixedOffset>> = vec![
+        let expected_timestamp_s2: TimeLine = vec![
             Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
         ];
         let expected_value_s2 = vec![1.0, 1.0];
-        let expected_timestamp_s3: Vec<DateTime<FixedOffset>> = vec![
+        let expected_timestamp_s3: TimeLine = vec![
             Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
         ];
@@ -2726,7 +2720,7 @@ mod tests {
         print_batches(&batches);
 
         // Expected result DataFrame
-        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+        let expected_t_values: TimeLine = vec![
             Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
@@ -2787,7 +2781,7 @@ mod tests {
 
         // Expected result DataFrame
         let expected_t_values = vec![1, 2, 3];
-        let expected_b1_dh_sto: Vec<DateTime<FixedOffset>> = vec![
+        let expected_b1_dh_sto: TimeLine = vec![
             Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
@@ -2970,7 +2964,7 @@ mod tests {
         print_batches(&batches);
 
         // Expected result DataFrame
-        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+        let expected_t_values: TimeLine = vec![
             Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
@@ -3034,7 +3028,7 @@ mod tests {
         print_batches(&batches);
 
         // Expected result DataFrame
-        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+        let expected_t_values: TimeLine = vec![
             Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
@@ -3252,7 +3246,7 @@ mod tests {
         print_batches(&batches);
 
         // Expected result DataFrame
-        let expected_t: Vec<DateTime<FixedOffset>> = vec![
+        let expected_t: TimeLine = vec![
             Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
@@ -3308,7 +3302,7 @@ mod tests {
         print_batches(&batches);
 
         // Expected result DataFrame
-        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+        let expected_t_values: TimeLine = vec![
             Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
@@ -3520,7 +3514,7 @@ mod tests {
         let input_data = load_test_data();
         let record_batch =
             bid_slots_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+        let expected_t_values: TimeLine = vec![
             Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
@@ -3575,7 +3569,7 @@ mod tests {
             processes_cf_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Expected result DataFrame
-        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+        let expected_t_values: TimeLine = vec![
             Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
@@ -3604,7 +3598,7 @@ mod tests {
         let input_data = load_test_data();
         let record_batch =
             market_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
-        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+        let expected_t_values: TimeLine = vec![
             Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
@@ -3682,7 +3676,7 @@ mod tests {
             nodes_commodity_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Expected result DataFrame
-        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+        let expected_t_values: TimeLine = vec![
             Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
@@ -3715,7 +3709,7 @@ mod tests {
             processes_eff_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Expected result DataFrame
-        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+        let expected_t_values: TimeLine = vec![
             Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),
@@ -3764,7 +3758,7 @@ mod tests {
             market_balance_price_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
         // Expected result DataFrame with columns in BTreeMap lexicographical order
-        let expected_t_values: Vec<DateTime<FixedOffset>> = vec![
+        let expected_t_values: TimeLine = vec![
             Utc.with_ymd_and_hms(2022, 4, 20, 0, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 1, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2022, 4, 20, 2, 0, 0).unwrap().into(),

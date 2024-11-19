@@ -1,10 +1,7 @@
-use chrono::{DateTime, FixedOffset, TimeDelta};
+use crate::{TimeLine, TimeStamp};
+use chrono::TimeDelta;
 
-pub fn make_time_data(
-    start_time: DateTime<FixedOffset>,
-    step: TimeDelta,
-    duration: TimeDelta,
-) -> Vec<DateTime<FixedOffset>> {
+pub fn make_time_data(start_time: TimeStamp, step: TimeDelta, duration: TimeDelta) -> TimeLine {
     let n_steps: i32 = (duration.num_milliseconds() / step.num_milliseconds())
         .try_into()
         .unwrap();
@@ -17,8 +14,8 @@ pub fn make_time_data(
 }
 
 pub fn extract_values_from_pairs_checked<T: Clone>(
-    pairs: &Vec<(DateTime<FixedOffset>, T)>,
-    true_time_data: &Vec<DateTime<FixedOffset>>,
+    pairs: &Vec<(TimeStamp, T)>,
+    true_time_data: &TimeLine,
 ) -> Result<Vec<T>, String> {
     if pairs.len() != true_time_data.len() {
         return Err("time series lenghts do not match".to_string());
@@ -61,7 +58,7 @@ mod tests {
         let duration = TimeDelta::hours(1);
         let time_data = make_time_data(start.into(), step, duration);
         assert_eq!(time_data.len(), 5);
-        let expected_stamps: Vec<DateTime<FixedOffset>> = vec![
+        let expected_stamps: TimeLine = vec![
             Utc.with_ymd_and_hms(2024, 11, 6, 8, 43, 0)
                 .single()
                 .expect("UTC times should map to unique time stamps")
@@ -87,7 +84,7 @@ mod tests {
     }
     #[test]
     fn extract_values_with_check_succeeds() {
-        let pairs: Vec<(DateTime<FixedOffset>, f64)> = vec![
+        let pairs: Vec<(TimeStamp, f64)> = vec![
             (
                 Utc.with_ymd_and_hms(2024, 11, 6, 8, 43, 0)
                     .single()
@@ -110,7 +107,7 @@ mod tests {
                 -1.3,
             ),
         ];
-        let time_stamps: Vec<DateTime<FixedOffset>> = vec![
+        let time_stamps: TimeLine = vec![
             Utc.with_ymd_and_hms(2024, 11, 6, 8, 43, 0)
                 .single()
                 .unwrap()
@@ -134,7 +131,7 @@ mod tests {
     }
     #[test]
     fn extract_values_fails_when_time_series_length_mismatches() {
-        let pairs: Vec<(DateTime<FixedOffset>, f64)> = vec![
+        let pairs: Vec<(TimeStamp, f64)> = vec![
             (
                 Utc.with_ymd_and_hms(2024, 11, 6, 8, 43, 0)
                     .single()
@@ -157,14 +154,14 @@ mod tests {
                 -1.3,
             ),
         ];
-        let time_stamps: Vec<DateTime<FixedOffset>> = Vec::new();
+        let time_stamps: TimeLine = Vec::new();
         if let Ok(_) = extract_values_from_pairs_checked(&pairs, &time_stamps) {
             panic!("expected call to return error");
         }
     }
     #[test]
     fn extract_values_fails_when_time_stamps_mismatch() {
-        let pairs: Vec<(DateTime<FixedOffset>, f64)> = vec![
+        let pairs: Vec<(TimeStamp, f64)> = vec![
             (
                 Utc.with_ymd_and_hms(2024, 11, 6, 8, 43, 0)
                     .single()
@@ -187,7 +184,7 @@ mod tests {
                 -1.3,
             ),
         ];
-        let time_stamps: Vec<DateTime<FixedOffset>> = vec![
+        let time_stamps: TimeLine = vec![
             Utc.with_ymd_and_hms(2024, 11, 6, 8, 43, 0)
                 .single()
                 .unwrap()

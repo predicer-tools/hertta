@@ -1,5 +1,5 @@
 use crate::input_data;
-use chrono::{DateTime, FixedOffset};
+use crate::{TimeLine, TimeStamp};
 use serde::{self, Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -77,7 +77,7 @@ pub struct BaseNode {
     pub is_res: bool,
     pub is_inflow: bool,
     pub state: Option<BaseState>,
-    pub cost: f64, //leave as TimeSeriesData for now, not used in add-on
+    pub cost: f64,
     pub inflow: f64,
 }
 
@@ -126,19 +126,19 @@ pub struct BaseGroup {
 pub struct BaseInflowBlock {
     pub name: String,
     pub node: String,
-    pub start_time: DateTime<FixedOffset>,
+    pub start_time: TimeStamp,
     pub data: f64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct BaseBidSlot {
     pub market: String,
-    pub time_steps: Vec<DateTime<FixedOffset>>,
+    pub time_steps: TimeLine,
     pub slots: Vec<String>,
     #[serde(deserialize_with = "input_data::deserialize_prices")]
-    pub prices: BTreeMap<(DateTime<FixedOffset>, String), f64>,
+    pub prices: BTreeMap<(TimeStamp, String), f64>,
     #[serde(deserialize_with = "input_data::deserialize_market_price_allocation")]
-    pub market_price_allocation: BTreeMap<(String, DateTime<FixedOffset>), (String, String)>,
+    pub market_price_allocation: BTreeMap<(String, TimeStamp), (String, String)>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]

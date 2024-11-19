@@ -5,13 +5,14 @@ use crate::input_data;
 use crate::input_data::{InputData, OptimizationData, Process, TimeSeries, TimeSeriesData};
 use crate::settings::{LocationSettings, Settings, TimeLineSettings};
 use crate::utilities;
+use crate::{TimeLine, TimeStamp};
 use arrow::array::timezone::Tz;
 use arrow::array::types::{Float64Type, TimestampMillisecondType};
 use arrow::array::{self, Array, RecordBatch};
 use arrow::datatypes::{DataType, TimeUnit};
 use arrow::ipc::reader::StreamReader;
 use chrono::round::DurationRound;
-use chrono::{DateTime, FixedOffset, LocalResult, NaiveDateTime, TimeDelta, TimeZone, Utc};
+use chrono::{DateTime, LocalResult, NaiveDateTime, TimeDelta, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -54,7 +55,7 @@ pub async fn event_loop(
             .send(OptimizationState::InProgress(job_id))
             .unwrap();
         let settings_snapshot = Arc::new(vanilla_settings.lock().unwrap().clone());
-        let start_time: DateTime<FixedOffset> = Utc::now()
+        let start_time: TimeStamp = Utc::now()
             .duration_trunc(TimeDelta::try_hours(1).unwrap())
             .unwrap()
             .into();
@@ -400,7 +401,7 @@ fn abort_julia_process(reply_socket: Socket) -> Result<(), String> {
 }
 
 async fn update_time_line_task(
-    start_time: DateTime<FixedOffset>,
+    start_time: TimeStamp,
     time_line: &TimeLineSettings,
     rx: oneshot::Receiver<OptimizationData>,
     tx: oneshot::Sender<OptimizationData>,
@@ -682,8 +683,8 @@ fn update_npe_market_prices(
 }
 
 fn check_stamps_match(
-    forecast: &Vec<(DateTime<FixedOffset>, f64)>,
-    time_line: &Vec<DateTime<FixedOffset>>,
+    forecast: &Vec<(TimeStamp, f64)>,
+    time_line: &TimeLine,
 ) -> Result<(), String> {
     if forecast.len() != time_line.len() {
         return Err("weather forecast length doesn't match time line".to_string());
@@ -698,7 +699,7 @@ fn check_stamps_match(
 
 async fn fetch_weather_data_task(
     location: &LocationSettings,
-    time_line: Vec<DateTime<FixedOffset>>,
+    time_line: TimeLine,
     time_line_settings: &TimeLineSettings,
     python_exec: &String,
     weather_fetcher_script: &String,
@@ -771,14 +772,14 @@ fn update_outside_node_inflow(
 }
 
 // Function to create TimeSeriesData from weather values and update the weather_data field in optimization_data
-fn update_weather_data(time_data: &Vec<DateTime<FixedOffset>>, values: &[f64]) -> Vec<TimeSeries> {
+fn update_weather_data(time_data: &TimeLine, values: &[f64]) -> Vec<TimeSeries> {
     let paired_series = pair_timeseries_with_values(time_data, values);
     create_time_series_data_with_scenarios(paired_series)
 }
 
 // Function to create TimeSeriesData with scenarios "s1" and "s2" using paired series
 fn create_time_series_data_with_scenarios(
-    paired_series: BTreeMap<DateTime<FixedOffset>, f64>,
+    paired_series: BTreeMap<TimeStamp, f64>,
 ) -> Vec<TimeSeries> {
     let time_series_s1 = input_data::TimeSeries {
         scenario: "s1".to_string(),
@@ -791,10 +792,7 @@ fn create_time_series_data_with_scenarios(
     return vec![time_series_s1, time_series_s2];
 }
 
-fn pair_timeseries_with_values(
-    series: &[DateTime<FixedOffset>],
-    values: &[f64],
-) -> BTreeMap<DateTime<FixedOffset>, f64> {
+fn pair_timeseries_with_values(series: &[TimeStamp], values: &[f64]) -> BTreeMap<TimeStamp, f64> {
     series
         .iter()
         .zip(values.iter())
@@ -811,7 +809,7 @@ pub struct WeatherDataResponse {
 fn parse_weather_fetcher_output(
     output: &str,
     time_zone: &impl TimeZone,
-) -> Result<Vec<(DateTime<FixedOffset>, f64)>, String> {
+) -> Result<Vec<(TimeStamp, f64)>, String> {
     let parsed_json = serde_json::from_str(output)
         .or_else(|error| Err(format!("failed to parse output: {}", error)))?;
     if let Value::Array(time_series) = parsed_json {
@@ -856,12 +854,12 @@ fn parse_weather_fetcher_output(
 
 fn fetch_weather_data(
     place: &String,
-    start_time: &DateTime<FixedOffset>,
-    end_time: &DateTime<FixedOffset>,
+    start_time: &TimeStamp,
+    end_time: &TimeStamp,
     step: &TimeDelta,
     python_exec: &String,
     weather_data_script: &String,
-) -> Result<Vec<(DateTime<FixedOffset>, f64)>, String> {
+) -> Result<Vec<(TimeStamp, f64)>, String> {
     let format_string = "%Y-%m-%dT%H:%M:%S";
     let mut command = Command::new(python_exec);
     command
@@ -891,7 +889,7 @@ async fn fetch_electricity_prices(
     start_time: String,
     end_time: String,
     country: &String,
-) -> Result<Vec<(DateTime<FixedOffset>, f64)>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Vec<(TimeStamp, f64)>, Box<dyn std::error::Error + Send + Sync>> {
     let client = reqwest::Client::new();
     let url = format!(
         "https://dashboard.elering.ee/api/nps/price?start={}&end={}",
@@ -916,7 +914,7 @@ async fn fetch_electricity_prices(
 fn parse_elering_response(
     response_text: &str,
     elering_country: &str,
-) -> Result<Vec<(DateTime<FixedOffset>, f64)>, String> {
+) -> Result<Vec<(TimeStamp, f64)>, String> {
     let response = serde_json::from_str(response_text)
         .or_else(|error| Err(format!("failed to parse response: {}", error)))?;
     let response_object = match response {
@@ -970,9 +968,7 @@ fn as_elering_country(country: &str) -> Result<&str, String> {
     Err("unknown or unsupported country".to_string())
 }
 
-fn elering_time_stamp_pair(
-    time_stamp_entry: &Value,
-) -> Result<(DateTime<FixedOffset>, f64), String> {
+fn elering_time_stamp_pair(time_stamp_entry: &Value) -> Result<(TimeStamp, f64), String> {
     let stamp_object = match time_stamp_entry {
         Value::Object(stamp_object) => stamp_object,
         _ => return Err("unexpected type for price entry in response".to_string()),
@@ -1002,7 +998,7 @@ fn elering_time_stamp_pair(
 
 fn create_and_update_elec_price_data(
     optimization_data: &mut OptimizationData,
-    price_series: &BTreeMap<DateTime<FixedOffset>, f64>,
+    price_series: &BTreeMap<TimeStamp, f64>,
 ) -> Result<(), String> {
     if let Some(_time_data) = &optimization_data.time_data {
         let original_ts_data = Some(create_modified_price_series_data(price_series, 1.0));
@@ -1023,10 +1019,10 @@ fn create_and_update_elec_price_data(
 }
 
 fn create_modified_price_series_data(
-    original_series: &BTreeMap<DateTime<FixedOffset>, f64>,
+    original_series: &BTreeMap<TimeStamp, f64>,
     multiplier: f64,
 ) -> TimeSeriesData {
-    let modified_series: BTreeMap<DateTime<FixedOffset>, f64> = original_series
+    let modified_series: BTreeMap<TimeStamp, f64> = original_series
         .iter()
         .map(|(timestamp, price)| (timestamp.clone(), price * multiplier))
         .collect();
@@ -1045,7 +1041,7 @@ fn create_modified_price_series_data(
 
 async fn fetch_electricity_price_task(
     location: &LocationSettings,
-    time_line: Vec<DateTime<FixedOffset>>,
+    time_line: TimeLine,
     rx: oneshot::Receiver<OptimizationData>,
     tx: oneshot::Sender<OptimizationData>,
 ) -> Result<(), String> {

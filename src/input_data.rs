@@ -1,4 +1,5 @@
-use chrono::{DateTime, FixedOffset};
+use crate::{TimeLine, TimeStamp};
+use chrono::DateTime;
 use serde::de::{self, MapAccess, Visitor};
 use serde::{self, Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
@@ -8,7 +9,7 @@ use std::fmt;
 pub struct OptimizationData {
     pub fetch_elec_data: bool,
     pub model_data: Option<InputData>,
-    pub time_data: Option<Vec<DateTime<FixedOffset>>>,
+    pub time_data: Option<TimeLine>,
     pub weather_data: Option<Vec<TimeSeries>>,
     pub elec_price_data: Option<ElectricityPriceData>,
     pub input_data_batch: Option<Vec<(String, Vec<u8>)>>,
@@ -48,7 +49,7 @@ pub fn find_input_node_names<'a>(nodes: impl Iterator<Item = &'a Node>) -> Vec<S
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Temporals {
-    pub t: Vec<DateTime<FixedOffset>>,
+    pub t: TimeLine,
     pub dtf: f64, // in hours
     pub variable_dt: Option<Vec<(String, f64)>>,
 }
@@ -158,36 +159,36 @@ pub struct Group {
 pub struct InflowBlock {
     pub name: String,
     pub node: String,
-    pub start_time: DateTime<FixedOffset>,
+    pub start_time: TimeStamp,
     pub data: TimeSeriesData,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct BidSlot {
     pub market: String,
-    pub time_steps: Vec<DateTime<FixedOffset>>,
+    pub time_steps: TimeLine,
     pub slots: Vec<String>,
     #[serde(deserialize_with = "deserialize_prices")]
-    pub prices: BTreeMap<(DateTime<FixedOffset>, String), f64>,
+    pub prices: BTreeMap<(TimeStamp, String), f64>,
     #[serde(deserialize_with = "deserialize_market_price_allocation")]
-    pub market_price_allocation: BTreeMap<(String, DateTime<FixedOffset>), (String, String)>,
+    pub market_price_allocation: BTreeMap<(String, TimeStamp), (String, String)>,
 }
 
-pub fn parse_time_stamp(key: &str) -> Result<DateTime<FixedOffset>, String> {
+pub fn parse_time_stamp(key: &str) -> Result<TimeStamp, String> {
     DateTime::parse_from_rfc3339(key.trim_matches(|c| c == '"'))
         .map_err(|error| format!("invalid time format {} for prices: {}", key, error))
 }
 
 pub fn deserialize_prices<'de, D>(
     deserializer: D,
-) -> Result<BTreeMap<(DateTime<FixedOffset>, String), f64>, D::Error>
+) -> Result<BTreeMap<(TimeStamp, String), f64>, D::Error>
 where
     D: Deserializer<'de>,
 {
     struct PricesVisitor;
 
     impl<'de> Visitor<'de> for PricesVisitor {
-        type Value = BTreeMap<(DateTime<FixedOffset>, String), f64>;
+        type Value = BTreeMap<(TimeStamp, String), f64>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
             formatter.write_str("a map with (time stamp, string) formatted as tuple (String, String) keys and float values")
@@ -223,13 +224,13 @@ where
 
 pub fn deserialize_market_price_allocation<'de, D>(
     deserializer: D,
-) -> Result<BTreeMap<(String, DateTime<FixedOffset>), (String, String)>, D::Error>
+) -> Result<BTreeMap<(String, TimeStamp), (String, String)>, D::Error>
 where
     D: Deserializer<'de>,
 {
     struct MarketPriceAllocationVisitor;
     impl<'de> Visitor<'de> for MarketPriceAllocationVisitor {
-        type Value = BTreeMap<(String, DateTime<FixedOffset>), (String, String)>;
+        type Value = BTreeMap<(String, TimeStamp), (String, String)>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
             formatter.write_str("a map with (string, time stamp) formatted as tuple (String, String) and tuple (String, String) values")
@@ -309,7 +310,7 @@ pub struct TimeSeriesData {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TimeSeries {
     pub scenario: String,
-    pub series: BTreeMap<DateTime<FixedOffset>, f64>,
+    pub series: BTreeMap<TimeStamp, f64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
