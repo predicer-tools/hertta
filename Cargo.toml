@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+hertta_derive = { path = "hertta_derive" }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 warp = "0.3"
 reqwest = { version = "0.11.9", features = ["blocking", "json"] }

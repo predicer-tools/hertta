@@ -1,9 +1,14 @@
 use crate::{TimeLine, TimeStamp};
 use chrono::DateTime;
+use hertta_derive::Name;
 use serde::de::{self, MapAccess, Visitor};
 use serde::{self, Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
+
+pub trait Name {
+    fn name(&self) -> &String;
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct OptimizationData {
@@ -47,14 +52,14 @@ pub fn find_input_node_names<'a>(nodes: impl Iterator<Item = &'a Node>) -> Vec<S
         .collect()
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct Temporals {
     pub t: TimeLine,
     pub dtf: f64, // in hours
     pub variable_dt: Option<Vec<(String, f64)>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct InputDataSetup {
     pub contains_reserves: bool,
     pub contains_online: bool,
@@ -74,7 +79,7 @@ pub struct InputDataSetup {
     pub ramp_dummy_variable_cost: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Name)]
 pub struct Process {
     pub name: String,
     pub groups: Vec<String>,
@@ -100,7 +105,7 @@ pub struct Process {
     pub eff_fun: Vec<(f64, f64)>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Name)]
 pub struct Node {
     pub name: String,
     pub groups: Vec<String>,
@@ -114,20 +119,26 @@ pub struct Node {
     pub inflow: TimeSeriesData,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct NodeDiffusion {
     pub node1: String,
     pub node2: String,
     pub coefficient: TimeSeriesData,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct NodeHistory {
     pub node: String,
     pub steps: TimeSeriesData,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+impl Name for NodeHistory {
+    fn name(&self) -> &String {
+        &self.node
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Name)]
 pub struct Market {
     pub name: String,
     pub m_type: String,
@@ -148,14 +159,14 @@ pub struct Market {
     pub fixed: Vec<(String, f64)>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Name)]
 pub struct Group {
     pub name: String,
     pub g_type: String,
     pub members: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Name)]
 pub struct InflowBlock {
     pub name: String,
     pub node: String,
@@ -163,7 +174,7 @@ pub struct InflowBlock {
     pub data: TimeSeriesData,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct BidSlot {
     pub market: String,
     pub time_steps: TimeLine,
@@ -265,7 +276,7 @@ where
     deserializer.deserialize_map(MarketPriceAllocationVisitor)
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Name)]
 pub struct GenConstraint {
     pub name: String,
     pub gc_type: String,
@@ -275,7 +286,7 @@ pub struct GenConstraint {
     pub constant: TimeSeriesData,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct Topology {
     pub source: String,
     pub sink: String,
@@ -288,7 +299,7 @@ pub struct Topology {
     pub cap_ts: TimeSeriesData,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct State {
     pub in_max: f64,
     pub out_max: f64,
@@ -302,18 +313,18 @@ pub struct State {
     pub residual_value: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct TimeSeriesData {
     pub ts_data: Vec<TimeSeries>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct TimeSeries {
     pub scenario: String,
     pub series: BTreeMap<TimeStamp, f64>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct ConFactor {
     pub var_type: String,
     pub var_tuple: (String, String),

@@ -1100,6 +1100,7 @@ dependencies = [
  "clap",
  "config",
  "directories",
+ "hertta_derive",
  "juniper",
  "juniper_warp",
  "reqwest",
@@ -1113,6 +1114,14 @@ dependencies = [
  "toml",
  "warp",
  "zmq",
+]
+
+[[package]]
+name = "hertta_derive"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn",
 ]
 
 [[package]]
