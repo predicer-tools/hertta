@@ -38,6 +38,16 @@ impl<'de> Visitor<'de> for LongIntVisitor {
     {
         Ok(LongInt { value })
     }
+    fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        let value = match i64::try_from(value) {
+            Ok(x) => x,
+            Err(..) => return Err(E::custom(format!("u64 out of range: {}", value))),
+        };
+        Ok(LongInt { value: value })
+    }
 }
 
 impl<'de> Deserialize<'de> for LongInt {
