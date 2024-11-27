@@ -1,6 +1,7 @@
 pub mod types;
 
 use crate::event_loop::{OptimizationState, OptimizationTask};
+use crate::input_data_base::BaseInputData;
 use crate::model::{self, Model};
 use crate::settings::{LocationSettings, Settings};
 use crate::status::Status;
@@ -101,7 +102,7 @@ enum StartOptimizationResult {
 }
 
 #[derive(GraphQLObject)]
-struct SaveModelResult {
+struct MaybeError {
     #[graphql(description = "Error message; if null, the operation succeeded.")]
     error: Option<String>,
 }
@@ -208,11 +209,18 @@ impl Mutation {
         }
         ModelResult::Ok(model.clone())
     }
-    #[graphql(description = "Saves the model on disk.")]
-    fn save_model(context: &HerttaContext) -> SaveModelResult {
+    #[graphql(description = "Save the model on disk.")]
+    fn save_model(context: &HerttaContext) -> MaybeError {
         let model = context.model.lock().unwrap();
         let result = model::write_model_to_file(&model).err();
-        SaveModelResult { error: result }
+        MaybeError { error: result }
+    }
+    #[graphql(description = "Clear input data from model.")]
+    fn clear_input_data(context: &HerttaContext) -> MaybeError {
+        let mut lock_guard = context.model.lock();
+        let model = lock_guard.as_mut().unwrap();
+        model.input_data = BaseInputData::default();
+        MaybeError { error: None }
     }
     fn update_settings(settings_input: SettingsInput, context: &HerttaContext) -> SettingsResult {
         let errors = Vec::new();
