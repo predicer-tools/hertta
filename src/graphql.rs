@@ -1,7 +1,7 @@
 pub mod types;
 
 use crate::event_loop::{OptimizationState, OptimizationTask};
-use crate::model::Model;
+use crate::model::{self, Model};
 use crate::settings::{LocationSettings, Settings};
 use crate::status::Status;
 use crate::time_line_settings::{Duration, TimeLineSettings};
@@ -98,6 +98,12 @@ struct StartOptimizationError {
 enum StartOptimizationResult {
     Ok(StartOptimizationOutput),
     Err(StartOptimizationError),
+}
+
+#[derive(GraphQLObject)]
+struct SaveModelResult {
+    #[graphql(description = "Error message; if null, the operation succeeded.")]
+    error: Option<String>,
 }
 
 pub struct HerttaContext {
@@ -201,6 +207,12 @@ impl Mutation {
             return ModelResult::Err(ValidationErrors::from(errors));
         }
         ModelResult::Ok(model.clone())
+    }
+    #[graphql(description = "Saves the model on disk.")]
+    fn save_model(context: &HerttaContext) -> SaveModelResult {
+        let model = context.model.lock().unwrap();
+        let result = model::write_model_to_file(&model).err();
+        SaveModelResult { error: result }
     }
     fn update_settings(settings_input: SettingsInput, context: &HerttaContext) -> SettingsResult {
         let errors = Vec::new();
