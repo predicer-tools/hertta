@@ -25,7 +25,7 @@ zmq = "0.10"
 directories = "5.0"
 config = "0.14"
 toml = "0.8"
-juniper = { version = "0.16", features = ["schema-language"] }
+juniper = { version = "0.16", features = ["chrono", "schema-language"] }
 juniper_warp = "0.8"
 
 [dev-dependencies]

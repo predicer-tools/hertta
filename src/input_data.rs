@@ -1,6 +1,7 @@
 use crate::{TimeLine, TimeStamp};
 use chrono::DateTime;
 use hertta_derive::Name;
+use juniper::GraphQLObject;
 use serde::de::{self, MapAccess, Visitor};
 use serde::{self, Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
@@ -8,16 +9,6 @@ use std::fmt;
 
 pub trait Name {
     fn name(&self) -> &String;
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct OptimizationData {
-    pub fetch_elec_data: bool,
-    pub model_data: Option<InputData>,
-    pub time_data: Option<TimeLine>,
-    pub weather_data: Option<Vec<TimeSeries>>,
-    pub elec_price_data: Option<ElectricityPriceData>,
-    pub input_data_batch: Option<Vec<(String, Vec<u8>)>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -39,27 +30,89 @@ pub struct InputData {
     pub gen_constraints: BTreeMap<String, GenConstraint>,
 }
 
-pub fn find_input_node_names<'a>(nodes: impl Iterator<Item = &'a Node>) -> Vec<String> {
-    nodes
-        .filter(|node| {
-            !node.is_commodity
-                && !node.is_market
-                && !node.is_state
-                && !node.is_res
-                && !node.is_inflow
-        })
-        .map(|node| node.name.clone())
-        .collect()
+fn check_series(
+    ts_data: &TimeSeries,
+    temporals_t: &[TimeStamp],
+    context: &str,
+) -> Result<(), String> {
+    let series_keys: TimeLine = ts_data.series.keys().cloned().collect();
+    if series_keys != *temporals_t {
+        println!("Mismatch in {}: {:?}", context, ts_data.scenario);
+        println!("Expected: {:?}", temporals_t);
+        println!("Found: {:?}", series_keys);
+        return Err(format!(
+            "time series mismatch in {}, scenario {}",
+            context, ts_data.scenario
+        ));
+    }
+    Ok(())
+}
+
+impl InputData {
+    pub fn check_ts_data_against_temporals(&self) -> Result<(), String> {
+        let temporals_t = &self.temporals.t;
+        for (process_name, process) in &self.processes {
+            for ts_data in &process.cf.ts_data {
+                check_series(&ts_data, temporals_t, process_name)?;
+            }
+            for ts_data in &process.eff_ts.ts_data {
+                check_series(&ts_data, temporals_t, process_name)?;
+            }
+            for topology in &process.topos {
+                for ts_data in &topology.cap_ts.ts_data {
+                    check_series(&ts_data, temporals_t, process_name)?;
+                }
+            }
+        }
+        for (node_name, node) in &self.nodes {
+            for ts_data in &node.cost.ts_data {
+                check_series(&ts_data, temporals_t, node_name)?;
+            }
+            for ts_data in &node.inflow.ts_data {
+                check_series(&ts_data, temporals_t, node_name)?;
+            }
+        }
+        for node_diffusion in &self.node_diffusion {
+            for ts_data in &node_diffusion.coefficient.ts_data {
+                check_series(
+                    &ts_data,
+                    temporals_t,
+                    &format!(
+                        "diffusion {}-{}",
+                        node_diffusion.node1, node_diffusion.node2
+                    ),
+                )?;
+            }
+        }
+        for (market_name, market) in &self.markets {
+            for ts_data in &market.realisation.ts_data {
+                check_series(&ts_data, temporals_t, market_name)?;
+            }
+            for ts_data in &market.price.ts_data {
+                check_series(&ts_data, temporals_t, market_name)?;
+            }
+            for ts_data in &market.up_price.ts_data {
+                check_series(&ts_data, temporals_t, market_name)?;
+            }
+            for ts_data in &market.down_price.ts_data {
+                check_series(&ts_data, temporals_t, market_name)?;
+            }
+            for ts_data in &market.reserve_activation_price.ts_data {
+                check_series(&ts_data, temporals_t, market_name)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct Temporals {
     pub t: TimeLine,
-    pub dtf: f64, // in hours
+    pub dtf: f64,
     pub variable_dt: Option<Vec<(String, f64)>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct InputDataSetup {
     pub contains_reserves: bool,
     pub contains_online: bool,
@@ -159,7 +212,7 @@ pub struct Market {
     pub fixed: Vec<(String, f64)>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Name)]
+#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, PartialEq, Serialize)]
 pub struct Group {
     pub name: String,
     pub g_type: String,
@@ -299,7 +352,7 @@ pub struct Topology {
     pub cap_ts: TimeSeriesData,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, PartialEq, Serialize)]
 pub struct State {
     pub in_max: f64,
     pub out_max: f64,
@@ -329,72 +382,4 @@ pub struct ConFactor {
     pub var_type: String,
     pub var_tuple: (String, String),
     pub data: TimeSeriesData,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct WeatherData {
-    pub weather_data: TimeSeriesData,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct ElectricityPriceData {
-    pub price_data: Option<TimeSeriesData>,
-    pub up_price_data: Option<TimeSeriesData>,
-    pub down_price_data: Option<TimeSeriesData>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    mod find_input_node_names {
-        use super::*;
-        #[test]
-        fn no_nodes_means_no_names() {
-            let names = find_input_node_names(Vec::<Node>::new().iter());
-            assert!(names.is_empty());
-        }
-        #[test]
-        fn test_non_input_nodes_are_filtered() {
-            let commodity_nodes = vec![Node {
-                name: "commodity".to_string(),
-                is_commodity: true,
-                ..Node::default()
-            }];
-            assert!(find_input_node_names(commodity_nodes.iter()).is_empty());
-            let market_nodes = vec![Node {
-                name: "market".to_string(),
-                is_market: true,
-                ..Node::default()
-            }];
-            assert!(find_input_node_names(market_nodes.iter()).is_empty());
-            let state_nodes = vec![Node {
-                name: "state".to_string(),
-                is_state: true,
-                ..Node::default()
-            }];
-            assert!(find_input_node_names(state_nodes.iter()).is_empty());
-            let res_nodes = vec![Node {
-                name: "res".to_string(),
-                is_res: true,
-                ..Node::default()
-            }];
-            assert!(find_input_node_names(res_nodes.iter()).is_empty());
-            let inflow_nodes = vec![Node {
-                name: "inflow".to_string(),
-                is_inflow: true,
-                ..Node::default()
-            }];
-            assert!(find_input_node_names(inflow_nodes.iter()).is_empty());
-        }
-        #[test]
-        fn true_input_node_gets_found() {
-            let input_nodes = vec![Node {
-                name: "input".to_string(),
-                ..Node::default()
-            }];
-            let input_nodes = find_input_node_names(input_nodes.iter());
-            assert_eq!(input_nodes.len(), 1);
-            assert_eq!(input_nodes[0], "input");
-        }
-    }
 }

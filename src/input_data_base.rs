@@ -1,9 +1,12 @@
+use crate::graphql::types::LongInt;
 use crate::input_data::{
     ConFactor, GenConstraint, Group, InflowBlock, InputData, InputDataSetup, Market, Name, Node,
     NodeDiffusion, NodeHistory, Process, State, Temporals, TimeSeries, TimeSeriesData, Topology,
 };
+use crate::scenarios::Scenario;
 use crate::{TimeLine, TimeStamp};
 use hertta_derive::Name;
+use juniper::GraphQLObject;
 use serde::{self, Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -12,117 +15,207 @@ pub trait ExpandToTimeSeries {
     fn expand_to_time_series(
         &self,
         time_line: &TimeLine,
-        scenarios: &Vec<String>,
+        scenarios: &Vec<Scenario>,
     ) -> Self::Expanded;
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct BaseInputData {
-    pub setup: InputDataSetup,
-    pub processes: BTreeMap<String, BaseProcess>,
-    pub nodes: BTreeMap<String, BaseNode>,
-    pub node_diffusion: Vec<BaseNodeDiffusion>,
-    pub node_delay: Vec<(String, String, f64, f64, f64)>,
-    pub node_histories: BTreeMap<String, BaseNodeHistory>,
-    pub markets: BTreeMap<String, BaseMarket>,
-    pub groups: BTreeMap<String, Group>,
-    pub scenarios: BTreeMap<String, f64>,
-    pub reserve_type: BTreeMap<String, f64>,
-    pub risk: BTreeMap<String, f64>,
-    pub inflow_blocks: BTreeMap<String, BaseInflowBlock>,
-    pub gen_constraints: BTreeMap<String, BaseGenConstraint>,
+fn use_name_as_key<T: Clone + Name>(x: &T) -> (String, T) {
+    (x.name().clone(), x.clone())
 }
 
-impl ExpandToTimeSeries for BaseInputData {
-    type Expanded = InputData;
-    fn expand_to_time_series(
-        &self,
-        time_line: &TimeLine,
-        scenarios: &Vec<String>,
-    ) -> Self::Expanded {
+fn expand_and_use_name_as_key<T: ExpandToTimeSeries + Name>(
+    x: &T,
+    time_line: &TimeLine,
+    scenarios: &Vec<Scenario>,
+) -> (String, T::Expanded) {
+    (
+        x.name().clone(),
+        x.expand_to_time_series(time_line, scenarios),
+    )
+}
+
+#[derive(Clone, Debug, Default, GraphQLObject, Deserialize, Serialize)]
+#[graphql(description = "The model itself.")]
+pub struct BaseInputData {
+    pub scenarios: Vec<Scenario>,
+    pub setup: BaseInputDataSetup,
+    pub processes: Vec<BaseProcess>,
+    pub nodes: Vec<BaseNode>,
+    pub node_diffusion: Vec<BaseNodeDiffusion>,
+    pub node_delay: Vec<Delay>,
+    pub node_histories: Vec<BaseNodeHistory>,
+    pub markets: Vec<BaseMarket>,
+    pub groups: Vec<Group>,
+    pub reserve_type: Vec<ReserveType>,
+    pub risk: Vec<Risk>,
+    pub inflow_blocks: Vec<BaseInflowBlock>,
+    pub gen_constraints: Vec<BaseGenConstraint>,
+}
+
+#[derive(Clone, Debug, Default, GraphQLObject, Deserialize, Serialize)]
+pub struct Delay {
+    pub from_node: String,
+    pub to_node: String,
+    pub delay: f64,
+    pub min_delay_flow: f64,
+    pub max_delay_flow: f64,
+}
+
+impl Delay {
+    pub fn to_tuple(&self) -> (String, String, f64, f64, f64) {
+        (
+            self.from_node.clone(),
+            self.to_node.clone(),
+            self.delay,
+            self.min_delay_flow,
+            self.max_delay_flow,
+        )
+    }
+}
+
+#[derive(Clone, Debug, Default, GraphQLObject, Deserialize, Serialize)]
+pub struct ReserveType {
+    pub name: String,
+    pub ramp_rate: f64,
+}
+
+impl ReserveType {
+    fn to_map(reserve_types: &Vec<Self>) -> BTreeMap<String, f64> {
+        reserve_types
+            .iter()
+            .map(|reserve| (reserve.name.clone(), reserve.ramp_rate))
+            .collect()
+    }
+}
+
+#[derive(Clone, Debug, Default, GraphQLObject, Deserialize, Serialize)]
+pub struct Risk {
+    pub parameter: String,
+    pub value: f64,
+}
+
+impl Risk {
+    fn to_map(risks: &Vec<Self>) -> BTreeMap<String, f64> {
+        risks
+            .iter()
+            .map(|risk| (risk.parameter.clone(), risk.value))
+            .collect()
+    }
+}
+
+impl BaseInputData {
+    pub fn expand_to_time_series(&self, time_line: &TimeLine) -> InputData {
         InputData {
             temporals: make_temporals(time_line),
-            setup: self.setup.clone(),
+            setup: self.setup.expand_to_time_series(time_line, &self.scenarios),
             processes: self
                 .processes
                 .iter()
-                .map(|(name, process)| {
-                    (
-                        name.clone(),
-                        process.expand_to_time_series(time_line, scenarios),
-                    )
-                })
+                .map(|process| expand_and_use_name_as_key(process, time_line, &self.scenarios))
                 .collect(),
             nodes: self
                 .nodes
                 .iter()
-                .map(|(name, node)| {
-                    (
-                        name.clone(),
-                        node.expand_to_time_series(time_line, scenarios),
-                    )
-                })
+                .map(|node| expand_and_use_name_as_key(node, time_line, &self.scenarios))
                 .collect(),
             node_diffusion: self
                 .node_diffusion
                 .iter()
-                .map(|diffusion| diffusion.expand_to_time_series(time_line, scenarios))
+                .map(|diffusion| diffusion.expand_to_time_series(time_line, &self.scenarios))
                 .collect(),
-            node_delay: self.node_delay.clone(),
+            node_delay: self
+                .node_delay
+                .iter()
+                .map(|delay| delay.to_tuple())
+                .collect(),
             node_histories: self
                 .node_histories
                 .iter()
-                .map(|(name, history)| {
-                    (
-                        name.clone(),
-                        history.expand_to_time_series(time_line, scenarios),
-                    )
-                })
+                .map(|history| expand_and_use_name_as_key(history, time_line, &self.scenarios))
                 .collect(),
             markets: self
                 .markets
                 .iter()
-                .map(|(name, market)| {
-                    (
-                        name.clone(),
-                        market.expand_to_time_series(time_line, scenarios),
-                    )
-                })
+                .map(|market| expand_and_use_name_as_key(market, time_line, &self.scenarios))
                 .collect(),
-            groups: self.groups.clone(),
-            scenarios: self.scenarios.clone(),
-            reserve_type: self.reserve_type.clone(),
-            risk: self.risk.clone(),
+            groups: self
+                .groups
+                .iter()
+                .map(|group| use_name_as_key(group))
+                .collect(),
+            scenarios: Scenario::to_map(&self.scenarios),
+            reserve_type: ReserveType::to_map(&self.reserve_type),
+            risk: Risk::to_map(&self.risk),
             inflow_blocks: self
                 .inflow_blocks
                 .iter()
-                .map(|(name, block)| {
-                    (
-                        name.clone(),
-                        block.expand_to_time_series(time_line, scenarios),
-                    )
-                })
+                .map(|block| expand_and_use_name_as_key(block, time_line, &self.scenarios))
                 .collect(),
             bid_slots: BTreeMap::new(),
             gen_constraints: self
                 .gen_constraints
                 .iter()
-                .map(|(name, constraint)| {
-                    (
-                        name.clone(),
-                        constraint.expand_to_time_series(time_line, scenarios),
-                    )
+                .map(|constraint| {
+                    expand_and_use_name_as_key(constraint, time_line, &self.scenarios)
                 })
                 .collect(),
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, Name)]
+#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, PartialEq, Serialize)]
+pub struct BaseInputDataSetup {
+    pub contains_reserves: bool,
+    pub contains_online: bool,
+    pub contains_states: bool,
+    pub contains_piecewise_eff: bool,
+    pub contains_risk: bool,
+    pub contains_diffusion: bool,
+    pub contains_delay: bool,
+    pub contains_markets: bool,
+    pub reserve_realisation: bool,
+    pub use_market_bids: bool,
+    pub common_timesteps: LongInt,
+    pub common_scenario_name: String,
+    pub use_node_dummy_variables: bool,
+    pub use_ramp_dummy_variables: bool,
+    pub node_dummy_variable_cost: f64,
+    pub ramp_dummy_variable_cost: f64,
+}
+
+impl ExpandToTimeSeries for BaseInputDataSetup {
+    type Expanded = InputDataSetup;
+    fn expand_to_time_series(
+        &self,
+        _time_line: &TimeLine,
+        _scenarios: &Vec<Scenario>,
+    ) -> Self::Expanded {
+        InputDataSetup {
+            contains_reserves: self.contains_reserves,
+            contains_online: self.contains_online,
+            contains_states: self.contains_states,
+            contains_piecewise_eff: self.contains_piecewise_eff,
+            contains_risk: self.contains_risk,
+            contains_diffusion: self.contains_diffusion,
+            contains_delay: self.contains_delay,
+            contains_markets: self.contains_markets,
+            reserve_realisation: self.reserve_realisation,
+            use_market_bids: self.use_market_bids,
+            common_timesteps: self.common_timesteps.value,
+            common_scenario_name: self.common_scenario_name.clone(),
+            use_node_dummy_variables: self.use_node_dummy_variables,
+            use_ramp_dummy_variables: self.use_ramp_dummy_variables,
+            node_dummy_variable_cost: self.node_dummy_variable_cost,
+            ramp_dummy_variable_cost: self.ramp_dummy_variable_cost,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, Serialize)]
 pub struct BaseProcess {
     pub name: String,
     pub groups: Vec<String>,
-    pub conversion: i64,
+    pub conversion: LongInt,
     pub is_cf: bool,
     pub is_cf_fix: bool,
     pub is_online: bool,
@@ -141,7 +234,13 @@ pub struct BaseProcess {
     pub cf: f64,
     pub eff_ts: f64,
     pub eff_ops: Vec<String>,
-    pub eff_fun: Vec<(f64, f64)>,
+    pub eff_fun: Vec<Piece>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
+pub struct Piece {
+    pub start: f64,
+    pub end: f64,
 }
 
 impl ExpandToTimeSeries for BaseProcess {
@@ -149,12 +248,12 @@ impl ExpandToTimeSeries for BaseProcess {
     fn expand_to_time_series(
         &self,
         time_line: &TimeLine,
-        scenarios: &Vec<String>,
+        scenarios: &Vec<Scenario>,
     ) -> Self::Expanded {
         Process {
             name: self.name.clone(),
             groups: self.groups.clone(),
-            conversion: self.conversion,
+            conversion: self.conversion.value,
             is_cf: self.is_cf,
             is_cf_fix: self.is_cf_fix,
             is_online: self.is_online,
@@ -177,12 +276,16 @@ impl ExpandToTimeSeries for BaseProcess {
             cf: to_time_series(self.cf, time_line, scenarios),
             eff_ts: to_time_series(self.eff_ts, time_line, scenarios),
             eff_ops: self.eff_ops.clone(),
-            eff_fun: self.eff_fun.clone(),
+            eff_fun: self
+                .eff_fun
+                .iter()
+                .map(|piece| (piece.start, piece.end))
+                .collect(),
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, Name)]
+#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, Serialize)]
 pub struct BaseNode {
     pub name: String,
     pub groups: Vec<String>,
@@ -201,7 +304,7 @@ impl ExpandToTimeSeries for BaseNode {
     fn expand_to_time_series(
         &self,
         time_line: &TimeLine,
-        scenarios: &Vec<String>,
+        scenarios: &Vec<Scenario>,
     ) -> Self::Expanded {
         Node {
             name: self.name.clone(),
@@ -218,10 +321,10 @@ impl ExpandToTimeSeries for BaseNode {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
 pub struct BaseNodeDiffusion {
-    pub node1: String,
-    pub node2: String,
+    pub from_node: String,
+    pub to_node: String,
     pub coefficient: f64,
 }
 
@@ -231,17 +334,17 @@ impl ExpandToTimeSeries for BaseNodeDiffusion {
     fn expand_to_time_series(
         &self,
         time_line: &TimeLine,
-        scenarios: &Vec<String>,
+        scenarios: &Vec<Scenario>,
     ) -> Self::Expanded {
         NodeDiffusion {
-            node1: self.node1.clone(),
-            node2: self.node2.clone(),
+            node1: self.from_node.clone(),
+            node2: self.to_node.clone(),
             coefficient: to_time_series(self.coefficient, &time_line, scenarios),
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
 pub struct BaseNodeHistory {
     pub node: String,
     pub steps: f64,
@@ -258,7 +361,7 @@ impl ExpandToTimeSeries for BaseNodeHistory {
     fn expand_to_time_series(
         &self,
         time_line: &TimeLine,
-        scenarios: &Vec<String>,
+        scenarios: &Vec<Scenario>,
     ) -> Self::Expanded {
         NodeHistory {
             node: self.node.clone(),
@@ -267,7 +370,7 @@ impl ExpandToTimeSeries for BaseNodeHistory {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, Name)]
+#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, Serialize)]
 pub struct BaseMarket {
     pub name: String,
     pub m_type: String,
@@ -285,7 +388,13 @@ pub struct BaseMarket {
     pub up_price: f64,
     pub down_price: f64,
     pub reserve_activation_price: f64,
-    pub fixed: Vec<(String, f64)>,
+    pub fixed: Vec<FixInfo>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
+pub struct FixInfo {
+    pub name: String,
+    pub factor: f64,
 }
 
 impl ExpandToTimeSeries for BaseMarket {
@@ -293,7 +402,7 @@ impl ExpandToTimeSeries for BaseMarket {
     fn expand_to_time_series(
         &self,
         time_line: &TimeLine,
-        scenarios: &Vec<String>,
+        scenarios: &Vec<Scenario>,
     ) -> Self::Expanded {
         Market {
             name: self.name.clone(),
@@ -316,12 +425,16 @@ impl ExpandToTimeSeries for BaseMarket {
                 time_line,
                 scenarios,
             ),
-            fixed: self.fixed.clone(),
+            fixed: self
+                .fixed
+                .iter()
+                .map(|fix| (fix.name.clone(), fix.factor))
+                .collect(),
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, Name)]
+#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, Serialize)]
 pub struct BaseInflowBlock {
     pub name: String,
     pub node: String,
@@ -333,7 +446,7 @@ impl ExpandToTimeSeries for BaseInflowBlock {
     fn expand_to_time_series(
         &self,
         time_line: &TimeLine,
-        scenarios: &Vec<String>,
+        scenarios: &Vec<Scenario>,
     ) -> Self::Expanded {
         InflowBlock {
             name: self.name.clone(),
@@ -344,7 +457,7 @@ impl ExpandToTimeSeries for BaseInflowBlock {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, Name)]
+#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, Serialize)]
 pub struct BaseGenConstraint {
     pub name: String,
     pub gc_type: String,
@@ -359,7 +472,7 @@ impl ExpandToTimeSeries for BaseGenConstraint {
     fn expand_to_time_series(
         &self,
         time_line: &TimeLine,
-        scenarios: &Vec<String>,
+        scenarios: &Vec<Scenario>,
     ) -> Self::Expanded {
         GenConstraint {
             name: self.name.clone(),
@@ -376,7 +489,7 @@ impl ExpandToTimeSeries for BaseGenConstraint {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
 pub struct BaseTopology {
     pub source: String,
     pub sink: String,
@@ -394,7 +507,7 @@ impl ExpandToTimeSeries for BaseTopology {
     fn expand_to_time_series(
         &self,
         time_line: &TimeLine,
-        scenarios: &Vec<String>,
+        scenarios: &Vec<Scenario>,
     ) -> Self::Expanded {
         Topology {
             source: self.source.clone(),
@@ -410,11 +523,18 @@ impl ExpandToTimeSeries for BaseTopology {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
 pub struct BaseConFactor {
     pub var_type: String,
-    pub var_tuple: (String, String),
+    pub var_tuple: VariableId,
     pub data: f64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
+
+pub struct VariableId {
+    pub entity: String,
+    pub identifier: String,
 }
 
 impl ExpandToTimeSeries for BaseConFactor {
@@ -422,17 +542,33 @@ impl ExpandToTimeSeries for BaseConFactor {
     fn expand_to_time_series(
         &self,
         time_line: &TimeLine,
-        scenarios: &Vec<String>,
+        scenarios: &Vec<Scenario>,
     ) -> Self::Expanded {
         ConFactor {
             var_type: self.var_type.clone(),
-            var_tuple: self.var_tuple.clone(),
+            var_tuple: (
+                self.var_tuple.entity.clone(),
+                self.var_tuple.identifier.clone(),
+            ),
             data: to_time_series(self.data, time_line, scenarios),
         }
     }
 }
 
-fn to_time_series(y: f64, time_line: &TimeLine, scenarios: &Vec<String>) -> TimeSeriesData {
+pub fn find_input_node_names<'a>(nodes: impl Iterator<Item = &'a BaseNode>) -> Vec<String> {
+    nodes
+        .filter(|node| {
+            !node.is_commodity
+                && !node.is_market
+                && !node.is_state
+                && !node.is_res
+                && !node.is_inflow
+        })
+        .map(|node| node.name.clone())
+        .collect()
+}
+
+fn to_time_series(y: f64, time_line: &TimeLine, scenarios: &Vec<Scenario>) -> TimeSeriesData {
     let single_series: BTreeMap<TimeStamp, f64> = time_line
         .iter()
         .map(|time_stamp| (time_stamp.clone(), y))
@@ -441,7 +577,7 @@ fn to_time_series(y: f64, time_line: &TimeLine, scenarios: &Vec<String>) -> Time
         ts_data: scenarios
             .iter()
             .map(|scenario| TimeSeries {
-                scenario: scenario.clone(),
+                scenario: scenario.name().clone(),
                 series: single_series.clone(),
             })
             .collect(),
@@ -472,8 +608,10 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2024, 11, 19, 14, 0, 0).unwrap().into(),
         ];
-        let scenarios = vec!["S1".to_string()];
-        let setup = InputDataSetup::default();
+        let scenarios =
+            vec![Scenario::new("S1", 1.0).expect("scenario construction should succeed")];
+        let base_setup = BaseInputDataSetup::default();
+        let setup = base_setup.expand_to_time_series(&time_line, &scenarios);
         let base_topology = BaseTopology {
             source: "Source".to_string(),
             sink: "Sink".to_string(),
@@ -488,7 +626,7 @@ mod tests {
         let base_process = BaseProcess {
             name: "Conversion".to_string(),
             groups: vec!["Group".to_string()],
-            conversion: 23,
+            conversion: LongInt { value: 23 },
             is_cf: true,
             is_cf_fix: false,
             is_online: true,
@@ -507,7 +645,10 @@ mod tests {
             cf: 2.0,
             eff_ts: 2.1,
             eff_ops: vec!["oops!".to_string()],
-            eff_fun: vec![(2.2, 2.3)],
+            eff_fun: vec![Piece {
+                start: 2.2,
+                end: 2.3,
+            }],
         };
         let process = base_process.expand_to_time_series(&time_line, &scenarios);
         let base_node = BaseNode {
@@ -524,12 +665,18 @@ mod tests {
         };
         let node = base_node.expand_to_time_series(&time_line, &scenarios);
         let base_node_diffusion = BaseNodeDiffusion {
-            node1: "Node 1".to_string(),
-            node2: "Node 2".to_string(),
+            from_node: "Node 1".to_string(),
+            to_node: "Node 2".to_string(),
             coefficient: -2.3,
         };
         let node_diffusion = base_node_diffusion.expand_to_time_series(&time_line, &scenarios);
-        let node_delay = vec![("South".to_string(), "North".to_string(), 3.1, 3.2, 3.3)];
+        let node_delay = vec![Delay {
+            from_node: "South".to_string(),
+            to_node: "North".to_string(),
+            delay: 3.1,
+            min_delay_flow: 3.2,
+            max_delay_flow: 3.3,
+        }];
         let base_node_history = BaseNodeHistory {
             node: "South".to_string(),
             steps: 1.1,
@@ -552,16 +699,23 @@ mod tests {
             up_price: 1.6,
             down_price: 1.7,
             reserve_activation_price: 1.8,
-            fixed: vec![("Fix".to_string(), 1.9)],
+            fixed: vec![FixInfo {
+                name: "Fix".to_string(),
+                factor: 1.9,
+            }],
         };
         let market = base_market.expand_to_time_series(&time_line, &scenarios);
-        let group = Group::default();
-        let mut scenario_map = BTreeMap::new();
-        scenario_map.insert("S1".to_string(), 1.0);
-        let mut reserve_type = BTreeMap::new();
-        reserve_type.insert("infinite".to_string(), 4.1);
-        let mut risk = BTreeMap::new();
-        risk.insert("high".to_string(), 0.99);
+        let groups = vec![Group::default()];
+        let scenarios =
+            vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
+        let reserve_type = vec![ReserveType {
+            name: "infinite".to_string(),
+            ramp_rate: 4.1,
+        }];
+        let risk = vec![Risk {
+            parameter: "high".to_string(),
+            value: 0.99,
+        }];
         let base_inflow_block = BaseInflowBlock {
             name: "Inflow".to_string(),
             node: "West".to_string(),
@@ -570,7 +724,10 @@ mod tests {
         let inflow_block = base_inflow_block.expand_to_time_series(&time_line, &scenarios);
         let base_con_factor = BaseConFactor {
             var_type: "state".to_string(),
-            var_tuple: ("interior_air".to_string(), String::new()),
+            var_tuple: VariableId {
+                entity: "interior_air".to_string(),
+                identifier: String::new(),
+            },
             data: 23.0,
         };
         let base_gen_constraint = BaseGenConstraint {
@@ -583,21 +740,21 @@ mod tests {
         };
         let gen_constraint = base_gen_constraint.expand_to_time_series(&time_line, &scenarios);
         let base = BaseInputData {
-            setup: setup.clone(),
-            processes: as_map(base_process),
-            nodes: as_map(base_node),
+            scenarios: scenarios,
+            setup: base_setup,
+            processes: vec![base_process],
+            nodes: vec![base_node],
             node_diffusion: vec![base_node_diffusion],
-            node_delay: node_delay.clone(),
-            node_histories: as_map(base_node_history),
-            markets: as_map(base_market),
-            groups: as_map(group.clone()),
-            scenarios: scenario_map.clone(),
-            reserve_type: reserve_type.clone(),
-            risk: risk.clone(),
-            inflow_blocks: as_map(base_inflow_block),
-            gen_constraints: as_map(base_gen_constraint),
+            node_delay: node_delay,
+            node_histories: vec![base_node_history],
+            markets: vec![base_market],
+            groups: groups.clone(),
+            reserve_type: reserve_type,
+            risk: risk,
+            inflow_blocks: vec![base_inflow_block],
+            gen_constraints: vec![base_gen_constraint],
         };
-        let input_data = base.expand_to_time_series(&time_line, &scenarios);
+        let input_data = base.expand_to_time_series(&time_line);
         let temporals = Temporals {
             t: time_line,
             dtf: 1.0,
@@ -608,13 +765,28 @@ mod tests {
         assert_eq!(input_data.processes, as_map(process));
         assert_eq!(input_data.nodes, as_map(node));
         assert_eq!(input_data.node_diffusion, vec![node_diffusion]);
-        assert_eq!(input_data.node_delay, node_delay);
+        assert_eq!(
+            input_data.node_delay,
+            base.node_delay
+                .iter()
+                .map(|delay| delay.to_tuple())
+                .collect::<Vec<_>>()
+        );
         assert_eq!(input_data.node_histories, as_map(node_history));
         assert_eq!(input_data.markets, as_map(market));
-        assert_eq!(input_data.groups, as_map(group));
-        assert_eq!(input_data.scenarios, scenario_map);
-        assert_eq!(input_data.reserve_type, reserve_type);
-        assert_eq!(input_data.risk, risk);
+        assert_eq!(
+            input_data.groups,
+            base.groups
+                .iter()
+                .map(|group| use_name_as_key(group))
+                .collect::<BTreeMap<String, Group>>()
+        );
+        assert_eq!(input_data.scenarios, Scenario::to_map(&base.scenarios));
+        assert_eq!(
+            input_data.reserve_type,
+            ReserveType::to_map(&base.reserve_type)
+        );
+        assert_eq!(input_data.risk, Risk::to_map(&base.risk));
         assert_eq!(input_data.inflow_blocks, as_map(inflow_block));
         assert_eq!(input_data.bid_slots, BTreeMap::<String, BidSlot>::new());
         assert_eq!(input_data.gen_constraints, as_map(gen_constraint));
@@ -625,7 +797,8 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2024, 11, 19, 14, 0, 0).unwrap().into(),
         ];
-        let scenarios = vec!["S1".to_string()];
+        let scenarios =
+            vec![Scenario::new("S1", 1.0).expect("scenario construction should succeed")];
         let base_topology = BaseTopology {
             source: "Source".to_string(),
             sink: "Sink".to_string(),
@@ -641,7 +814,7 @@ mod tests {
         let base = BaseProcess {
             name: "Conversion".to_string(),
             groups: vec!["Group".to_string()],
-            conversion: 23,
+            conversion: LongInt { value: 23 },
             is_cf: true,
             is_cf_fix: false,
             is_online: true,
@@ -660,7 +833,10 @@ mod tests {
             cf: 2.0,
             eff_ts: 2.1,
             eff_ops: vec!["oops!".to_string()],
-            eff_fun: vec![(2.2, 2.3)],
+            eff_fun: vec![Piece {
+                start: 2.2,
+                end: 2.3,
+            }],
         };
         let process = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(process.name, "Conversion");
@@ -692,7 +868,8 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2024, 11, 19, 14, 0, 0).unwrap().into(),
         ];
-        let scenarios = vec!["S1".to_string()];
+        let scenarios =
+            vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
         let base = BaseNode {
             name: "East".to_string(),
             groups: vec!["Group".to_string()],
@@ -719,15 +896,16 @@ mod tests {
     #[test]
     fn expanding_node_diffusion_works() {
         let base = BaseNodeDiffusion {
-            node1: "Node 1".to_string(),
-            node2: "Node 2".to_string(),
+            from_node: "Node 1".to_string(),
+            to_node: "Node 2".to_string(),
             coefficient: -2.3,
         };
         let time_line: TimeLine = vec![
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2024, 11, 19, 14, 0, 0).unwrap().into(),
         ];
-        let scenarios = vec!["S1".to_string()];
+        let scenarios =
+            vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
         let node_diffusion = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(node_diffusion.node1, "Node 1");
         assert_eq!(node_diffusion.node2, "Node 2");
@@ -742,7 +920,8 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2024, 11, 19, 14, 0, 0).unwrap().into(),
         ];
-        let scenarios = vec!["S1".to_string()];
+        let scenarios =
+            vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
         let base = BaseNodeHistory {
             node: "South".to_string(),
             steps: 1.1,
@@ -760,7 +939,8 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2024, 11, 19, 14, 0, 0).unwrap().into(),
         ];
-        let scenarios = vec!["S1".to_string()];
+        let scenarios =
+            vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
         let base = BaseMarket {
             name: "Market".to_string(),
             m_type: "energy".to_string(),
@@ -778,7 +958,10 @@ mod tests {
             up_price: 1.6,
             down_price: 1.7,
             reserve_activation_price: 1.8,
-            fixed: vec![("Fix".to_string(), 1.9)],
+            fixed: vec![FixInfo {
+                name: "Fix".to_string(),
+                factor: 1.9,
+            }],
         };
         let market = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(market.name, "Market");
@@ -814,7 +997,8 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2024, 11, 19, 14, 0, 0).unwrap().into(),
         ];
-        let scenarios = vec!["S1".to_string()];
+        let scenarios =
+            vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
         let base = BaseInflowBlock {
             name: "Inflow".to_string(),
             node: "West".to_string(),
@@ -835,10 +1019,14 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2024, 11, 19, 14, 0, 0).unwrap().into(),
         ];
-        let scenarios = vec!["S1".to_string()];
+        let scenarios =
+            vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
         let base_con_factor = BaseConFactor {
             var_type: "state".to_string(),
-            var_tuple: ("interior_air".to_string(), String::new()),
+            var_tuple: VariableId {
+                entity: "interior_air".to_string(),
+                identifier: String::new(),
+            },
             data: 23.0,
         };
         let con_factor = base_con_factor.expand_to_time_series(&time_line, &scenarios);
@@ -878,7 +1066,8 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2024, 11, 19, 14, 0, 0).unwrap().into(),
         ];
-        let scenarios = vec!["S1".to_string()];
+        let scenarios =
+            vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
         let topology = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(topology.source, "Source");
         assert_eq!(topology.sink, "Sink");
@@ -894,14 +1083,18 @@ mod tests {
     fn expanding_con_factor_works() {
         let base = BaseConFactor {
             var_type: "state".to_string(),
-            var_tuple: ("interior_air".to_string(), String::new()),
+            var_tuple: VariableId {
+                entity: "interior_air".to_string(),
+                identifier: String::new(),
+            },
             data: 23.0,
         };
         let time_line: TimeLine = vec![
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2024, 11, 19, 14, 0, 0).unwrap().into(),
         ];
-        let scenarios = vec!["S1".to_string()];
+        let scenarios =
+            vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
         let con_factor = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(con_factor.var_type, "state");
         assert_eq!(
@@ -912,6 +1105,57 @@ mod tests {
             con_factor.data,
             to_time_series(base.data, &time_line, &scenarios)
         );
+    }
+    mod find_input_node_names {
+        use super::*;
+        #[test]
+        fn no_nodes_means_no_names() {
+            let names = find_input_node_names(Vec::<BaseNode>::new().iter());
+            assert!(names.is_empty());
+        }
+        #[test]
+        fn test_non_input_nodes_are_filtered() {
+            let commodity_nodes = vec![BaseNode {
+                name: "commodity".to_string(),
+                is_commodity: true,
+                ..BaseNode::default()
+            }];
+            assert!(find_input_node_names(commodity_nodes.iter()).is_empty());
+            let market_nodes = vec![BaseNode {
+                name: "market".to_string(),
+                is_market: true,
+                ..BaseNode::default()
+            }];
+            assert!(find_input_node_names(market_nodes.iter()).is_empty());
+            let state_nodes = vec![BaseNode {
+                name: "state".to_string(),
+                is_state: true,
+                ..BaseNode::default()
+            }];
+            assert!(find_input_node_names(state_nodes.iter()).is_empty());
+            let res_nodes = vec![BaseNode {
+                name: "res".to_string(),
+                is_res: true,
+                ..BaseNode::default()
+            }];
+            assert!(find_input_node_names(res_nodes.iter()).is_empty());
+            let inflow_nodes = vec![BaseNode {
+                name: "inflow".to_string(),
+                is_inflow: true,
+                ..BaseNode::default()
+            }];
+            assert!(find_input_node_names(inflow_nodes.iter()).is_empty());
+        }
+        #[test]
+        fn true_input_node_gets_found() {
+            let input_nodes = vec![BaseNode {
+                name: "input".to_string(),
+                ..BaseNode::default()
+            }];
+            let input_nodes = find_input_node_names(input_nodes.iter());
+            assert_eq!(input_nodes.len(), 1);
+            assert_eq!(input_nodes[0], "input");
+        }
     }
     #[test]
     fn make_temporals_works() {
@@ -932,7 +1176,8 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2024, 11, 19, 14, 0, 0).unwrap().into(),
         ];
-        let scenarios = vec!["S1".to_string()];
+        let scenarios =
+            vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
         let time_series = to_time_series(2.3, &time_line, &scenarios);
         assert_eq!(time_series.ts_data.len(), 1);
         assert_eq!(time_series.ts_data[0].scenario, "S1");

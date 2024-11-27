@@ -1,10 +1,11 @@
 mod arrow_input;
-mod time_axis;
+mod time_series;
 
-use crate::input_data;
-use crate::input_data::{InputData, OptimizationData, Process, TimeSeries, TimeSeriesData};
-use crate::settings::{LocationSettings, Settings, TimeLineSettings};
-use crate::utilities;
+use crate::input_data::{self, InputData, TimeSeries, TimeSeriesData};
+use crate::input_data_base::{self, BaseInputData, BaseProcess};
+use crate::model::Model;
+use crate::settings::{LocationSettings, Settings};
+use crate::time_line_settings::TimeLineSettings;
 use crate::{TimeLine, TimeStamp};
 use arrow::array::timezone::Tz;
 use arrow::array::types::{Float64Type, TimestampMillisecondType};
@@ -13,7 +14,8 @@ use arrow::datatypes::{DataType, TimeUnit};
 use arrow::ipc::reader::StreamReader;
 use chrono::round::DurationRound;
 use chrono::{DateTime, LocalResult, NaiveDateTime, TimeDelta, TimeZone, Utc};
-use serde::{Deserialize, Serialize};
+use juniper::GraphQLObject;
+use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -25,46 +27,86 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::watch;
-use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 use zmq::{Context, Socket};
 
 const PREDICER_SEND_FLAGS: i32 = 0;
 const PREDICER_RECEIVE_FLAGS: i32 = 0;
 
-#[derive(Serialize)]
+pub struct OptimizationData {
+    pub input_data: BaseInputData,
+    pub time_data: Option<TimeLine>,
+    pub weather_data: Option<WeatherData>,
+    pub elec_price_data: Option<ElectricityPriceData>,
+}
+
+impl OptimizationData {
+    fn with_input_data(input_data: BaseInputData) -> Self {
+        OptimizationData {
+            input_data: input_data,
+            time_data: None,
+            weather_data: None,
+            elec_price_data: None,
+        }
+    }
+}
+
+type WeatherData = Vec<TimeSeries>;
+
+#[derive(Clone, Debug, Default)]
+pub struct ElectricityPriceData {
+    pub price_data: Option<TimeSeriesData>,
+    pub up_price_data: Option<TimeSeriesData>,
+    pub down_price_data: Option<TimeSeriesData>,
+}
+
+#[derive(GraphQLObject)]
+pub struct ControlSignal {
+    pub name: String,
+    pub signal: Vec<f64>,
+}
+
+#[derive(GraphQLObject)]
 pub struct ResultData {
-    t: Vec<DateTime<Tz>>,
-    controls: BTreeMap<String, Vec<f64>>,
+    pub job_id: i32,
+    pub t: Vec<DateTime<Utc>>,
+    pub controls: Vec<ControlSignal>,
 }
 
 pub enum OptimizationState {
     Idle,
-    InProgress(usize),
-    Finished(usize, ResultData),
-    Error(usize, String),
+    InProgress(i32),
+    Finished(i32),
+    Error(i32, String),
+}
+
+pub enum OptimizationTask {
+    Start,
+    Stop,
 }
 
 pub async fn event_loop(
     vanilla_settings: Arc<Mutex<Settings>>,
-    mut rx_input: mpsc::Receiver<(usize, OptimizationData)>,
+    model: Arc<Mutex<Model>>,
+    result_data: Arc<Mutex<Option<ResultData>>>,
+    mut rx_input: mpsc::Receiver<(i32, OptimizationTask)>,
     tx_state: watch::Sender<OptimizationState>,
 ) {
-    while let Some((job_id, data)) = rx_input.recv().await {
+    while let Some((job_id, task)) = rx_input.recv().await {
+        if let OptimizationTask::Stop = task {
+            break;
+        }
         tx_state
             .send(OptimizationState::InProgress(job_id))
             .unwrap();
-        let settings_snapshot = Arc::new(vanilla_settings.lock().unwrap().clone());
+        let settings_snapshot = vanilla_settings.lock().unwrap().clone();
+        let model_snapshot = model.lock().unwrap().clone();
+        let optimization_data = OptimizationData::with_input_data(model_snapshot.input_data);
         let start_time: TimeStamp = Utc::now()
             .duration_trunc(TimeDelta::try_hours(1).unwrap())
             .unwrap()
             .into();
-        let time_line = time_axis::make_time_data(
-            start_time,
-            settings_snapshot.time_line.step(),
-            settings_snapshot.time_line.duration(),
-        );
-        let control_processes = match expected_control_processes(&data.model_data) {
+        let control_processes = match expected_control_processes(&optimization_data.input_data) {
             Ok(names) => names,
             Err(error) => {
                 tx_state
@@ -92,53 +134,57 @@ pub async fn event_loop(
         let (tx_weather, rx_weather) = oneshot::channel::<OptimizationData>();
         let (tx_elec, rx_elec) = oneshot::channel::<OptimizationData>();
         let (tx_update, rx_update) = oneshot::channel::<OptimizationData>();
-        let (tx_batches, rx_batches) = oneshot::channel::<OptimizationData>();
-        let (tx_optimization, rx_optimization) = oneshot::channel::<OptimizationData>();
-        let settings_clone = Arc::clone(&settings_snapshot);
+        let (tx_batches, rx_batches) = oneshot::channel::<InputData>();
+        let (tx_optimization, rx_optimization) = oneshot::channel::<Vec<(String, Vec<u8>)>>();
+        let time_line_settings_clone = model_snapshot.time_line.clone();
         let start_time_clone = start_time.clone();
         let update_time_line_handle = tokio::spawn(async move {
             update_time_line_task(
                 start_time_clone,
-                &settings_clone.time_line,
+                &time_line_settings_clone,
                 rx_time_line,
                 tx_weather,
             )
             .await
         });
-        let settings_clone = Arc::clone(&settings_snapshot);
-        let time_line_clone = time_line.clone();
+        let location_snapshot = match settings_snapshot.location {
+            Some(location) => location.clone(),
+            None => {
+                tx_state
+                    .send(OptimizationState::Error(
+                        job_id,
+                        "cannot fetch weather data: no location set".to_string(),
+                    ))
+                    .unwrap();
+                continue;
+            }
+        };
+        let location_clone = location_snapshot.clone();
+        let time_line_settings_clone = model_snapshot.time_line.clone();
+        let python_exec_clone = settings_snapshot.python_exec.clone();
+        let weather_fetcher_script_clone = settings_snapshot.weather_fetcher_script.clone();
         let fetch_weather_data_handle = tokio::spawn(async move {
-            let location = settings_clone
-                .location
-                .as_ref()
-                .ok_or("cannot fetch weather data: no location set".to_string())?;
             fetch_weather_data_task(
-                location,
-                time_line_clone,
-                &settings_clone.time_line,
-                &settings_clone.python_exec,
-                &settings_clone.weather_fetcher_script,
+                &location_clone,
+                &time_line_settings_clone,
+                &python_exec_clone,
+                &weather_fetcher_script_clone,
                 rx_weather,
                 tx_elec,
             )
             .await
         });
-        let settings_clone = Arc::clone(&settings_snapshot);
-        let time_line_clone = time_line.clone();
+        let location_clone = location_snapshot.clone();
         let fetch_electricity_price_handle = tokio::spawn(async move {
-            let location = settings_clone
-                .location
-                .as_ref()
-                .ok_or("cannot fetch electricity price data: no location set".to_string())?;
-            fetch_electricity_price_task(location, time_line_clone, rx_elec, tx_update).await
+            fetch_electricity_price_task(&location_clone, rx_elec, tx_update).await
         });
         let update_model_data_handle =
-            tokio::spawn(async move { update_model_data_task(rx_update, tx_batches).await });
+            tokio::spawn(async move { generate_model_task(rx_update, tx_batches).await });
         let data_conversion_handle =
             tokio::spawn(async move { data_conversion_task(rx_batches, tx_optimization).await });
         let optimization_handle =
             tokio::spawn(async move { optimization_task(rx_optimization, zmq_port).await });
-        if tx_time_line.send(data).is_err() {
+        if tx_time_line.send(optimization_data).is_err() {
             tx_state
                 .send(OptimizationState::Error(
                     job_id,
@@ -147,13 +193,16 @@ pub async fn event_loop(
                 .unwrap();
             continue;
         }
-        let settings_clone = Arc::clone(&settings_snapshot);
+        let julia_exec_clone = settings_snapshot.julia_exec.clone();
+        let predicer_runner_project_clone = settings_snapshot.predicer_runner_project.clone();
+        let predicer_project_clone = settings_snapshot.predicer_project.clone();
+        let predicer_runner_script_clone = settings_snapshot.predicer_runner_script.clone();
         tokio::spawn(async move {
             match start_julia_local(
-                &settings_clone.julia_exec,
-                &settings_clone.predicer_runner_project,
-                &settings_clone.predicer_project,
-                &settings_clone.predicer_runner_script,
+                &julia_exec_clone,
+                &predicer_runner_project_clone,
+                &predicer_project_clone,
+                &predicer_runner_script_clone,
                 zmq_port,
             )
             .await
@@ -202,15 +251,12 @@ pub async fn event_loop(
                                 continue;
                             }
                         };
-                    tx_state
-                        .send(OptimizationState::Finished(
-                            job_id,
-                            ResultData {
-                                t: time_stamps,
-                                controls: control_data,
-                            },
-                        ))
-                        .unwrap();
+                    result_data.lock().as_mut().unwrap().replace(ResultData {
+                        job_id: job_id,
+                        t: time_stamps,
+                        controls: control_data,
+                    });
+                    tx_state.send(OptimizationState::Finished(job_id)).unwrap();
                 }
                 None => {
                     let message = "no v_flow in result batch".to_string();
@@ -244,7 +290,7 @@ struct ProcessInfo {
 }
 
 fn processes_and_column_prefixes<'a>(
-    processes: impl Iterator<Item = &'a Process>,
+    processes: impl Iterator<Item = &'a BaseProcess>,
     input_node_names: &Vec<String>,
 ) -> Vec<(String, String)> {
     let mut process_names = Vec::new();
@@ -259,32 +305,27 @@ fn processes_and_column_prefixes<'a>(
     process_names
 }
 
-fn expected_control_processes(model_data: &Option<InputData>) -> Result<Vec<ProcessInfo>, String> {
-    match model_data {
-        Some(ref model_data) => Ok({
-            let process_names = processes_and_column_prefixes(
-                &mut model_data.processes.values(),
-                &input_data::find_input_node_names(model_data.nodes.values()),
-            );
-            let first_scenario_name = match model_data.scenarios.keys().next() {
-                Some(name) => name.clone(),
-                None => {
-                    return Err("no scenarios in model data".to_string());
-                }
-            };
-            process_names
-                .iter()
-                .map(|name| ProcessInfo {
-                    name: name.0.clone(),
-                    column_name: format!("{}_{}", name.1, first_scenario_name),
-                })
-                .collect()
-        }),
-        None => Err("no model data in optimization data".to_string()),
-    }
+fn expected_control_processes(model_data: &BaseInputData) -> Result<Vec<ProcessInfo>, String> {
+    let process_names = processes_and_column_prefixes(
+        &mut model_data.processes.iter(),
+        &input_data_base::find_input_node_names(model_data.nodes.iter()),
+    );
+    let first_scenario_name = match model_data.scenarios.first() {
+        Some(scenario) => scenario.name().clone(),
+        None => {
+            return Err("no scenarios in model data".to_string());
+        }
+    };
+    Ok(process_names
+        .iter()
+        .map(|name| ProcessInfo {
+            name: name.0.clone(),
+            column_name: format!("{}_{}", name.1, first_scenario_name),
+        })
+        .collect())
 }
 
-fn time_stamps_from_result_batch(batch: &RecordBatch) -> Result<Vec<DateTime<Tz>>, String> {
+fn time_stamps_from_result_batch(batch: &RecordBatch) -> Result<Vec<DateTime<Utc>>, String> {
     match batch.column_by_name("t") {
         Some(time_stamp_column) => match time_stamp_column.data_type() {
             DataType::Timestamp(TimeUnit::Millisecond, Some(time_zone)) => Ok(
@@ -305,13 +346,13 @@ fn time_stamps_from_result_batch(batch: &RecordBatch) -> Result<Vec<DateTime<Tz>
     }
 }
 
-fn convert_time_stamp_column_to_vec(column: &dyn Array, time_zone: &str) -> Vec<DateTime<Tz>> {
+fn convert_time_stamp_column_to_vec(column: &dyn Array, time_zone: &str) -> Vec<DateTime<Utc>> {
     let time_stamp_array = array::as_primitive_array::<TimestampMillisecondType>(column);
     let mut time_stamps_in_vec = Vec::with_capacity(time_stamp_array.len());
     let tz: Tz = time_zone.parse().unwrap();
     for i in 0..time_stamp_array.len() {
         let stamp = time_stamp_array.value_as_datetime_with_tz(i, tz).unwrap();
-        time_stamps_in_vec.push(stamp.into());
+        time_stamps_in_vec.push(stamp.with_timezone(&Utc));
     }
     time_stamps_in_vec
 }
@@ -319,8 +360,8 @@ fn convert_time_stamp_column_to_vec(column: &dyn Array, time_zone: &str) -> Vec<
 fn controls_from_result_batch(
     batch: &RecordBatch,
     control_processes: Vec<ProcessInfo>,
-) -> Result<BTreeMap<String, Vec<f64>>, String> {
-    let mut control_data = BTreeMap::new();
+) -> Result<Vec<ControlSignal>, String> {
+    let mut control_data = Vec::with_capacity(control_processes.len());
     for control_process in control_processes {
         match batch.column_by_name(&control_process.column_name) {
             Some(column) => match column.data_type() {
@@ -330,7 +371,10 @@ fn controls_from_result_batch(
                         .into_iter()
                         .map(|x| x.unwrap())
                         .collect::<Vec<f64>>();
-                    control_data.insert(control_process.name, data_as_vec);
+                    control_data.push(ControlSignal {
+                        name: control_process.name,
+                        signal: data_as_vec,
+                    });
                 }
                 unexpected_type => {
                     let message = format!(
@@ -407,10 +451,10 @@ async fn update_time_line_task(
     tx: oneshot::Sender<OptimizationData>,
 ) -> Result<(), String> {
     if let Ok(mut optimization_data) = rx.await {
-        optimization_data.time_data = Some(time_axis::make_time_data(
+        optimization_data.time_data = Some(time_series::make_time_data(
             start_time,
-            time_line.step(),
-            time_line.duration(),
+            time_line.step().to_time_delta(),
+            time_line.duration().to_time_delta(),
         ));
         if tx.send(optimization_data).is_err() {
             return Err("update_time_line_task: failed to send output data".to_string());
@@ -422,7 +466,7 @@ async fn update_time_line_task(
 }
 
 async fn optimization_task(
-    rx: oneshot::Receiver<OptimizationData>,
+    rx: oneshot::Receiver<Vec<(String, Vec<u8>)>>,
     zmq_port: u16,
 ) -> Result<BTreeMap<String, RecordBatch>, String> {
     let zmq_context: Context = Context::new();
@@ -438,13 +482,11 @@ async fn optimization_task(
                 Ok(inner_result) => match inner_result {
                     Ok(command) => {
                         if command == "Hello" {
-                            if let Some(ref batches) = data.input_data_batch {
-                                if let Err(error) = send_predicer_batches(&reply_socket, &batches) {
-                                    return Err(format!(
-                                        "optimization_task: failed to send batches {:?}",
-                                        error
-                                    ));
-                                }
+                            if let Err(error) = send_predicer_batches(&reply_socket, &data) {
+                                return Err(format!(
+                                    "optimization_task: failed to send batches {:?}",
+                                    error
+                                ));
                             }
                         } else if command == "Ready to receive?" {
                             send_acknowledgement(&reply_socket)
@@ -488,39 +530,30 @@ async fn optimization_task(
 }
 
 async fn data_conversion_task(
-    rx: oneshot::Receiver<OptimizationData>,
-    tx: oneshot::Sender<OptimizationData>,
+    rx: oneshot::Receiver<InputData>,
+    tx: oneshot::Sender<Vec<(String, Vec<u8>)>>,
 ) -> Result<(), String> {
-    if let Ok(optimization_data) = rx.await {
-        let optimization_data_arc = Arc::new(AsyncMutex::new(optimization_data.clone()));
-
-        let data_clone = Arc::clone(&optimization_data_arc);
-        let check_handle: JoinHandle<()> = tokio::spawn(async move {
-            utilities::check_ts_data_against_temporals(data_clone).await;
-        });
-        check_handle.await.expect("time series data check failed");
-        let mut updated_data = optimization_data_arc.lock().await;
-        if let Some(model_data) = &updated_data.model_data {
-            match arrow_input::create_and_serialize_record_batches(model_data) {
-                Ok(serialized_batches) => {
-                    updated_data.input_data_batch = Some(serialized_batches);
-                    if tx.send(updated_data.clone()).is_err() {
-                        return Err(
-                            "data_conversion_task: failed to send converted OptimizationData"
-                                .to_string(),
-                        );
-                    }
-                }
-                Err(e) => {
-                    return Err(format!(
-                        "data_conversion_task: failed to serialize model data: {}",
-                        e
-                    ));
+    if let Ok(input_data) = rx.await {
+        match arrow_input::create_and_serialize_record_batches(&input_data) {
+            Ok(serialized_batches) => {
+                if tx.send(serialized_batches).is_err() {
+                    return Err(
+                        "data_conversion_task: failed to send converted OptimizationData"
+                            .to_string(),
+                    );
                 }
             }
+            Err(e) => {
+                return Err(format!(
+                    "data_conversion_task: failed to serialize model data: {}",
+                    e
+                ));
+            }
         }
+        Ok(())
+    } else {
+        Err("data_conversion_task: input channel closed".to_string())
     }
-    Ok(())
 }
 
 fn send_acknowledgement(socket: &Socket) -> Result<(), Box<dyn Error>> {
@@ -606,79 +639,68 @@ fn receive_single_predicer_result(socket: &Socket) -> Result<RecordBatch, Box<dy
     Ok(batches.pop().expect("batches should have an element"))
 }
 
-async fn update_model_data_task(
+async fn generate_model_task(
     rx: oneshot::Receiver<OptimizationData>,
-    tx: oneshot::Sender<OptimizationData>,
+    tx: oneshot::Sender<InputData>,
 ) -> Result<(), String> {
     if let Ok(mut optimization_data) = rx.await {
-        if let Err(e) = update_timeseries(&mut optimization_data) {
-            return Err(format!(
-                "update_model_data_task: failed to update timeseries: {}",
-                e
-            ));
-        }
-        if let Err(e) = update_outside_node_inflow(&mut optimization_data) {
+        let time_line = optimization_data
+            .time_data
+            .as_ref()
+            .ok_or("generate_model_task: didn't receive time data".to_string())?;
+        let mut input_data = optimization_data
+            .input_data
+            .expand_to_time_series(time_line);
+        let weather_data = optimization_data.weather_data.take().ok_or(
+            "update_model_data_task: weather data missing in optimization data".to_string(),
+        )?;
+        if let Err(e) = update_outside_node_inflow(&mut input_data, weather_data) {
             return Err(format!(
                 "update_model_data_task: failed to update outside node inflow: {}",
                 e
             ));
         }
-        if optimization_data.fetch_elec_data {
-            if let Err(e) = update_npe_market_prices(&mut optimization_data) {
-                return Err(format!(
-                    "update_model_data_task: failed to update NPE market prices: {}",
-                    e
-                ));
-            }
+        let electricity_price_data = optimization_data.elec_price_data.take().ok_or(
+            "update_model_data_task: electricity price data missing in optimization data"
+                .to_string(),
+        )?;
+        if let Err(e) = update_npe_market_prices(&mut input_data, electricity_price_data) {
+            return Err(format!(
+                "update_model_data_task: failed to update NPE market prices: {}",
+                e
+            ));
         }
-        if tx.send(optimization_data).is_err() {
-            return Err(
-                "update_model_data_task: failed to send updated OptimizationData".to_string(),
-            );
+        input_data.check_ts_data_against_temporals()?;
+        if tx.send(input_data).is_err() {
+            return Err("update_model_data_task: failed to send generated input data".to_string());
         }
         return Ok(());
     }
     Err("update_model_data_task: input channel closed".to_string())
 }
 
-fn update_timeseries(optimization_data: &mut OptimizationData) -> Result<(), &'static str> {
-    let time_data = optimization_data
-        .time_data
-        .as_ref()
-        .ok_or("time data is not available")?;
-    if let Some(model_data) = &mut optimization_data.model_data {
-        model_data.temporals.t = time_data.clone();
-        Ok(())
-    } else {
-        Err("model data is not available")
-    }
-}
-
 fn update_npe_market_prices(
-    optimization_data: &mut input_data::OptimizationData,
-) -> Result<(), &'static str> {
-    if let Some(electricity_price_data) = &optimization_data.elec_price_data {
-        let model_data = optimization_data
-            .model_data
-            .as_mut()
-            .ok_or("model data is not available")?;
-        let markets = &mut model_data.markets;
-        if let Some(npe_market) = markets.get_mut("npe") {
-            if let Some(price_data) = &electricity_price_data.price_data {
-                npe_market.price.ts_data = price_data.ts_data.clone();
-            }
-            if let Some(up_price_data) = &electricity_price_data.up_price_data {
-                npe_market.up_price.ts_data = up_price_data.ts_data.clone();
-            }
-            if let Some(down_price_data) = &electricity_price_data.down_price_data {
-                npe_market.down_price.ts_data = down_price_data.ts_data.clone();
-            }
-            return Ok(());
-        } else {
-            return Err("NPE market not found in markets");
+    input_data: &mut InputData,
+    electricity_price_data: ElectricityPriceData,
+) -> Result<(), String> {
+    let electricity_market_name = "npe";
+    let markets = &mut input_data.markets;
+    if let Some(npe_market) = markets.get_mut(electricity_market_name) {
+        if let Some(price_data) = &electricity_price_data.price_data {
+            npe_market.price.ts_data = price_data.ts_data.clone();
         }
+        if let Some(up_price_data) = &electricity_price_data.up_price_data {
+            npe_market.up_price.ts_data = up_price_data.ts_data.clone();
+        }
+        if let Some(down_price_data) = &electricity_price_data.down_price_data {
+            npe_market.down_price.ts_data = down_price_data.ts_data.clone();
+        }
+        return Ok(());
     } else {
-        return Err("electricity price data is not available");
+        return Err(format!(
+            "electricity market '{}' not found in markets",
+            electricity_market_name
+        ));
     }
 }
 
@@ -699,7 +721,6 @@ fn check_stamps_match(
 
 async fn fetch_weather_data_task(
     location: &LocationSettings,
-    time_line: TimeLine,
     time_line_settings: &TimeLineSettings,
     python_exec: &String,
     weather_fetcher_script: &String,
@@ -707,13 +728,17 @@ async fn fetch_weather_data_task(
     tx: oneshot::Sender<OptimizationData>,
 ) -> Result<(), String> {
     if let Ok(mut optimization_data) = rx.await {
+        let time_line = optimization_data
+            .time_data
+            .as_ref()
+            .ok_or("fetch_weather_data_task: did not receive time data".to_string())?;
         let start_time = time_line.first().ok_or("empty time line".to_string())?;
         let end_time = time_line.last().ok_or("empty time line".to_string())?;
         match fetch_weather_data(
             &location.place,
             &start_time,
             &end_time,
-            &time_line_settings.step(),
+            &time_line_settings.step().to_time_delta(),
             python_exec,
             weather_fetcher_script,
         ) {
@@ -725,8 +750,9 @@ async fn fetch_weather_data_task(
                 if let Err(error) = check_stamps_match(&weather_values, &time_line) {
                     return Err(error);
                 }
-                let values = time_axis::extract_values_from_pairs_checked(&weather_values, &series)
-                    .or_else(|e| Err(format!("fetch_weather_data: {}", e)))?;
+                let values =
+                    time_series::extract_values_from_pairs_checked(&weather_values, &series)
+                        .or_else(|e| Err(format!("fetch_weather_data: {}", e)))?;
                 optimization_data.weather_data = Some(update_weather_data(series, &values));
             }
             Err(e) => {
@@ -748,27 +774,19 @@ async fn fetch_weather_data_task(
 }
 
 fn update_outside_node_inflow(
-    optimization_data: &mut OptimizationData,
-) -> Result<(), &'static str> {
-    if let Some(weather_data) = &optimization_data.weather_data {
-        let model_data = optimization_data
-            .model_data
-            .as_mut()
-            .ok_or("model data is not available")?;
-        let nodes = &mut model_data.nodes;
-        if let Some(outside_node) = nodes.get_mut("outside") {
-            if outside_node.is_inflow {
-                outside_node.inflow.ts_data = weather_data.clone();
-                return Ok(());
-            } else {
-                return Err("outside node is not marked for inflow");
-            }
-        } else {
-            return Err("outside node not found in nodes");
-        }
-    } else {
-        return Err("weather data is not available");
+    input_data: &mut InputData,
+    weather_data: WeatherData,
+) -> Result<(), String> {
+    let outside_node_name = "outside";
+    let nodes = &mut input_data.nodes;
+    let outside_node = nodes
+        .get_mut(outside_node_name)
+        .ok_or("outside node not found in nodes".to_string())?;
+    if !outside_node.is_inflow {
+        return Err("outside node is not marked for inflow".to_string());
     }
+    outside_node.inflow.ts_data = weather_data;
+    Ok(())
 }
 
 // Function to create TimeSeriesData from weather values and update the weather_data field in optimization_data
@@ -1004,7 +1022,7 @@ fn create_and_update_elec_price_data(
         let original_ts_data = Some(create_modified_price_series_data(price_series, 1.0));
         let up_price_ts_data = Some(create_modified_price_series_data(price_series, 1.1));
         let down_price_ts_data = Some(create_modified_price_series_data(price_series, 0.9));
-        let electricity_price_data = input_data::ElectricityPriceData {
+        let electricity_price_data = ElectricityPriceData {
             price_data: original_ts_data,
             up_price_data: up_price_ts_data,
             down_price_data: down_price_ts_data,
@@ -1041,11 +1059,14 @@ fn create_modified_price_series_data(
 
 async fn fetch_electricity_price_task(
     location: &LocationSettings,
-    time_line: TimeLine,
     rx: oneshot::Receiver<OptimizationData>,
     tx: oneshot::Sender<OptimizationData>,
 ) -> Result<(), String> {
     if let Ok(mut optimization_data) = rx.await {
+        let time_line = optimization_data
+            .time_data
+            .as_ref()
+            .ok_or("fetch_electricity_price_task: didn't receive time data")?;
         let format_string = "%Y-%m-%dT%H:%M:%S%.3fZ";
         let start_time = time_line.first().ok_or("time line is empty")?;
         let start_time_str = start_time.format(&format_string).to_string();
@@ -1321,17 +1342,17 @@ mod tests {
     }
     mod processes_and_column_prefixes {
         use super::*;
-        use crate::input_data::Topology;
+        use crate::input_data_base::BaseTopology;
         #[test]
         fn column_prefix_gets_generated() {
-            let processes = vec![Process {
+            let processes = vec![BaseProcess {
                 name: "control_process".to_string(),
-                topos: vec![Topology {
+                topos: vec![BaseTopology {
                     source: "input_node".to_string(),
                     sink: "control_process".to_string(),
-                    ..Topology::default()
+                    ..BaseTopology::default()
                 }],
-                ..Process::default()
+                ..BaseProcess::default()
             }];
             let input_node_names = vec!["input_node".to_string()];
             let process_names = processes_and_column_prefixes(processes.iter(), &input_node_names);
