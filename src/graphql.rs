@@ -211,8 +211,9 @@ impl Mutation {
     }
     #[graphql(description = "Save the model on disk.")]
     fn save_model(context: &HerttaContext) -> MaybeError {
+        let file_path = model::make_model_file_path();
         let model = context.model.lock().unwrap();
-        let result = model::write_model_to_file(&model).err();
+        let result = model::write_model_to_file(&model, &file_path).err();
         MaybeError { error: result }
     }
     #[graphql(description = "Clear input data from model.")]

@@ -1,7 +1,7 @@
 use clap::Parser;
 use hertta::event_loop::{self, OptimizationState, OptimizationTask, ResultData};
 use hertta::graphql::{HerttaContext, Mutation, Query, Schema};
-use hertta::model::Model;
+use hertta::model::{self, Model};
 use hertta::settings;
 use juniper::{EmptySubscription, RootNode};
 use std::error::Error;
@@ -56,6 +56,17 @@ fn print_schema_json() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn get_model() -> Model {
+    let file_path = model::make_model_file_path();
+    if file_path.is_file() {
+        match model::read_model_from_file(&file_path) {
+            Ok(model) => return model,
+            Err(error) => println!("{}; using default model instead", error),
+        }
+    }
+    model::Model::default()
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = CommandLineArgs::parse();
@@ -81,7 +92,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (tx_optimize, rx_optimize) = mpsc::channel::<(i32, OptimizationTask)>(1);
     let (tx_state, rx_state) = watch::channel::<OptimizationState>(OptimizationState::Idle);
     let settings_clone = Arc::clone(&settings);
-    let model = Arc::new(Mutex::new(Model::default()));
+    let model = Arc::new(Mutex::new(get_model()));
     let model_clone = Arc::clone(&model);
     let result_data = Arc::new(Mutex::<Option<ResultData>>::new(None));
     let result_data_clone = Arc::clone(&result_data);
