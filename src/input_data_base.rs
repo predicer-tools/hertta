@@ -234,13 +234,13 @@ pub struct BaseProcess {
     pub cf: f64,
     pub eff_ts: f64,
     pub eff_ops: Vec<String>,
-    pub eff_fun: Vec<Piece>,
+    pub eff_fun: Vec<Point>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
-pub struct Piece {
-    pub start: f64,
-    pub end: f64,
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
 }
 
 impl ExpandToTimeSeries for BaseProcess {
@@ -279,7 +279,7 @@ impl ExpandToTimeSeries for BaseProcess {
             eff_fun: self
                 .eff_fun
                 .iter()
-                .map(|piece| (piece.start, piece.end))
+                .map(|point| (point.x, point.y))
                 .collect(),
         }
     }
@@ -645,10 +645,7 @@ mod tests {
             cf: 2.0,
             eff_ts: 2.1,
             eff_ops: vec!["oops!".to_string()],
-            eff_fun: vec![Piece {
-                start: 2.2,
-                end: 2.3,
-            }],
+            eff_fun: vec![Point { x: 2.2, y: 2.3 }],
         };
         let process = base_process.expand_to_time_series(&time_line, &scenarios);
         let base_node = BaseNode {
@@ -833,10 +830,7 @@ mod tests {
             cf: 2.0,
             eff_ts: 2.1,
             eff_ops: vec!["oops!".to_string()],
-            eff_fun: vec![Piece {
-                start: 2.2,
-                end: 2.3,
-            }],
+            eff_fun: vec![Point { x: 2.2, y: 2.3 }],
         };
         let process = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(process.name, "Conversion");
