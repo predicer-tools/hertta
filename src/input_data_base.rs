@@ -34,6 +34,12 @@ fn expand_and_use_name_as_key<T: ExpandToTimeSeries + Name>(
     )
 }
 
+pub trait GroupItem {
+    fn groups(&self) -> &Vec<String>;
+    fn groups_mut(&mut self) -> &mut Vec<String>;
+    fn group_type(&self) -> &'static str;
+}
+
 #[derive(Clone, Debug, Default, GraphQLObject, Deserialize, Serialize)]
 #[graphql(description = "The model itself.")]
 pub struct BaseInputData {
@@ -215,7 +221,7 @@ impl ExpandToTimeSeries for BaseInputDataSetup {
 pub struct BaseProcess {
     pub name: String,
     pub groups: Vec<String>,
-    pub conversion: LongInt,
+    pub conversion: String,
     pub is_cf: bool,
     pub is_cf_fix: bool,
     pub is_online: bool,
@@ -237,6 +243,18 @@ pub struct BaseProcess {
     pub eff_fun: Vec<Point>,
 }
 
+impl GroupItem for BaseProcess {
+    fn group_type(&self) -> &'static str {
+        "process"
+    }
+    fn groups(&self) -> &Vec<String> {
+        &self.groups
+    }
+    fn groups_mut(&mut self) -> &mut Vec<String> {
+        &mut self.groups
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
 pub struct Point {
     pub x: f64,
@@ -253,7 +271,7 @@ impl ExpandToTimeSeries for BaseProcess {
         Process {
             name: self.name.clone(),
             groups: self.groups.clone(),
-            conversion: self.conversion.value,
+            conversion: self.conversion_as_int().unwrap_or(1),
             is_cf: self.is_cf,
             is_cf_fix: self.is_cf_fix,
             is_online: self.is_online,
@@ -281,6 +299,19 @@ impl ExpandToTimeSeries for BaseProcess {
                 .iter()
                 .map(|point| (point.x, point.y))
                 .collect(),
+        }
+    }
+}
+
+impl BaseProcess {
+    fn conversion_as_int(&self) -> Result<i64, String> {
+        match self.conversion.as_str() {
+            "unit" => Ok(1),
+            "transport" => Ok(2),
+            _ => Err(format!(
+                "unknown conversion {}; valid values ['unit', 'transport']",
+                self.conversion
+            )),
         }
     }
 }
@@ -318,6 +349,18 @@ impl ExpandToTimeSeries for BaseNode {
             cost: to_time_series(self.cost, time_line, scenarios),
             inflow: to_time_series(self.inflow, time_line, scenarios),
         }
+    }
+}
+
+impl GroupItem for BaseNode {
+    fn group_type(&self) -> &'static str {
+        "node"
+    }
+    fn groups(&self) -> &Vec<String> {
+        &self.groups
+    }
+    fn groups_mut(&mut self) -> &mut Vec<String> {
+        &mut self.groups
     }
 }
 
@@ -626,7 +669,7 @@ mod tests {
         let base_process = BaseProcess {
             name: "Conversion".to_string(),
             groups: vec!["Group".to_string()],
-            conversion: LongInt { value: 23 },
+            conversion: "unit".to_string(),
             is_cf: true,
             is_cf_fix: false,
             is_online: true,
@@ -811,7 +854,7 @@ mod tests {
         let base = BaseProcess {
             name: "Conversion".to_string(),
             groups: vec!["Group".to_string()],
-            conversion: LongInt { value: 23 },
+            conversion: "transport".to_string(),
             is_cf: true,
             is_cf_fix: false,
             is_online: true,
@@ -835,7 +878,7 @@ mod tests {
         let process = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(process.name, "Conversion");
         assert_eq!(process.groups, vec!["Group".to_string()]);
-        assert_eq!(process.conversion, 23);
+        assert_eq!(process.conversion, 2);
         assert!(process.is_cf);
         assert!(!process.is_cf_fix);
         assert!(process.is_online);

@@ -23,6 +23,14 @@ impl From<i64> for LongInt {
     }
 }
 
+impl From<i32> for LongInt {
+    fn from(value: i32) -> Self {
+        LongInt {
+            value: value as i64,
+        }
+    }
+}
+
 struct LongIntVisitor;
 
 impl<'de> Visitor<'de> for LongIntVisitor {

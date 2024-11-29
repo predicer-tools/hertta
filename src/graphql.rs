@@ -1,3 +1,10 @@
+mod group_input;
+mod input_data_setup_input;
+mod node_input;
+mod process_input;
+mod state_input;
+mod time_line_input;
+mod topology_input;
 pub mod types;
 
 use crate::event_loop::{OptimizationState, OptimizationTask};
@@ -5,15 +12,21 @@ use crate::input_data_base::BaseInputData;
 use crate::model::{self, Model};
 use crate::settings::{LocationSettings, Settings};
 use crate::status::Status;
-use crate::time_line_settings::{Duration, TimeLineSettings};
+use input_data_setup_input::InputDataSetupInput;
 use juniper::{
     graphql_object, Context, EmptySubscription, FieldResult, GraphQLInputObject, GraphQLObject,
     GraphQLUnion, Nullable, RootNode,
 };
+use node_input::AddNodeInput;
+use process_input::AddProcessInput;
+use state_input::SetStateInput;
+use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
+use time_line_input::TimeLineInput;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio::sync::Semaphore;
+use topology_input::{AddTopologyInput, AddTopologyResult};
 
 #[derive(Debug, GraphQLObject)]
 struct ValidationError {
@@ -30,7 +43,7 @@ impl ValidationError {
     }
 }
 
-#[derive(Debug, GraphQLObject)]
+#[derive(Debug, Default, GraphQLObject)]
 struct ValidationErrors {
     errors: Vec<ValidationError>,
 }
@@ -39,30 +52,6 @@ impl From<Vec<ValidationError>> for ValidationErrors {
     fn from(value: Vec<ValidationError>) -> Self {
         ValidationErrors { errors: value }
     }
-}
-
-#[derive(GraphQLInputObject)]
-struct DurationInput {
-    hours: i32,
-    minutes: i32,
-    seconds: i32,
-}
-
-#[derive(GraphQLInputObject)]
-struct TimeLineInput {
-    duration: Option<DurationInput>,
-    step: Option<DurationInput>,
-}
-
-#[derive(Default, GraphQLInputObject)]
-struct ModelInput {
-    time_line: Option<TimeLineInput>,
-}
-
-#[derive(GraphQLUnion)]
-enum ModelResult {
-    Ok(Model),
-    Err(ValidationErrors),
 }
 
 #[derive(GraphQLInputObject)]
@@ -105,6 +94,20 @@ enum StartOptimizationResult {
 struct MaybeError {
     #[graphql(description = "Error message; if null, the operation succeeded.")]
     error: Option<String>,
+}
+
+impl From<&str> for MaybeError {
+    fn from(value: &str) -> Self {
+        MaybeError {
+            error: Some(String::from(value)),
+        }
+    }
+}
+
+impl MaybeError {
+    pub fn new_ok() -> Self {
+        MaybeError { error: None }
+    }
 }
 
 pub struct HerttaContext {
@@ -198,16 +201,13 @@ impl Mutation {
             job_id: current_job_id,
         })
     }
-    fn update_model(model_input: ModelInput, context: &HerttaContext) -> ModelResult {
-        let mut errors = Vec::new();
+    #[graphql(description = "Updates model's time line.")]
+    fn update_time_line(
+        time_line_input: TimeLineInput,
+        context: &HerttaContext,
+    ) -> ValidationErrors {
         let mut model = context.model.lock().unwrap();
-        if let Some(ref time_line_input) = model_input.time_line {
-            update_time_line(time_line_input, &mut model.time_line, &mut errors);
-        }
-        if !errors.is_empty() {
-            return ModelResult::Err(ValidationErrors::from(errors));
-        }
-        ModelResult::Ok(model.clone())
+        time_line_input::update_time_line(time_line_input, &mut model.time_line)
     }
     #[graphql(description = "Save the model on disk.")]
     fn save_model(context: &HerttaContext) -> MaybeError {
@@ -221,7 +221,101 @@ impl Mutation {
         let mut lock_guard = context.model.lock();
         let model = lock_guard.as_mut().unwrap();
         model.input_data = BaseInputData::default();
-        MaybeError { error: None }
+        MaybeError::new_ok()
+    }
+    #[graphql(description = "Update input data setup.")]
+    fn update_input_data_setup(
+        setup_update: InputDataSetupInput,
+        context: &HerttaContext,
+    ) -> ValidationErrors {
+        let mut model = context.model.lock().unwrap();
+        input_data_setup_input::update_input_data_setup(setup_update, &mut model.input_data.setup)
+    }
+    #[graphql(description = "Add new node group to model")]
+    fn add_node_group(name: String, context: &HerttaContext) -> MaybeError {
+        let mut model_ref = context.model.lock().unwrap();
+        let model = model_ref.deref_mut();
+        group_input::add_node_group(name, &mut model.input_data.groups)
+    }
+    #[graphql(description = "Add new process group to model")]
+    fn add_process_group(name: String, context: &HerttaContext) -> MaybeError {
+        let mut model_ref = context.model.lock().unwrap();
+        let model = model_ref.deref_mut();
+        group_input::add_process_group(name, &mut model.input_data.groups)
+    }
+    #[graphql(description = "Add new process to model.")]
+    fn add_process(process: AddProcessInput, context: &HerttaContext) -> ValidationErrors {
+        let mut model_ref = context.model.lock().unwrap();
+        let model = model_ref.deref_mut();
+        process_input::add_process(
+            process,
+            &mut model.input_data.processes,
+            &mut model.input_data.nodes,
+        )
+    }
+    #[graphql(description = "Add process to process group.")]
+    fn add_process_to_group(
+        process_name: String,
+        group_name: String,
+        context: &HerttaContext,
+    ) -> MaybeError {
+        let mut model_ref = context.model.lock().unwrap();
+        let model = model_ref.deref_mut();
+        group_input::add_to_group(
+            process_name,
+            group_name,
+            &mut model.input_data.processes,
+            &mut model.input_data.groups,
+        )
+    }
+    #[graphql(description = "Add new topology to given process.")]
+    fn add_topology(
+        topology: AddTopologyInput,
+        process_name: String,
+        context: &HerttaContext,
+    ) -> AddTopologyResult {
+        let mut model_ref = context.model.lock().unwrap();
+        let model = model_ref.deref_mut();
+        topology_input::add_topology_to_process(
+            &process_name,
+            topology,
+            &mut model.input_data.processes,
+            &mut model.input_data.nodes,
+        )
+    }
+    fn add_node(node: AddNodeInput, context: &HerttaContext) -> ValidationErrors {
+        let mut model_ref = context.model.lock().unwrap();
+        let model = model_ref.deref_mut();
+        node_input::add_node(
+            node,
+            &mut model.input_data.nodes,
+            &mut model.input_data.processes,
+        )
+    }
+    #[graphql(description = "Add node to node group.")]
+    fn add_node_to_group(
+        node_name: String,
+        group_name: String,
+        context: &HerttaContext,
+    ) -> MaybeError {
+        let mut model_ref = context.model.lock().unwrap();
+        let model = model_ref.deref_mut();
+        group_input::add_to_group(
+            node_name,
+            group_name,
+            &mut model.input_data.nodes,
+            &mut model.input_data.groups,
+        )
+    }
+    #[graphql(description = "Set state for node. Null clears the state.")]
+    fn set_state(
+        state: Option<SetStateInput>,
+        node_name: String,
+        context: &HerttaContext,
+    ) -> ValidationErrors {
+        let mut model_ref = context.model.lock().unwrap();
+        let model = model_ref.deref_mut();
+        state_input::set_state_for_node(&node_name, state, &mut model.input_data.nodes)
     }
     fn update_settings(settings_input: SettingsInput, context: &HerttaContext) -> SettingsResult {
         let errors = Vec::new();
@@ -235,41 +329,6 @@ impl Mutation {
             return SettingsResult::Err(ValidationErrors::from(errors));
         }
         SettingsResult::Ok(settings.clone())
-    }
-}
-
-fn update_time_line(
-    input: &TimeLineInput,
-    time_line: &mut TimeLineSettings,
-    errors: &mut Vec<ValidationError>,
-) {
-    if let Some(ref duration_input) = input.duration {
-        duration_from_input(
-            duration_input,
-            |d| time_line.set_duration(d),
-            "duration",
-            errors,
-        );
-    }
-    if let Some(ref step_input) = input.step {
-        duration_from_input(step_input, |d| time_line.set_step(d), "step", errors);
-    }
-}
-
-fn duration_from_input<F>(
-    input: &DurationInput,
-    set_duration: F,
-    field: &str,
-    errors: &mut Vec<ValidationError>,
-) where
-    F: FnOnce(Duration) -> Result<(), String>,
-{
-    match Duration::try_new(input.hours, input.minutes, input.seconds) {
-        Ok(duration) => match set_duration(duration) {
-            Ok(..) => (),
-            Err(error) => errors.push(ValidationError::new(field, &error)),
-        },
-        Err(error) => errors.push(ValidationError::new(field, &error)),
     }
 }
 
@@ -290,7 +349,6 @@ pub type Schema = RootNode<'static, Query, Mutation, EmptySubscription<HerttaCon
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeDelta;
 
     fn default_context() -> HerttaContext {
         let settings = Arc::new(Mutex::new(Settings::default()));
@@ -343,155 +401,5 @@ mod tests {
                 "Akun puoti"
             );
         }
-    }
-    #[test]
-    fn update_time_line_in_model() {
-        let time_line_input = TimeLineInput {
-            duration: Some(DurationInput {
-                hours: 13,
-                minutes: 0,
-                seconds: 0,
-            }),
-            step: Some(DurationInput {
-                hours: 0,
-                minutes: 45,
-                seconds: 0,
-            }),
-        };
-        let input = ModelInput {
-            time_line: Some(time_line_input),
-        };
-        let context = default_context();
-        let output = match Mutation::update_model(input, &context) {
-            ModelResult::Ok(time_line) => time_line,
-            ModelResult::Err(..) => panic!("setting time line should not fail"),
-        };
-        assert_eq!(
-            output.time_line.duration().to_time_delta(),
-            TimeDelta::hours(13)
-        );
-        assert_eq!(
-            output.time_line.step().to_time_delta(),
-            TimeDelta::minutes(45)
-        );
-        {
-            let model = context.model.lock().unwrap();
-            assert_eq!(
-                model.time_line.duration().to_time_delta(),
-                TimeDelta::hours(13)
-            );
-            assert_eq!(
-                model.time_line.step().to_time_delta(),
-                TimeDelta::minutes(45)
-            );
-        }
-    }
-
-    #[test]
-    fn setting_negative_duration_causes_error() {
-        let time_line_input = TimeLineInput {
-            duration: Some(DurationInput {
-                hours: -13,
-                minutes: 0,
-                seconds: 0,
-            }),
-            step: Some(DurationInput {
-                hours: 0,
-                minutes: 45,
-                seconds: 0,
-            }),
-        };
-        let input = ModelInput {
-            time_line: Some(time_line_input),
-        };
-        let context = default_context();
-        match Mutation::update_model(input, &context) {
-            ModelResult::Ok(..) => panic!("negative duration should cause error"),
-            ModelResult::Err(errors) => {
-                assert_eq!(errors.errors.len(), 1);
-                assert_eq!(errors.errors[0].field, "duration");
-                assert_eq!(errors.errors[0].message, "hours should be non-negative");
-            }
-        };
-        let model = context.model.lock().unwrap();
-        let vanilla_time_line = TimeLineSettings::default();
-        assert_eq!(model.time_line.duration(), vanilla_time_line.duration());
-        assert_eq!(
-            model.time_line.step().to_time_delta(),
-            TimeDelta::minutes(45)
-        );
-    }
-
-    #[test]
-    fn setting_negative_step_causes_error() {
-        let time_line_input = TimeLineInput {
-            duration: Some(DurationInput {
-                hours: 13,
-                minutes: 0,
-                seconds: 0,
-            }),
-            step: Some(DurationInput {
-                hours: 0,
-                minutes: -45,
-                seconds: 0,
-            }),
-        };
-        let input = ModelInput {
-            time_line: Some(time_line_input),
-        };
-
-        let context = default_context();
-        match Mutation::update_model(input, &context) {
-            ModelResult::Ok(..) => panic!("negative step should cause error"),
-            ModelResult::Err(errors) => {
-                assert_eq!(errors.errors.len(), 1);
-                assert_eq!(errors.errors[0].field, "step");
-                assert_eq!(errors.errors[0].message, "minutes should be non-negative");
-            }
-        };
-        let model = context.model.lock().unwrap();
-        assert_eq!(
-            model.time_line.duration().to_time_delta(),
-            TimeDelta::hours(13)
-        );
-        let vanilla_time_line = TimeLineSettings::default();
-        assert_eq!(model.time_line.step(), vanilla_time_line.step());
-    }
-    #[test]
-    fn setting_step_longer_than_duration_causes_error() {
-        let time_line_input = TimeLineInput {
-            duration: Some(DurationInput {
-                hours: 13,
-                minutes: 0,
-                seconds: 0,
-            }),
-            step: Some(DurationInput {
-                hours: 45,
-                minutes: 0,
-                seconds: 0,
-            }),
-        };
-        let input = ModelInput {
-            time_line: Some(time_line_input),
-        };
-        let context = default_context();
-        match Mutation::update_model(input, &context) {
-            ModelResult::Ok(..) => panic!("too long step should cause error"),
-            ModelResult::Err(errors) => {
-                assert_eq!(errors.errors.len(), 1);
-                assert_eq!(errors.errors[0].field, "step");
-                assert_eq!(
-                    errors.errors[0].message,
-                    "time line step should not exceed duration"
-                );
-            }
-        };
-        let model = context.model.lock().unwrap();
-        assert_eq!(
-            model.time_line.duration().to_time_delta(),
-            TimeDelta::hours(13)
-        );
-        let vanilla_time_line = TimeLineSettings::default();
-        assert_eq!(model.time_line.step(), vanilla_time_line.step());
     }
 }
