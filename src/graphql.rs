@@ -1,7 +1,13 @@
+mod con_factor_input;
+mod gen_constraint_input;
 mod group_input;
 mod input_data_setup_input;
+mod market_input;
+mod node_diffusion_input;
 mod node_input;
 mod process_input;
+mod risk_input;
+mod scenario_input;
 mod state_input;
 mod time_line_input;
 mod topology_input;
@@ -12,13 +18,18 @@ use crate::input_data_base::BaseInputData;
 use crate::model::{self, Model};
 use crate::settings::{LocationSettings, Settings};
 use crate::status::Status;
+use con_factor_input::{AddConFactorInput, AddConFactorResult};
+use gen_constraint_input::AddGenConstraintInput;
 use input_data_setup_input::InputDataSetupInput;
 use juniper::{
     graphql_object, Context, EmptySubscription, FieldResult, GraphQLInputObject, GraphQLObject,
     GraphQLUnion, Nullable, RootNode,
 };
+use market_input::AddMarketInput;
+use node_diffusion_input::AddNodeDiffusionInput;
 use node_input::AddNodeInput;
 use process_input::AddProcessInput;
+use risk_input::AddRiskInput;
 use state_input::SetStateInput;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
@@ -101,6 +112,12 @@ impl From<&str> for MaybeError {
         MaybeError {
             error: Some(String::from(value)),
         }
+    }
+}
+
+impl From<String> for MaybeError {
+    fn from(value: String) -> Self {
+        MaybeError { error: Some(value) }
     }
 }
 
@@ -201,13 +218,18 @@ impl Mutation {
             job_id: current_job_id,
         })
     }
-    #[graphql(description = "Updates model's time line.")]
+    #[graphql(description = "Update model's time line.")]
     fn update_time_line(
         time_line_input: TimeLineInput,
         context: &HerttaContext,
     ) -> ValidationErrors {
         let mut model = context.model.lock().unwrap();
         time_line_input::update_time_line(time_line_input, &mut model.time_line)
+    }
+    #[graphql(description = "Add new scenario to model.")]
+    fn add_scenario(name: String, weight: f64, context: &HerttaContext) -> MaybeError {
+        let mut model = context.model.lock().unwrap();
+        scenario_input::add_scenario(name, weight, &mut model.input_data.scenarios)
     }
     #[graphql(description = "Save the model on disk.")]
     fn save_model(context: &HerttaContext) -> MaybeError {
@@ -308,7 +330,7 @@ impl Mutation {
         )
     }
     #[graphql(description = "Set state for node. Null clears the state.")]
-    fn set_state(
+    fn set_node_state(
         state: Option<SetStateInput>,
         node_name: String,
         context: &HerttaContext,
@@ -316,6 +338,56 @@ impl Mutation {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
         state_input::set_state_for_node(&node_name, state, &mut model.input_data.nodes)
+    }
+    #[graphql(description = "Add diffusion for node.")]
+    fn add_node_diffusion(
+        diffusion: AddNodeDiffusionInput,
+        context: &HerttaContext,
+    ) -> ValidationErrors {
+        let mut model_ref = context.model.lock().unwrap();
+        let model = model_ref.deref_mut();
+        node_diffusion_input::add_node_diffusion(
+            diffusion,
+            &mut model.input_data.node_diffusion,
+            &model.input_data.nodes,
+        )
+    }
+    #[graphql(description = "Add new market to model.")]
+    fn add_market(market: AddMarketInput, context: &HerttaContext) -> ValidationErrors {
+        let mut model_ref = context.model.lock().unwrap();
+        let model = model_ref.deref_mut();
+        market_input::add_market(
+            market,
+            &mut model.input_data.markets,
+            &model.input_data.nodes,
+            &model.input_data.groups,
+        )
+    }
+    #[graphql(description = "Adds new risk to model.")]
+    fn add_risk(risk: AddRiskInput, context: &HerttaContext) -> ValidationErrors {
+        let mut model = context.model.lock().unwrap();
+        risk_input::add_risk(risk, &mut model.input_data.risk)
+    }
+    #[graphql(description = "Add new generic constraint.")]
+    fn add_gen_constraint(
+        constraint: AddGenConstraintInput,
+        context: &HerttaContext,
+    ) -> ValidationErrors {
+        let mut model = context.model.lock().unwrap();
+        gen_constraint_input::add_gen_constraint(constraint, &mut model.input_data.gen_constraints)
+    }
+    #[graphql(description = "Add new constraint factor to generic constraint.")]
+    fn add_con_factor_to_gen_constraint(
+        factor: AddConFactorInput,
+        constraint_name: String,
+        context: &HerttaContext,
+    ) -> AddConFactorResult {
+        let mut model = context.model.lock().unwrap();
+        con_factor_input::add_con_factor_to_constraint(
+            factor,
+            constraint_name,
+            &mut model.input_data.gen_constraints,
+        )
     }
     fn update_settings(settings_input: SettingsInput, context: &HerttaContext) -> SettingsResult {
         let errors = Vec::new();

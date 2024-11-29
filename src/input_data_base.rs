@@ -431,11 +431,11 @@ pub struct BaseMarket {
     pub up_price: f64,
     pub down_price: f64,
     pub reserve_activation_price: f64,
-    pub fixed: Vec<FixInfo>,
+    pub fixed: Vec<MarketFix>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
-pub struct FixInfo {
+pub struct MarketFix {
     pub name: String,
     pub factor: f64,
 }
@@ -739,7 +739,7 @@ mod tests {
             up_price: 1.6,
             down_price: 1.7,
             reserve_activation_price: 1.8,
-            fixed: vec![FixInfo {
+            fixed: vec![MarketFix {
                 name: "Fix".to_string(),
                 factor: 1.9,
             }],
@@ -995,7 +995,7 @@ mod tests {
             up_price: 1.6,
             down_price: 1.7,
             reserve_activation_price: 1.8,
-            fixed: vec![FixInfo {
+            fixed: vec![MarketFix {
                 name: "Fix".to_string(),
                 factor: 1.9,
             }],
