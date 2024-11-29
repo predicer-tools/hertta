@@ -382,11 +382,14 @@ impl Mutation {
         constraint_name: String,
         context: &HerttaContext,
     ) -> AddConFactorResult {
-        let mut model = context.model.lock().unwrap();
+        let mut model_ref = context.model.lock().unwrap();
+        let model = model_ref.deref_mut();
         con_factor_input::add_con_factor_to_constraint(
             factor,
             constraint_name,
             &mut model.input_data.gen_constraints,
+            &model.input_data.nodes,
+            &model.input_data.processes,
         )
     }
     fn update_settings(settings_input: SettingsInput, context: &HerttaContext) -> SettingsResult {

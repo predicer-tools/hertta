@@ -1,5 +1,5 @@
 use super::{ValidationError, ValidationErrors};
-use crate::input_data_base::{BaseConFactor, BaseGenConstraint, VariableId};
+use crate::input_data_base::{BaseConFactor, BaseGenConstraint, BaseNode, BaseProcess, VariableId};
 use juniper::{GraphQLInputObject, GraphQLObject, GraphQLUnion};
 
 #[derive(GraphQLInputObject)]
@@ -59,8 +59,10 @@ pub fn add_con_factor_to_constraint(
     factor: AddConFactorInput,
     constraint_name: String,
     constraints: &mut Vec<BaseGenConstraint>,
+    nodes: &Vec<BaseNode>,
+    processes: &Vec<BaseProcess>,
 ) -> AddConFactorResult {
-    let errors = validate_con_factor_to_add(&factor);
+    let errors = validate_con_factor_to_add(&factor, nodes, processes);
     if !errors.is_empty() {
         return AddConFactorResult::Err(ValidationErrors::from(errors));
     }
@@ -80,20 +82,71 @@ pub fn add_con_factor_to_constraint(
     ))
 }
 
-fn validate_con_factor_to_add(factor: &AddConFactorInput) -> Vec<ValidationError> {
+fn validate_con_factor_to_add(
+    factor: &AddConFactorInput,
+    nodes: &Vec<BaseNode>,
+    processes: &Vec<BaseProcess>,
+) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     if factor.var_tuple.entity.is_empty() {
         errors.push(ValidationError::new("var_tuple.entity", "entity is empty"));
     }
-    if ["v_flow", "v_state", "v_online"]
+    if ["flow", "state", "online"]
         .iter()
         .find(|t| **t == factor.var_type)
         .is_none()
     {
         errors.push(ValidationError::new(
             "var_type",
-            "should be 'v_flow', 'v_state' or 'v_online'",
+            "should be 'flow', 'state' or 'online'",
         ));
+    }
+    if factor.var_type == "flow" {
+        if let Some(process) = processes.iter().find(|p| p.name == factor.var_tuple.entity) {
+            if process
+                .topos
+                .iter()
+                .find(|t| {
+                    t.source == factor.var_tuple.identifier || t.sink == factor.var_tuple.identifier
+                })
+                .is_none()
+            {
+                errors.push(ValidationError::new(
+                    "var_tuple.identifier",
+                    "no such source or sink in process",
+                ));
+            }
+        } else {
+            errors.push(ValidationError::new("var_tuple.entity", "no such process"));
+        }
+    } else if factor.var_type == "state" {
+        if nodes
+            .iter()
+            .find(|n| n.name == factor.var_tuple.entity)
+            .is_none()
+        {
+            errors.push(ValidationError::new("var_tuple.entity", "no such node"));
+        }
+        if !factor.var_tuple.identifier.is_empty() {
+            errors.push(ValidationError::new(
+                "var_tuple.identifier",
+                "identifier should be empty",
+            ));
+        }
+    } else {
+        if processes
+            .iter()
+            .find(|p| p.name == factor.var_tuple.entity)
+            .is_none()
+        {
+            errors.push(ValidationError::new("var_tuple.entity", "no such process"));
+        }
+        if !factor.var_tuple.identifier.is_empty() {
+            errors.push(ValidationError::new(
+                "var_tuple.identifier",
+                "identifier should be empty",
+            ));
+        }
     }
     errors
 }
