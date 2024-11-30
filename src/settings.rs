@@ -66,7 +66,7 @@ fn default_predicer_project() -> String {
 }
 
 fn default_predicer_runner_path() -> PathBuf {
-    ["src", "Pr_ArrowConnection.jl"].iter().collect::<PathBuf>()
+    ["predicer_wrapper", "Pr_ArrowConnection.jl"].iter().collect::<PathBuf>()
 }
 
 fn default_predicer_runner_script() -> String {
