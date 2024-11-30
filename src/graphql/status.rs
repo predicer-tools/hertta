@@ -39,13 +39,4 @@ impl Status {
             message: None,
         }
     }
-    pub fn state(&self) -> &String {
-        &self.state
-    }
-    pub fn job_id(&self) -> &Option<i32> {
-        &self.job_id
-    }
-    pub fn message(&self) -> &Option<String> {
-        &self.message
-    }
 }
