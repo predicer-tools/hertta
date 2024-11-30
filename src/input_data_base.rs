@@ -1,4 +1,3 @@
-use crate::graphql::types::LongInt;
 use crate::input_data::{
     ConFactor, GenConstraint, Group, InflowBlock, InputData, InputDataSetup, Market, Name, Node,
     NodeDiffusion, NodeHistory, Process, State, Temporals, TimeSeries, TimeSeriesData, Topology,
@@ -181,7 +180,7 @@ pub struct BaseInputDataSetup {
     pub contains_markets: bool,
     pub reserve_realisation: bool,
     pub use_market_bids: bool,
-    pub common_timesteps: LongInt,
+    pub common_timesteps: i32,
     pub common_scenario_name: String,
     pub use_node_dummy_variables: bool,
     pub use_ramp_dummy_variables: bool,
@@ -207,7 +206,7 @@ impl ExpandToTimeSeries for BaseInputDataSetup {
             contains_markets: self.contains_markets,
             reserve_realisation: self.reserve_realisation,
             use_market_bids: self.use_market_bids,
-            common_timesteps: self.common_timesteps.value,
+            common_timesteps: self.common_timesteps as i64,
             common_scenario_name: self.common_scenario_name.clone(),
             use_node_dummy_variables: self.use_node_dummy_variables,
             use_ramp_dummy_variables: self.use_ramp_dummy_variables,

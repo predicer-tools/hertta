@@ -12,7 +12,6 @@ mod state_input;
 mod status;
 mod time_line_input;
 mod topology_input;
-pub mod types;
 
 use crate::event_loop::{OptimizationState, OptimizationTask};
 use crate::input_data_base::BaseInputData;
