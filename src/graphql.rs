@@ -30,7 +30,7 @@ use node_diffusion_input::AddNodeDiffusionInput;
 use node_input::AddNodeInput;
 use process_input::AddProcessInput;
 use risk_input::AddRiskInput;
-use state_input::SetStateInput;
+use state_input::{SetStateInput, UpdateStateInput};
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 use time_line_input::TimeLineInput;
@@ -218,6 +218,7 @@ impl Mutation {
             job_id: current_job_id,
         })
     }
+
     #[graphql(description = "Update model's time line.")]
     fn update_time_line(
         time_line_input: TimeLineInput,
@@ -226,11 +227,13 @@ impl Mutation {
         let mut model = context.model.lock().unwrap();
         time_line_input::update_time_line(time_line_input, &mut model.time_line)
     }
+
     #[graphql(description = "Add new scenario to model.")]
     fn add_scenario(name: String, weight: f64, context: &HerttaContext) -> MaybeError {
         let mut model = context.model.lock().unwrap();
         scenario_input::add_scenario(name, weight, &mut model.input_data.scenarios)
     }
+
     #[graphql(description = "Save the model on disk.")]
     fn save_model(context: &HerttaContext) -> MaybeError {
         let file_path = model::make_model_file_path();
@@ -238,6 +241,7 @@ impl Mutation {
         let result = model::write_model_to_file(&model, &file_path).err();
         MaybeError { error: result }
     }
+
     #[graphql(description = "Clear input data from model.")]
     fn clear_input_data(context: &HerttaContext) -> MaybeError {
         let mut lock_guard = context.model.lock();
@@ -245,6 +249,7 @@ impl Mutation {
         model.input_data = BaseInputData::default();
         MaybeError::new_ok()
     }
+
     #[graphql(description = "Update input data setup.")]
     fn update_input_data_setup(
         setup_update: InputDataSetupInput,
@@ -253,18 +258,21 @@ impl Mutation {
         let mut model = context.model.lock().unwrap();
         input_data_setup_input::update_input_data_setup(setup_update, &mut model.input_data.setup)
     }
+
     #[graphql(description = "Add new node group to model")]
     fn add_node_group(name: String, context: &HerttaContext) -> MaybeError {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
         group_input::add_node_group(name, &mut model.input_data.groups)
     }
+
     #[graphql(description = "Add new process group to model")]
     fn add_process_group(name: String, context: &HerttaContext) -> MaybeError {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
         group_input::add_process_group(name, &mut model.input_data.groups)
     }
+
     #[graphql(description = "Add new process to model.")]
     fn add_process(process: AddProcessInput, context: &HerttaContext) -> ValidationErrors {
         let mut model_ref = context.model.lock().unwrap();
@@ -275,6 +283,7 @@ impl Mutation {
             &mut model.input_data.nodes,
         )
     }
+
     #[graphql(description = "Add process to process group.")]
     fn add_process_to_group(
         process_name: String,
@@ -290,6 +299,7 @@ impl Mutation {
             &mut model.input_data.groups,
         )
     }
+
     #[graphql(description = "Add new topology to given process.")]
     fn add_topology(
         topology: AddTopologyInput,
@@ -305,6 +315,7 @@ impl Mutation {
             &mut model.input_data.nodes,
         )
     }
+
     fn add_node(node: AddNodeInput, context: &HerttaContext) -> ValidationErrors {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
@@ -314,6 +325,7 @@ impl Mutation {
             &mut model.input_data.processes,
         )
     }
+
     #[graphql(description = "Add node to node group.")]
     fn add_node_to_group(
         node_name: String,
@@ -329,6 +341,7 @@ impl Mutation {
             &mut model.input_data.groups,
         )
     }
+
     #[graphql(description = "Set state for node. Null clears the state.")]
     fn set_node_state(
         state: Option<SetStateInput>,
@@ -339,6 +352,18 @@ impl Mutation {
         let model = model_ref.deref_mut();
         state_input::set_state_for_node(&node_name, state, &mut model.input_data.nodes)
     }
+
+    #[graphql(description = "Update state of a node. The state has to be set.")]
+    fn update_node_sate(
+        state: UpdateStateInput,
+        node_name: String,
+        context: &HerttaContext,
+    ) -> ValidationErrors {
+        let mut model_ref = context.model.lock().unwrap();
+        let model = model_ref.deref_mut();
+        state_input::update_state_in_node(state, node_name, &mut model.input_data.nodes)
+    }
+
     #[graphql(description = "Add diffusion for node.")]
     fn add_node_diffusion(
         diffusion: AddNodeDiffusionInput,
@@ -352,6 +377,7 @@ impl Mutation {
             &model.input_data.nodes,
         )
     }
+
     #[graphql(description = "Add new market to model.")]
     fn add_market(market: AddMarketInput, context: &HerttaContext) -> ValidationErrors {
         let mut model_ref = context.model.lock().unwrap();
@@ -363,11 +389,13 @@ impl Mutation {
             &model.input_data.groups,
         )
     }
+
     #[graphql(description = "Adds new risk to model.")]
     fn add_risk(risk: AddRiskInput, context: &HerttaContext) -> ValidationErrors {
         let mut model = context.model.lock().unwrap();
         risk_input::add_risk(risk, &mut model.input_data.risk)
     }
+
     #[graphql(description = "Add new generic constraint.")]
     fn add_gen_constraint(
         constraint: AddGenConstraintInput,
@@ -376,6 +404,7 @@ impl Mutation {
         let mut model = context.model.lock().unwrap();
         gen_constraint_input::add_gen_constraint(constraint, &mut model.input_data.gen_constraints)
     }
+
     #[graphql(description = "Add new constraint factor to generic constraint.")]
     fn add_con_factor_to_gen_constraint(
         factor: AddConFactorInput,
@@ -392,6 +421,7 @@ impl Mutation {
             &model.input_data.processes,
         )
     }
+
     fn update_settings(settings_input: SettingsInput, context: &HerttaContext) -> SettingsResult {
         let errors = Vec::new();
         let mut settings = context.settings.lock().unwrap();

@@ -1,3 +1,5 @@
+use std::borrow::BorrowMut;
+
 use super::{ValidationError, ValidationErrors};
 use crate::input_data::State;
 use crate::input_data_base::BaseNode;
@@ -57,14 +59,105 @@ pub fn set_state_for_node(
 
 fn validate_state_to_set(state: &SetStateInput) -> Vec<ValidationError> {
     let mut errors = Vec::new();
-    if state.state_min > state.state_max {
+    validate_state_min(state.state_min, state.state_max, &mut errors);
+    validate_state_loss_proportional(state.state_loss_proportional, &mut errors);
+    errors
+}
+
+fn validate_state_min(state_min: f64, state_max: f64, errors: &mut Vec<ValidationError>) {
+    if state_min > state_max {
         errors.push(ValidationError::new("state_min", "greater than state_max"));
     }
-    if state.state_loss_proportional < 0.0 || state.state_loss_proportional > 1.0 {
+}
+
+fn validate_state_loss_proportional(state_loss: f64, errors: &mut Vec<ValidationError>) {
+    if state_loss < 0.0 || state_loss > 1.0 {
         errors.push(ValidationError::new(
             "state_loss_proportional",
             "should be in [0, 1]",
         ));
+    }
+}
+
+#[derive(GraphQLInputObject)]
+pub struct UpdateStateInput {
+    in_max: Option<f64>,
+    out_max: Option<f64>,
+    state_loss_proportional: Option<f64>,
+    state_max: Option<f64>,
+    state_min: Option<f64>,
+    initial_state: Option<f64>,
+    is_scenario_independent: Option<bool>,
+    is_temp: Option<bool>,
+    t_e_conversion: Option<f64>,
+    residual_value: Option<f64>,
+}
+
+impl UpdateStateInput {
+    fn update_state(self, state: &mut State) {
+        optional_update(self.in_max, &mut state.in_max);
+        optional_update(self.out_max, &mut state.out_max);
+        optional_update(
+            self.state_loss_proportional,
+            &mut state.state_loss_proportional,
+        );
+        optional_update(self.state_max, &mut state.state_max);
+        optional_update(self.state_min, &mut state.state_min);
+        optional_update(self.initial_state, &mut state.initial_state);
+        optional_update(
+            self.is_scenario_independent,
+            &mut state.is_scenario_independent,
+        );
+        optional_update(self.is_temp, &mut state.is_temp);
+        optional_update(self.t_e_conversion, &mut state.t_e_conversion);
+        optional_update(self.residual_value, &mut state.residual_value);
+    }
+}
+
+fn optional_update<T>(source: Option<T>, target: &mut T) {
+    if let Some(x) = source {
+        *target = x;
+    }
+}
+
+pub fn update_state_in_node(
+    state: UpdateStateInput,
+    node_name: String,
+    nodes: &mut Vec<BaseNode>,
+) -> ValidationErrors {
+    let node = match nodes.iter_mut().find(|n| n.name == node_name) {
+        Some(node) => node,
+        None => {
+            return ValidationErrors::from(vec![ValidationError::new("node_name", "no such node")])
+        }
+    };
+    if let Some(node_state) = node.state.borrow_mut() {
+        let errors = validate_state_to_update(&state, node_state);
+        if !errors.is_empty() {
+            return ValidationErrors::from(errors);
+        }
+        state.update_state(node_state);
+    } else {
+        return ValidationErrors::from(vec![ValidationError::new(
+            "node_name",
+            "node has no state",
+        )]);
+    }
+    ValidationErrors::default()
+}
+
+fn validate_state_to_update(
+    state_update: &UpdateStateInput,
+    state: &State,
+) -> Vec<ValidationError> {
+    let mut errors = Vec::new();
+    if state_update.state_min.is_some() || state_update.state_max.is_some() {
+        let min = state_update.state_min.unwrap_or(state.state_min);
+        let max = state_update.state_max.unwrap_or(state.state_max);
+        validate_state_min(min, max, &mut errors);
+    }
+    if let Some(state_loss) = state_update.state_loss_proportional {
+        validate_state_loss_proportional(state_loss, &mut errors);
     }
     errors
 }
