@@ -14,8 +14,12 @@ mod time_line_input;
 mod topology_input;
 
 use crate::event_loop::{OptimizationState, OptimizationTask};
-use crate::input_data_base::BaseInputData;
+use crate::input_data::Group;
+use crate::input_data_base::{
+    BaseGenConstraint, BaseInputData, BaseMarket, BaseNode, BaseNodeDiffusion, BaseProcess,
+};
 use crate::model::{self, Model};
+use crate::scenarios::Scenario;
 use crate::settings::{LocationSettings, Settings};
 use con_factor_input::{AddConFactorInput, AddConFactorResult};
 use gen_constraint_input::AddGenConstraintInput;
@@ -173,6 +177,80 @@ impl Query {
     fn model(context: &HerttaContext) -> FieldResult<Model> {
         let model = context.model.lock().unwrap();
         Ok(model.clone())
+    }
+    fn gen_constraint(name: String, context: &HerttaContext) -> FieldResult<BaseGenConstraint> {
+        let model = context.model.lock().unwrap();
+        model
+            .input_data
+            .gen_constraints
+            .iter()
+            .find(|g| g.name == name)
+            .map(|g| g.clone())
+            .ok_or_else(|| "no such generic constraint".into())
+    }
+    fn group(name: String, context: &HerttaContext) -> FieldResult<Group> {
+        let model = context.model.lock().unwrap();
+        model
+            .input_data
+            .groups
+            .iter()
+            .find(|g| g.name == name)
+            .map(|g| g.clone())
+            .ok_or_else(|| "no such group".into())
+    }
+    fn market(name: String, context: &HerttaContext) -> FieldResult<BaseMarket> {
+        let model = context.model.lock().unwrap();
+        model
+            .input_data
+            .markets
+            .iter()
+            .find(|m| m.name == name)
+            .map(|m| m.clone())
+            .ok_or_else(|| "no such market".into())
+    }
+    fn node(name: String, context: &HerttaContext) -> FieldResult<BaseNode> {
+        let model = context.model.lock().unwrap();
+        model
+            .input_data
+            .nodes
+            .iter()
+            .find(|n| n.name == name)
+            .map(|n| n.clone())
+            .ok_or_else(|| "no such node".into())
+    }
+    fn node_diffusion(
+        from_node: String,
+        to_node: String,
+        context: &HerttaContext,
+    ) -> FieldResult<BaseNodeDiffusion> {
+        let model = context.model.lock().unwrap();
+        model
+            .input_data
+            .node_diffusion
+            .iter()
+            .find(|n| n.from_node == from_node && n.to_node == to_node)
+            .map(|n| n.clone())
+            .ok_or_else(|| "no such node diffusion".into())
+    }
+    fn process(name: String, context: &HerttaContext) -> FieldResult<BaseProcess> {
+        let model = context.model.lock().unwrap();
+        model
+            .input_data
+            .processes
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| p.clone())
+            .ok_or_else(|| "no such process".into())
+    }
+    fn scenario(name: String, context: &HerttaContext) -> FieldResult<Scenario> {
+        let model = context.model.lock().unwrap();
+        model
+            .input_data
+            .scenarios
+            .iter()
+            .find(|s| *s.name() == name)
+            .map(|s| s.clone())
+            .ok_or_else(|| "no such scenario".into())
     }
     fn status(context: &HerttaContext) -> Status {
         match *context.rx_state.borrow() {

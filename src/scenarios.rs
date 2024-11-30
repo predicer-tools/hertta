@@ -1,8 +1,10 @@
+use crate::input_data::Name;
+use hertta_derive::Name;
 use juniper::GraphQLObject;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
+#[derive(Clone, Debug, Deserialize, GraphQLObject, Name, Serialize)]
 #[graphql(description = "Scenario for stochastics.")]
 pub struct Scenario {
     #[graphql(description = "Scenario name.")]
