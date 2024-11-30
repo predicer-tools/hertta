@@ -9,7 +9,7 @@ pub mod settings;
 pub mod status;
 pub mod time_line_settings;
 
-use chrono::{DateTime, FixedOffset};
+use chrono::{DateTime, Utc};
 
-pub type TimeStamp = DateTime<FixedOffset>;
+pub type TimeStamp = DateTime<Utc>;
 pub type TimeLine = Vec<TimeStamp>;

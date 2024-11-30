@@ -1219,18 +1219,8 @@ mod tests {
         assert_eq!(time_series.ts_data.len(), 1);
         assert_eq!(time_series.ts_data[0].scenario, "S1");
         let mut expected_series = BTreeMap::new();
-        expected_series.insert(
-            Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0)
-                .unwrap()
-                .fixed_offset(),
-            2.3,
-        );
-        expected_series.insert(
-            Utc.with_ymd_and_hms(2024, 11, 19, 14, 0, 0)
-                .unwrap()
-                .fixed_offset(),
-            2.3,
-        );
+        expected_series.insert(Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap(), 2.3);
+        expected_series.insert(Utc.with_ymd_and_hms(2024, 11, 19, 14, 0, 0).unwrap(), 2.3);
         assert_eq!(time_series.ts_data[0].series, expected_series);
     }
 }

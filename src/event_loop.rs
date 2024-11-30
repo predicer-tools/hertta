@@ -13,7 +13,7 @@ use arrow::array::{self, Array, RecordBatch};
 use arrow::datatypes::{DataType, TimeUnit};
 use arrow::ipc::reader::StreamReader;
 use chrono::round::DurationRound;
-use chrono::{DateTime, LocalResult, NaiveDateTime, TimeDelta, TimeZone, Utc};
+use chrono::{DateTime, NaiveDateTime, TimeDelta, Utc};
 use juniper::GraphQLObject;
 use serde::Deserialize;
 use serde_json::Value;
@@ -824,10 +824,7 @@ pub struct WeatherDataResponse {
     pub weather_values: Vec<f64>,
 }
 
-fn parse_weather_fetcher_output(
-    output: &str,
-    time_zone: &impl TimeZone,
-) -> Result<Vec<(TimeStamp, f64)>, String> {
+fn parse_weather_fetcher_output(output: &str) -> Result<Vec<(TimeStamp, f64)>, String> {
     let parsed_json = serde_json::from_str(output)
         .or_else(|error| Err(format!("failed to parse output: {}", error)))?;
     if let Value::Array(time_series) = parsed_json {
@@ -840,10 +837,7 @@ fn parse_weather_fetcher_output(
                 if let Value::String(ref stamp) = pair[0] {
                     let time_stamp = match NaiveDateTime::parse_from_str(stamp, "%Y-%m-%dT%H:%M:%S")
                     {
-                        Ok(date_time) => match date_time.and_local_timezone(time_zone.clone()) {
-                            LocalResult::Single(t) => t.fixed_offset(),
-                            _ => return Err("ambiguous time stamp or gap in time".to_string()),
-                        },
+                        Ok(date_time) => date_time.and_utc(),
                         Err(..) => {
                             return Err(format!("failed to parse stamp from string {}", stamp))
                         }
@@ -897,10 +891,7 @@ fn fetch_weather_data(
         Ok(json_out) => json_out,
         Err(..) => return Err("non-utf-8 characters in output".to_string()),
     };
-    Ok(parse_weather_fetcher_output(
-        &output,
-        &start_time.timezone(),
-    )?)
+    Ok(parse_weather_fetcher_output(&output)?)
 }
 
 async fn fetch_electricity_prices(
@@ -1011,7 +1002,7 @@ fn elering_time_stamp_pair(time_stamp_entry: &Value) -> Result<(TimeStamp, f64),
             .ok_or("failed to parse price as float".to_string())?,
         _ => return Err("unexpected type for price".to_string()),
     };
-    Ok((time_stamp.fixed_offset(), price))
+    Ok((time_stamp, price))
 }
 
 fn create_and_update_elec_price_data(
@@ -1366,7 +1357,7 @@ mod tests {
     }
     mod parse_weather_fetcher_output {
         use super::*;
-        use chrono_tz::Europe;
+        use chrono::TimeZone;
         #[test]
         fn parses_data_correctly() {
             let fetcher_output = r#"
@@ -1380,39 +1371,31 @@ mod tests {
                         ["2024-11-08T17:00:00", 6.4],
                         ["2024-11-08T18:00:00", 6.7]
                 ]"#;
-            let weather_series = parse_weather_fetcher_output(fetcher_output, &Europe::Helsinki)
+            let weather_series = parse_weather_fetcher_output(fetcher_output)
                 .expect("parsing output should not fail");
             let expected_time_stamps = [
-                Europe::Helsinki
-                    .with_ymd_and_hms(2024, 11, 8, 11, 0, 0)
+                Utc.with_ymd_and_hms(2024, 11, 8, 11, 0, 0)
                     .single()
                     .unwrap(),
-                Europe::Helsinki
-                    .with_ymd_and_hms(2024, 11, 8, 12, 0, 0)
+                Utc.with_ymd_and_hms(2024, 11, 8, 12, 0, 0)
                     .single()
                     .unwrap(),
-                Europe::Helsinki
-                    .with_ymd_and_hms(2024, 11, 8, 13, 0, 0)
+                Utc.with_ymd_and_hms(2024, 11, 8, 13, 0, 0)
                     .single()
                     .unwrap(),
-                Europe::Helsinki
-                    .with_ymd_and_hms(2024, 11, 8, 14, 0, 0)
+                Utc.with_ymd_and_hms(2024, 11, 8, 14, 0, 0)
                     .single()
                     .unwrap(),
-                Europe::Helsinki
-                    .with_ymd_and_hms(2024, 11, 8, 15, 0, 0)
+                Utc.with_ymd_and_hms(2024, 11, 8, 15, 0, 0)
                     .single()
                     .unwrap(),
-                Europe::Helsinki
-                    .with_ymd_and_hms(2024, 11, 8, 16, 0, 0)
+                Utc.with_ymd_and_hms(2024, 11, 8, 16, 0, 0)
                     .single()
                     .unwrap(),
-                Europe::Helsinki
-                    .with_ymd_and_hms(2024, 11, 8, 17, 0, 0)
+                Utc.with_ymd_and_hms(2024, 11, 8, 17, 0, 0)
                     .single()
                     .unwrap(),
-                Europe::Helsinki
-                    .with_ymd_and_hms(2024, 11, 8, 18, 0, 0)
+                Utc.with_ymd_and_hms(2024, 11, 8, 18, 0, 0)
                     .single()
                     .unwrap(),
             ];
@@ -1443,21 +1426,20 @@ mod tests {
     }
     mod elering_time_stamp_pair {
         use super::*;
+        use chrono::TimeZone;
         #[test]
         fn parses_time_stamp_entry() {
             let entry_json = "{\"timestamp\":1731927600,\"price\":85.0600}";
             let entry = serde_json::from_str(entry_json).expect("entry JSON should be parseable");
             let pair =
                 elering_time_stamp_pair(&entry).expect("constructing a pair should not fail");
-            let expected_date_time = Utc
-                .with_ymd_and_hms(2024, 11, 18, 11, 00, 00)
-                .unwrap()
-                .fixed_offset();
+            let expected_date_time = Utc.with_ymd_and_hms(2024, 11, 18, 11, 00, 00).unwrap();
             assert_eq!(pair, (expected_date_time, 85.06));
         }
     }
     mod parse_elering_response {
         use super::*;
+        use chrono::TimeZone;
         #[test]
         fn parses_response_succesfully() {
             let response_json = r#"
@@ -1469,10 +1451,7 @@ mod tests {
 }"#;
             let time_series =
                 parse_elering_response(response_json, "fi").expect("parsing should succeed");
-            let expected_date_time = Utc
-                .with_ymd_and_hms(2024, 11, 18, 11, 00, 00)
-                .unwrap()
-                .fixed_offset();
+            let expected_date_time = Utc.with_ymd_and_hms(2024, 11, 18, 11, 00, 00).unwrap();
             let expected_time_series = vec![(expected_date_time, 70.05)];
             assert_eq!(time_series, expected_time_series);
         }

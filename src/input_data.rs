@@ -240,6 +240,7 @@ pub struct BidSlot {
 
 pub fn parse_time_stamp(key: &str) -> Result<TimeStamp, String> {
     DateTime::parse_from_rfc3339(key.trim_matches(|c| c == '"'))
+        .and_then(|ts| Ok(ts.to_utc()))
         .map_err(|error| format!("invalid time format {} for prices: {}", key, error))
 }
 
