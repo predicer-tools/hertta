@@ -41,7 +41,7 @@ use time_line_input::TimeLineInput;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio::sync::Semaphore;
-use topology_input::{AddTopologyInput, AddTopologyResult};
+use topology_input::AddTopologyInput;
 
 #[derive(Debug, GraphQLObject)]
 struct ValidationError {
@@ -382,12 +382,16 @@ impl Mutation {
     fn add_topology(
         topology: AddTopologyInput,
         process_name: String,
+        source_node_name: Option<String>,
+        sink_node_name: Option<String>,
         context: &HerttaContext,
-    ) -> AddTopologyResult {
+    ) -> ValidationErrors {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
         topology_input::add_topology_to_process(
-            &process_name,
+            process_name,
+            source_node_name,
+            sink_node_name,
             topology,
             &mut model.input_data.processes,
             &mut model.input_data.nodes,
