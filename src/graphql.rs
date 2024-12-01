@@ -21,7 +21,6 @@ use crate::input_data_base::{
 use crate::model::{self, Model};
 use crate::scenarios::Scenario;
 use crate::settings::{LocationSettings, Settings};
-use con_factor_input::{AddConFactorInput, AddConFactorResult};
 use gen_constraint_input::AddGenConstraintInput;
 use input_data_setup_input::InputDataSetupInput;
 use juniper::{
@@ -487,19 +486,58 @@ impl Mutation {
         gen_constraint_input::add_gen_constraint(constraint, &mut model.input_data.gen_constraints)
     }
 
-    #[graphql(description = "Add new constraint factor to generic constraint.")]
-    fn add_con_factor_to_gen_constraint(
-        factor: AddConFactorInput,
+    #[graphql(description = "Add new flow constraint factor to given generic constraint.")]
+    fn add_flow_con_factor(
+        factor: f64,
         constraint_name: String,
+        process_name: String,
+        source_or_sink_node_name: String,
         context: &HerttaContext,
-    ) -> AddConFactorResult {
+    ) -> ValidationErrors {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
-        con_factor_input::add_con_factor_to_constraint(
+        con_factor_input::add_flow_con_factor(
             factor,
             constraint_name,
+            process_name,
+            source_or_sink_node_name,
+            &mut model.input_data.gen_constraints,
+            &model.input_data.processes,
+        )
+    }
+
+    #[graphql(description = "Add new state constraint factor to given generic constraint.")]
+    fn add_state_con_factor(
+        factor: f64,
+        constraint_name: String,
+        node_name: String,
+        context: &HerttaContext,
+    ) -> ValidationErrors {
+        let mut model_ref = context.model.lock().unwrap();
+        let model = model_ref.deref_mut();
+        con_factor_input::add_state_con_factor(
+            factor,
+            constraint_name,
+            node_name,
             &mut model.input_data.gen_constraints,
             &model.input_data.nodes,
+        )
+    }
+
+    #[graphql(description = "Add new state constraint factor to given generic constraint.")]
+    fn add_online_con_factor(
+        factor: f64,
+        constraint_name: String,
+        process_name: String,
+        context: &HerttaContext,
+    ) -> ValidationErrors {
+        let mut model_ref = context.model.lock().unwrap();
+        let model = model_ref.deref_mut();
+        con_factor_input::add_online_con_factor(
+            factor,
+            constraint_name,
+            process_name,
+            &mut model.input_data.gen_constraints,
             &model.input_data.processes,
         )
     }

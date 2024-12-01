@@ -576,7 +576,7 @@ pub struct BaseConFactor {
 
 pub struct VariableId {
     pub entity: String,
-    pub identifier: String,
+    pub identifier: Option<String>,
 }
 
 impl ExpandToTimeSeries for BaseConFactor {
@@ -590,7 +590,11 @@ impl ExpandToTimeSeries for BaseConFactor {
             var_type: self.var_type.clone(),
             var_tuple: (
                 self.var_tuple.entity.clone(),
-                self.var_tuple.identifier.clone(),
+                self.var_tuple
+                    .identifier
+                    .as_ref()
+                    .map_or("", |s| s.as_str())
+                    .into(),
             ),
             data: to_time_series(self.data, time_line, scenarios),
         }
@@ -765,7 +769,7 @@ mod tests {
             var_type: "state".to_string(),
             var_tuple: VariableId {
                 entity: "interior_air".to_string(),
-                identifier: String::new(),
+                identifier: None,
             },
             data: 23.0,
         };
@@ -1061,7 +1065,7 @@ mod tests {
             var_type: "state".to_string(),
             var_tuple: VariableId {
                 entity: "interior_air".to_string(),
-                identifier: String::new(),
+                identifier: None,
             },
             data: 23.0,
         };
@@ -1121,7 +1125,7 @@ mod tests {
             var_type: "state".to_string(),
             var_tuple: VariableId {
                 entity: "interior_air".to_string(),
-                identifier: String::new(),
+                identifier: None,
             },
             data: 23.0,
         };
