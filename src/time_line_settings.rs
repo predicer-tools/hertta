@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Deserialize, GraphQLObject, PartialEq, Serialize)]
 #[graphql(description = "Optimization time line settings.")]
 pub struct TimeLineSettings {
-    #[graphql(description = "Time line duration in hours.")]
+    #[graphql(description = "Time line duration.")]
     duration: Duration,
     #[graphql(description = "Time step length.")]
     step: Duration,
