@@ -14,9 +14,10 @@ mod time_line_input;
 mod topology_input;
 
 use crate::event_loop::{OptimizationState, OptimizationTask};
-use crate::input_data::Group;
+use crate::input_data::{Group, Name};
 use crate::input_data_base::{
     BaseGenConstraint, BaseInputData, BaseMarket, BaseNode, BaseNodeDiffusion, BaseProcess,
+    GroupMember,
 };
 use crate::model::{self, Model};
 use crate::scenarios::Scenario;
@@ -197,6 +198,16 @@ impl Query {
             .map(|g| g.clone())
             .ok_or_else(|| "no such group".into())
     }
+    fn nodes_in_group(name: String, context: &HerttaContext) -> FieldResult<Vec<BaseNode>> {
+        let model = context.model.lock().unwrap();
+        group_members(&model.input_data.groups, &name, &model.input_data.nodes)
+            .map_err(|error| error.into())
+    }
+    fn processes_in_group(name: String, context: &HerttaContext) -> FieldResult<Vec<BaseProcess>> {
+        let model = context.model.lock().unwrap();
+        group_members(&model.input_data.groups, &name, &model.input_data.processes)
+            .map_err(|error| error.into())
+    }
     fn market(name: String, context: &HerttaContext) -> FieldResult<BaseMarket> {
         let model = context.model.lock().unwrap();
         model
@@ -217,6 +228,12 @@ impl Query {
             .map(|n| n.clone())
             .ok_or_else(|| "no such node".into())
     }
+    #[graphql(description = "return all groups the given node is member of")]
+    fn groups_for_node(name: String, context: &HerttaContext) -> FieldResult<Vec<Group>> {
+        let model = context.model.lock().unwrap();
+        member_groups(&model.input_data.nodes, &name, &model.input_data.groups)
+            .map_err(|error| error.into())
+    }
     fn node_diffusion(
         from_node: String,
         to_node: String,
@@ -230,6 +247,12 @@ impl Query {
             .find(|n| n.from_node == from_node && n.to_node == to_node)
             .map(|n| n.clone())
             .ok_or_else(|| "no such node diffusion".into())
+    }
+    #[graphql(description = "return all groups the given process is member of")]
+    fn groups_for_process(name: String, context: &HerttaContext) -> FieldResult<Vec<Group>> {
+        let model = context.model.lock().unwrap();
+        member_groups(&model.input_data.processes, &name, &model.input_data.groups)
+            .map_err(|error| error.into())
     }
     fn process(name: String, context: &HerttaContext) -> FieldResult<BaseProcess> {
         let model = context.model.lock().unwrap();
@@ -259,6 +282,58 @@ impl Query {
             OptimizationState::Error(job_id, ref error) => return Status::new_error(job_id, error),
         }
     }
+}
+
+fn group_members<T: Clone + GroupMember + Name>(
+    groups: &Vec<Group>,
+    group_name: &str,
+    candidates: &Vec<T>,
+) -> Result<Vec<T>, String> {
+    let group = groups
+        .iter()
+        .find(|g| g.name == group_name)
+        .ok_or("no such group")?;
+    if group.g_type != T::group_type() {
+        return Err("wrong group type".into());
+    }
+    let mut members = Vec::with_capacity(group.members.len());
+    for member_name in &group.members {
+        if let Some(member) = candidates.iter().find(|m| *m.name() == *member_name) {
+            members.push(member.clone())
+        } else {
+            return Err(format!(
+                "member {} '{}' does not exist",
+                T::group_type(),
+                member_name
+            )
+            .into());
+        }
+    }
+    Ok(members)
+}
+
+fn member_groups<T: GroupMember + Name>(
+    items: &Vec<T>,
+    member_name: &str,
+    groups: &Vec<Group>,
+) -> Result<Vec<Group>, String> {
+    let member = items
+        .iter()
+        .find(|i| i.name() == member_name)
+        .ok_or_else(|| format!("no such {}", T::group_type()))?;
+    let mut groups_of_member = Vec::with_capacity(member.groups().len());
+    for group_name in member.groups() {
+        if let Some(group) = groups.iter().find(|g| g.name == *group_name) {
+            groups_of_member.push(group.clone());
+        } else {
+            return Err(format!(
+                "{} group '{}' does not exist",
+                T::group_type(),
+                group_name
+            ));
+        }
+    }
+    Ok(groups_of_member)
 }
 
 pub struct Mutation;

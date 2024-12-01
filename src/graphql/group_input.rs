@@ -1,6 +1,6 @@
 use super::MaybeError;
 use crate::input_data::{Group, Name};
-use crate::input_data_base::GroupItem;
+use crate::input_data_base::GroupMember;
 
 pub fn add_node_group(name: String, groups: &mut Vec<Group>) -> MaybeError {
     add_group(name, "node", groups)
@@ -33,7 +33,7 @@ fn validate_name(name: &String, groups: &Vec<Group>) -> MaybeError {
     MaybeError::new_ok()
 }
 
-pub fn add_to_group<T: GroupItem + Name>(
+pub fn add_to_group<T: GroupMember + Name>(
     item_name: String,
     group_name: String,
     items: &mut Vec<T>,
@@ -50,7 +50,7 @@ pub fn add_to_group<T: GroupItem + Name>(
         Some(group) => group,
         None => return "no such group".into(),
     };
-    if group.g_type != item.group_type() {
+    if group.g_type != T::group_type() {
         return MaybeError::from(format!("wrong target group type '{}'", group.g_type).as_str());
     }
     item.groups_mut().push(group_name.clone());

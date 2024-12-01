@@ -33,10 +33,10 @@ fn expand_and_use_name_as_key<T: ExpandToTimeSeries + Name>(
     )
 }
 
-pub trait GroupItem {
+pub trait GroupMember {
     fn groups(&self) -> &Vec<String>;
     fn groups_mut(&mut self) -> &mut Vec<String>;
-    fn group_type(&self) -> &'static str;
+    fn group_type() -> &'static str;
 }
 
 #[derive(Clone, Debug, Default, GraphQLObject, Deserialize, Serialize)]
@@ -242,8 +242,8 @@ pub struct BaseProcess {
     pub eff_fun: Vec<Point>,
 }
 
-impl GroupItem for BaseProcess {
-    fn group_type(&self) -> &'static str {
+impl GroupMember for BaseProcess {
+    fn group_type() -> &'static str {
         "process"
     }
     fn groups(&self) -> &Vec<String> {
@@ -351,8 +351,8 @@ impl ExpandToTimeSeries for BaseNode {
     }
 }
 
-impl GroupItem for BaseNode {
-    fn group_type(&self) -> &'static str {
+impl GroupMember for BaseNode {
+    fn group_type() -> &'static str {
         "node"
     }
     fn groups(&self) -> &Vec<String> {
