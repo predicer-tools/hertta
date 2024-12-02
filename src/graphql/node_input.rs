@@ -7,11 +7,9 @@ pub struct AddNodeInput {
     name: String,
     is_commodity: bool,
     is_market: bool,
-    is_state: bool,
     is_res: bool,
-    is_inflow: bool,
-    cost: f64,
-    inflow: f64,
+    cost: Option<f64>,
+    inflow: Option<f64>,
 }
 
 impl AddNodeInput {
@@ -21,9 +19,7 @@ impl AddNodeInput {
             groups: Vec::new(),
             is_commodity: self.is_commodity,
             is_market: self.is_market,
-            is_state: self.is_state,
             is_res: self.is_res,
-            is_inflow: self.is_inflow,
             state: None,
             cost: self.cost,
             inflow: self.inflow,

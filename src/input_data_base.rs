@@ -240,7 +240,7 @@ pub struct BaseProcess {
     pub is_scenario_independent: bool,
     pub topos: Vec<BaseTopology>,
     pub cf: f64,
-    pub eff_ts: f64,
+    pub eff_ts: Option<f64>,
     pub eff_ops: Vec<String>,
     pub eff_fun: Vec<Point>,
 }
@@ -294,7 +294,10 @@ impl ExpandToTimeSeries for BaseProcess {
                 .map(|topology| topology.expand_to_time_series(time_line, scenarios))
                 .collect(),
             cf: to_time_series(self.cf, time_line, scenarios),
-            eff_ts: to_time_series(self.eff_ts, time_line, scenarios),
+            eff_ts: match self.eff_ts {
+                Some(eff) => to_time_series(eff, time_line, scenarios),
+                None => TimeSeriesData::default(),
+            },
             eff_ops: self.eff_ops.clone(),
             eff_fun: self
                 .eff_fun
@@ -310,8 +313,9 @@ impl BaseProcess {
         match self.conversion.as_str() {
             "unit" => Ok(1),
             "transport" => Ok(2),
+            "market" => Ok(3),
             _ => Err(format!(
-                "unknown conversion {}; valid values ['unit', 'transport']",
+                "unknown conversion {}; valid values ['unit', 'transport', 'market']",
                 self.conversion
             )),
         }
@@ -325,12 +329,10 @@ pub struct BaseNode {
     pub groups: Vec<String>,
     pub is_commodity: bool,
     pub is_market: bool,
-    pub is_state: bool,
     pub is_res: bool,
-    pub is_inflow: bool,
     pub state: Option<State>,
-    pub cost: f64,
-    pub inflow: f64,
+    pub cost: Option<f64>,
+    pub inflow: Option<f64>,
 }
 
 impl ExpandToTimeSeries for BaseNode {
@@ -345,12 +347,18 @@ impl ExpandToTimeSeries for BaseNode {
             groups: self.groups.clone(),
             is_commodity: self.is_commodity,
             is_market: self.is_market,
-            is_state: self.is_state,
+            is_state: self.state.is_some(),
             is_res: self.is_res,
-            is_inflow: self.is_inflow,
+            is_inflow: self.inflow.is_some(),
             state: self.state.clone(),
-            cost: to_time_series(self.cost, time_line, scenarios),
-            inflow: to_time_series(self.inflow, time_line, scenarios),
+            cost: match self.cost {
+                Some(cost) => to_time_series(cost, time_line, scenarios),
+                None => TimeSeriesData::default(),
+            },
+            inflow: match self.inflow {
+                Some(inflow) => to_time_series(inflow, time_line, scenarios),
+                None => TimeSeriesData::default(),
+            },
         }
     }
 }
@@ -551,7 +559,7 @@ pub struct BaseTopology {
     pub ramp_down: f64,
     pub initial_load: f64,
     pub initial_flow: f64,
-    pub cap_ts: f64,
+    pub cap_ts: Option<f64>,
 }
 
 impl ExpandToTimeSeries for BaseTopology {
@@ -570,7 +578,10 @@ impl ExpandToTimeSeries for BaseTopology {
             ramp_down: self.ramp_down,
             initial_load: self.initial_load,
             initial_flow: self.initial_flow,
-            cap_ts: to_time_series(self.cap_ts, time_line, scenarios),
+            cap_ts: match self.cap_ts {
+                Some(cap_ts) => to_time_series(cap_ts, time_line, scenarios),
+                None => TimeSeriesData::default(),
+            },
         }
     }
 }
@@ -616,9 +627,9 @@ pub fn find_input_node_names<'a>(nodes: impl Iterator<Item = &'a BaseNode>) -> V
         .filter(|node| {
             !node.is_commodity
                 && !node.is_market
-                && !node.is_state
+                && node.state.is_none()
                 && !node.is_res
-                && !node.is_inflow
+                && node.inflow.is_none()
         })
         .map(|node| node.name.clone())
         .collect()
@@ -677,7 +688,7 @@ mod tests {
             ramp_down: 1.4,
             initial_load: 1.5,
             initial_flow: 1.6,
-            cap_ts: 1.7,
+            cap_ts: Some(1.7),
         };
         let base_process = BaseProcess {
             name: "Conversion".to_string(),
@@ -699,7 +710,7 @@ mod tests {
             is_scenario_independent: false,
             topos: vec![base_topology],
             cf: 2.0,
-            eff_ts: 2.1,
+            eff_ts: Some(2.1),
             eff_ops: vec!["oops!".to_string()],
             eff_fun: vec![Point { x: 2.2, y: 2.3 }],
         };
@@ -709,12 +720,10 @@ mod tests {
             groups: vec!["Group".to_string()],
             is_commodity: true,
             is_market: false,
-            is_state: true,
             is_res: false,
-            is_inflow: true,
             state: None,
-            cost: 1.1,
-            inflow: 1.2,
+            cost: Some(1.1),
+            inflow: Some(1.2),
         };
         let node = base_node.expand_to_time_series(&time_line, &scenarios);
         let base_node_diffusion = BaseNodeDiffusion {
@@ -861,7 +870,7 @@ mod tests {
             ramp_down: 1.4,
             initial_load: 1.5,
             initial_flow: 1.6,
-            cap_ts: 1.7,
+            cap_ts: Some(1.7),
         };
         let topology = base_topology.expand_to_time_series(&time_line, &scenarios);
         let base = BaseProcess {
@@ -884,7 +893,7 @@ mod tests {
             is_scenario_independent: false,
             topos: vec![base_topology],
             cf: 2.0,
-            eff_ts: 2.1,
+            eff_ts: Some(2.1),
             eff_ops: vec!["oops!".to_string()],
             eff_fun: vec![Point { x: 2.2, y: 2.3 }],
         };
@@ -925,19 +934,17 @@ mod tests {
             groups: vec!["Group".to_string()],
             is_commodity: true,
             is_market: false,
-            is_state: true,
             is_res: false,
-            is_inflow: true,
             state: None,
-            cost: 1.1,
-            inflow: 1.2,
+            cost: Some(1.1),
+            inflow: Some(1.2),
         };
         let node = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(node.name, "East");
         assert_eq!(node.groups, vec!["Group".to_string()]);
         assert!(node.is_commodity);
         assert!(!node.is_market);
-        assert!(node.is_state);
+        assert!(!node.is_state);
         assert!(!node.is_res);
         assert!(node.is_inflow);
         assert!(node.state.is_none());
@@ -1110,7 +1117,7 @@ mod tests {
             ramp_down: 1.4,
             initial_load: 1.5,
             initial_flow: 1.6,
-            cap_ts: 1.7,
+            cap_ts: Some(1.7),
         };
         let time_line: TimeLine = vec![
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
@@ -1179,7 +1186,7 @@ mod tests {
             assert!(find_input_node_names(market_nodes.iter()).is_empty());
             let state_nodes = vec![BaseNode {
                 name: "state".to_string(),
-                is_state: true,
+                state: Some(State::default()),
                 ..BaseNode::default()
             }];
             assert!(find_input_node_names(state_nodes.iter()).is_empty());
@@ -1191,7 +1198,7 @@ mod tests {
             assert!(find_input_node_names(res_nodes.iter()).is_empty());
             let inflow_nodes = vec![BaseNode {
                 name: "inflow".to_string(),
-                is_inflow: true,
+                inflow: Some(2.3),
                 ..BaseNode::default()
             }];
             assert!(find_input_node_names(inflow_nodes.iter()).is_empty());

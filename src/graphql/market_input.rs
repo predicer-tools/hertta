@@ -1,6 +1,6 @@
 use super::{ValidationError, ValidationErrors};
 use crate::input_data::Group;
-use crate::input_data_base::{BaseMarket, BaseNode};
+use crate::input_data_base::{BaseMarket, BaseNode, BaseProcess, GroupMember};
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
@@ -77,14 +77,14 @@ fn validate_market_to_add(
     {
         errors.push(ValidationError::new(
             "m_type",
-            "shoudl be 'energy' or 'reserve'",
+            "should be 'energy' or 'reserve'",
         ));
     }
     if nodes.iter().find(|n| n.name == market.node).is_none() {
         errors.push(ValidationError::new("node", "no such node"));
     }
     if let Some(group) = groups.iter().find(|g| g.name == market.processgroup) {
-        if group.g_type != "process" {
+        if group.g_type != BaseProcess::group_type() {
             errors.push(ValidationError::new("processgroup", "wrong group type"));
         }
     } else {
@@ -97,7 +97,7 @@ fn validate_market_to_add(
     {
         errors.push(ValidationError::new(
             "direction",
-            "shoud be 'up', 'down' or 'updown'",
+            "should be 'up', 'down' or 'updown'",
         ));
     }
     if market.realisation < 0.0 || market.realisation > 1.0 {

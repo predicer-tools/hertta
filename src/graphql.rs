@@ -29,7 +29,6 @@ use juniper::{
     GraphQLUnion, Nullable, RootNode,
 };
 use market_input::AddMarketInput;
-use node_diffusion_input::AddNodeDiffusionInput;
 use node_input::AddNodeInput;
 use process_input::AddProcessInput;
 use risk_input::AddRiskInput;
@@ -455,8 +454,8 @@ impl Mutation {
     #[graphql(description = "Add new topology to given process.")]
     fn add_topology(
         topology: AddTopologyInput,
-        process_name: String,
         source_node_name: Option<String>,
+        process_name: String,
         sink_node_name: Option<String>,
         context: &HerttaContext,
     ) -> ValidationErrors {
@@ -522,13 +521,17 @@ impl Mutation {
 
     #[graphql(description = "Add diffusion for node.")]
     fn add_node_diffusion(
-        diffusion: AddNodeDiffusionInput,
+        from_node: String,
+        to_node: String,
+        coefficient: f64,
         context: &HerttaContext,
     ) -> ValidationErrors {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
         node_diffusion_input::add_node_diffusion(
-            diffusion,
+            from_node,
+            to_node,
+            coefficient,
             &mut model.input_data.node_diffusion,
             &model.input_data.nodes,
         )

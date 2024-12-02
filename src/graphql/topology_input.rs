@@ -10,7 +10,7 @@ pub struct AddTopologyInput {
     pub ramp_down: f64,
     pub initial_load: f64,
     pub initial_flow: f64,
-    pub cap_ts: f64,
+    pub cap_ts: Option<f64>,
 }
 
 impl AddTopologyInput {

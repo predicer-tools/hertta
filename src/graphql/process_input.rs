@@ -7,7 +7,6 @@ pub struct AddProcessInput {
     name: String,
     #[graphql(description = "Must be 'unit' or 'transport'.")]
     conversion: String,
-    is_cf: bool,
     is_cf_fix: bool,
     is_online: bool,
     is_res: bool,
@@ -21,8 +20,8 @@ pub struct AddProcessInput {
     max_offline: f64,
     initial_state: bool,
     is_scenario_independent: bool,
-    cf: f64,
-    eff_ts: f64,
+    cf: Option<f64>,
+    eff_ts: Option<f64>,
 }
 
 impl AddProcessInput {
@@ -31,7 +30,7 @@ impl AddProcessInput {
             name: self.name,
             groups: Vec::new(),
             conversion: self.conversion,
-            is_cf: self.is_cf,
+            is_cf: self.cf.is_some(),
             is_cf_fix: self.is_cf_fix,
             is_online: self.is_online,
             is_res: self.is_res,
@@ -46,7 +45,7 @@ impl AddProcessInput {
             initial_state: self.initial_state,
             is_scenario_independent: self.is_scenario_independent,
             topos: Vec::new(),
-            cf: self.cf,
+            cf: self.cf.unwrap_or(0.0),
             eff_ts: self.eff_ts,
             eff_ops: Vec::new(),
             eff_fun: Vec::new(),
@@ -88,14 +87,14 @@ fn validate_process_to_add(
             "a node with the same name exists",
         ));
     }
-    if ["unit", "transport"]
+    if ["unit", "transport", "market"]
         .iter()
         .find(|conversion| **conversion == process.conversion)
         .is_none()
     {
         errors.push(ValidationError::new(
             "conversion",
-            "should be 'unit' or 'transport'",
+            "should be 'unit', 'transport' or 'market'",
         ));
     }
     if process.load_min < 0.0 || process.load_min > 1.0 {
