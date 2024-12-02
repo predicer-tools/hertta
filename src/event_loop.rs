@@ -4,6 +4,7 @@ mod time_series;
 use crate::input_data::{self, InputData, TimeSeries, TimeSeriesData};
 use crate::input_data_base::{self, BaseInputData, BaseProcess};
 use crate::model::Model;
+use crate::scenarios::Scenario;
 use crate::settings::{LocationSettings, Settings};
 use crate::time_line_settings::TimeLineSettings;
 use crate::{TimeLine, TimeStamp};
@@ -175,8 +176,10 @@ pub async fn event_loop(
             .await
         });
         let location_clone = location_snapshot.clone();
+        let scenarios_clone = optimization_data.input_data.scenarios.clone();
         let fetch_electricity_price_handle = tokio::spawn(async move {
-            fetch_electricity_price_task(&location_clone, rx_elec, tx_update).await
+            fetch_electricity_price_task(&location_clone, &scenarios_clone, rx_elec, tx_update)
+                .await
         });
         let update_model_data_handle =
             tokio::spawn(async move { generate_model_task(rx_update, tx_batches).await });
@@ -1008,11 +1011,24 @@ fn elering_time_stamp_pair(time_stamp_entry: &Value) -> Result<(TimeStamp, f64),
 fn create_and_update_elec_price_data(
     optimization_data: &mut OptimizationData,
     price_series: &BTreeMap<TimeStamp, f64>,
+    scenarios: &Vec<Scenario>,
 ) -> Result<(), String> {
     if let Some(_time_data) = &optimization_data.time_data {
-        let original_ts_data = Some(create_modified_price_series_data(price_series, 1.0));
-        let up_price_ts_data = Some(create_modified_price_series_data(price_series, 1.1));
-        let down_price_ts_data = Some(create_modified_price_series_data(price_series, 0.9));
+        let original_ts_data = Some(create_modified_price_series_data(
+            price_series,
+            1.0,
+            scenarios,
+        ));
+        let up_price_ts_data = Some(create_modified_price_series_data(
+            price_series,
+            1.1,
+            scenarios,
+        ));
+        let down_price_ts_data = Some(create_modified_price_series_data(
+            price_series,
+            0.9,
+            scenarios,
+        ));
         let electricity_price_data = ElectricityPriceData {
             price_data: original_ts_data,
             up_price_data: up_price_ts_data,
@@ -1030,26 +1046,28 @@ fn create_and_update_elec_price_data(
 fn create_modified_price_series_data(
     original_series: &BTreeMap<TimeStamp, f64>,
     multiplier: f64,
+    scenarios: &Vec<Scenario>,
 ) -> TimeSeriesData {
     let modified_series: BTreeMap<TimeStamp, f64> = original_series
         .iter()
         .map(|(timestamp, price)| (timestamp.clone(), price * multiplier))
         .collect();
-    let time_series_s1 = TimeSeries {
-        scenario: "s1".to_string(),
-        series: modified_series.clone(),
-    };
-    let time_series_s2 = TimeSeries {
-        scenario: "s2".to_string(),
-        series: modified_series,
-    };
+    let mut scenario_time_series = Vec::with_capacity(scenarios.len());
+    for scenario in scenarios {
+        let time_series = TimeSeries {
+            scenario: scenario.name().clone(),
+            series: modified_series.clone(),
+        };
+        scenario_time_series.push(time_series);
+    }
     TimeSeriesData {
-        ts_data: vec![time_series_s1, time_series_s2],
+        ts_data: scenario_time_series,
     }
 }
 
 async fn fetch_electricity_price_task(
     location: &LocationSettings,
+    scenarios: &Vec<Scenario>,
     rx: oneshot::Receiver<OptimizationData>,
     tx: oneshot::Sender<OptimizationData>,
 ) -> Result<(), String> {
@@ -1069,7 +1087,7 @@ async fn fetch_electricity_price_task(
                     return Err(error);
                 }
                 let prices = prices.iter().map(|pair| (pair.0.clone(), pair.1)).collect();
-                create_and_update_elec_price_data(&mut optimization_data, &prices)?;
+                create_and_update_elec_price_data(&mut optimization_data, &prices, scenarios)?;
                 if tx.send(optimization_data).is_err() {
                     return Err("fetch_electricity_price_task: failed to send updated optimization data in electricity prices".to_string());
                 }
