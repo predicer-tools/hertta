@@ -599,7 +599,7 @@ impl Mutation {
         )
     }
 
-    #[graphql(description = "Add new state constraint factor to given generic constraint.")]
+    #[graphql(description = "Add new online constraint factor to given generic constraint.")]
     fn add_online_con_factor(
         factor: f64,
         constraint_name: String,
