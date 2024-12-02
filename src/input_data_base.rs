@@ -40,7 +40,7 @@ pub trait GroupMember {
 }
 
 #[derive(Clone, Debug, Default, GraphQLObject, Deserialize, Serialize)]
-#[graphql(description = "The model itself.")]
+#[graphql(name = "InputData", description = "The model itself.")]
 pub struct BaseInputData {
     pub scenarios: Vec<Scenario>,
     pub setup: BaseInputDataSetup,
@@ -58,6 +58,7 @@ pub struct BaseInputData {
 }
 
 #[derive(Clone, Debug, Default, GraphQLObject, Deserialize, Serialize)]
+#[graphql(description = "Delay for connections between nodes.")]
 pub struct Delay {
     pub from_node: String,
     pub to_node: String,
@@ -169,6 +170,7 @@ impl BaseInputData {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, PartialEq, Serialize)]
+#[graphql(name = "InputDataSetup")]
 pub struct BaseInputDataSetup {
     pub contains_reserves: bool,
     pub contains_online: bool,
@@ -217,6 +219,7 @@ impl ExpandToTimeSeries for BaseInputDataSetup {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, Serialize)]
+#[graphql(name = "Process")]
 pub struct BaseProcess {
     pub name: String,
     pub groups: Vec<String>,
@@ -316,6 +319,7 @@ impl BaseProcess {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, Serialize)]
+#[graphql(name = "Node")]
 pub struct BaseNode {
     pub name: String,
     pub groups: Vec<String>,
@@ -364,6 +368,7 @@ impl GroupMember for BaseNode {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
+#[graphql(name = "NodeDiffusion")]
 pub struct BaseNodeDiffusion {
     pub from_node: String,
     pub to_node: String,
@@ -387,6 +392,7 @@ impl ExpandToTimeSeries for BaseNodeDiffusion {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
+#[graphql(name = "NodeHistory")]
 pub struct BaseNodeHistory {
     pub node: String,
     pub steps: f64,
@@ -413,6 +419,7 @@ impl ExpandToTimeSeries for BaseNodeHistory {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, Serialize)]
+#[graphql(name = "Market")]
 pub struct BaseMarket {
     pub name: String,
     pub m_type: String,
@@ -477,6 +484,7 @@ impl ExpandToTimeSeries for BaseMarket {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, Serialize)]
+#[graphql(name = "InflowBlock")]
 pub struct BaseInflowBlock {
     pub name: String,
     pub node: String,
@@ -500,6 +508,7 @@ impl ExpandToTimeSeries for BaseInflowBlock {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, Serialize)]
+#[graphql(name = "GenConstraint")]
 pub struct BaseGenConstraint {
     pub name: String,
     pub gc_type: String,
@@ -532,6 +541,7 @@ impl ExpandToTimeSeries for BaseGenConstraint {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
+#[graphql(name = "Topology")]
 pub struct BaseTopology {
     pub source: String,
     pub sink: String,
@@ -566,6 +576,7 @@ impl ExpandToTimeSeries for BaseTopology {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
+#[graphql(name = "ConFactor")]
 pub struct BaseConFactor {
     pub var_type: String,
     pub var_tuple: VariableId,
@@ -573,7 +584,6 @@ pub struct BaseConFactor {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
-
 pub struct VariableId {
     pub entity: String,
     pub identifier: Option<String>,
