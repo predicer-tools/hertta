@@ -294,10 +294,7 @@ impl ExpandToTimeSeries for BaseProcess {
                 .map(|topology| topology.expand_to_time_series(time_line, scenarios))
                 .collect(),
             cf: to_time_series(self.cf, time_line, scenarios),
-            eff_ts: match self.eff_ts {
-                Some(eff) => to_time_series(eff, time_line, scenarios),
-                None => TimeSeriesData::default(),
-            },
+            eff_ts: expand_optional_time_series(self.eff_ts, time_line, scenarios),
             eff_ops: self.eff_ops.clone(),
             eff_fun: self
                 .eff_fun
@@ -351,14 +348,8 @@ impl ExpandToTimeSeries for BaseNode {
             is_res: self.is_res,
             is_inflow: self.inflow.is_some(),
             state: self.state.clone(),
-            cost: match self.cost {
-                Some(cost) => to_time_series(cost, time_line, scenarios),
-                None => TimeSeriesData::default(),
-            },
-            inflow: match self.inflow {
-                Some(inflow) => to_time_series(inflow, time_line, scenarios),
-                None => TimeSeriesData::default(),
-            },
+            cost: expand_optional_time_series(self.cost, time_line, scenarios),
+            inflow: expand_optional_time_series(self.inflow, time_line, scenarios),
         }
     }
 }
@@ -434,21 +425,21 @@ pub struct BaseMarket {
     pub node: String,
     pub processgroup: String,
     pub direction: String,
-    pub realisation: f64,
+    pub realisation: Option<f64>,
     pub reserve_type: String,
     pub is_bid: bool,
     pub is_limited: bool,
     pub min_bid: f64,
     pub max_bid: f64,
     pub fee: f64,
-    pub price: f64,
-    pub up_price: f64,
-    pub down_price: f64,
-    pub reserve_activation_price: f64,
+    pub price: Option<f64>,
+    pub up_price: Option<f64>,
+    pub down_price: Option<f64>,
+    pub reserve_activation_price: Option<f64>,
     pub fixed: Vec<MarketFix>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
+#[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
 pub struct MarketFix {
     pub name: String,
     pub factor: f64,
@@ -467,17 +458,17 @@ impl ExpandToTimeSeries for BaseMarket {
             node: self.node.clone(),
             processgroup: self.processgroup.clone(),
             direction: self.direction.clone(),
-            realisation: to_time_series(self.realisation, time_line, scenarios),
+            realisation: expand_optional_time_series(self.realisation, time_line, scenarios),
             reserve_type: self.reserve_type.clone(),
             is_bid: self.is_bid,
             is_limited: self.is_limited,
             min_bid: self.min_bid,
             max_bid: self.max_bid,
             fee: self.fee,
-            price: to_time_series(self.price, time_line, scenarios),
-            up_price: to_time_series(self.up_price, time_line, scenarios),
-            down_price: to_time_series(self.down_price, time_line, scenarios),
-            reserve_activation_price: to_time_series(
+            price: expand_optional_time_series(self.price, time_line, scenarios),
+            up_price: expand_optional_time_series(self.up_price, time_line, scenarios),
+            down_price: expand_optional_time_series(self.down_price, time_line, scenarios),
+            reserve_activation_price: expand_optional_time_series(
                 self.reserve_activation_price,
                 time_line,
                 scenarios,
@@ -578,10 +569,7 @@ impl ExpandToTimeSeries for BaseTopology {
             ramp_down: self.ramp_down,
             initial_load: self.initial_load,
             initial_flow: self.initial_flow,
-            cap_ts: match self.cap_ts {
-                Some(cap_ts) => to_time_series(cap_ts, time_line, scenarios),
-                None => TimeSeriesData::default(),
-            },
+            cap_ts: expand_optional_time_series(self.cap_ts, time_line, scenarios),
         }
     }
 }
@@ -656,6 +644,17 @@ fn make_temporals(time_line: &TimeLine) -> Temporals {
         t: time_line.clone(),
         dtf: (time_line[1] - time_line[0]).num_seconds() as f64 / 3600.0,
         variable_dt: None,
+    }
+}
+
+fn expand_optional_time_series(
+    optional: Option<f64>,
+    time_line: &TimeLine,
+    scenarios: &Vec<Scenario>,
+) -> TimeSeriesData {
+    match optional {
+        Some(constant) => to_time_series(constant, time_line, scenarios),
+        None => TimeSeriesData::default(),
     }
 }
 
@@ -750,17 +749,17 @@ mod tests {
             node: "North".to_string(),
             processgroup: "Group".to_string(),
             direction: "none".to_string(),
-            realisation: 1.1,
+            realisation: Some(1.0),
             reserve_type: "not none".to_string(),
             is_bid: true,
             is_limited: false,
             min_bid: 1.2,
             max_bid: 1.3,
             fee: 1.4,
-            price: 1.5,
-            up_price: 1.6,
-            down_price: 1.7,
-            reserve_activation_price: 1.8,
+            price: Some(1.5),
+            up_price: Some(1.6),
+            down_price: Some(1.7),
+            reserve_activation_price: Some(1.8),
             fixed: vec![MarketFix {
                 name: "Fix".to_string(),
                 factor: 1.9,
@@ -1004,17 +1003,17 @@ mod tests {
             node: "North".to_string(),
             processgroup: "Group".to_string(),
             direction: "none".to_string(),
-            realisation: 1.1,
+            realisation: Some(1.1),
             reserve_type: "not none".to_string(),
             is_bid: true,
             is_limited: false,
             min_bid: 1.2,
             max_bid: 1.3,
             fee: 1.4,
-            price: 1.5,
-            up_price: 1.6,
-            down_price: 1.7,
-            reserve_activation_price: 1.8,
+            price: Some(1.5),
+            up_price: Some(1.6),
+            down_price: Some(1.7),
+            reserve_activation_price: Some(1.8),
             fixed: vec![MarketFix {
                 name: "Fix".to_string(),
                 factor: 1.9,

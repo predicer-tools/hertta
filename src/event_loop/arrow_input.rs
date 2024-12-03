@@ -838,14 +838,12 @@ fn inflow_blocks_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowEr
 fn markets_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let markets = &input_data.markets;
 
-    // Define the schema for the Arrow RecordBatch
     let schema = Schema::new(vec![
         Field::new("market", DataType::Utf8, false),
         Field::new("market_type", DataType::Utf8, false),
         Field::new("node", DataType::Utf8, false),
         Field::new("processgroup", DataType::Utf8, false),
         Field::new("direction", DataType::Utf8, false),
-        Field::new("realisation", DataType::Boolean, false), // New column for realisation
         Field::new("reserve_type", DataType::Utf8, false),
         Field::new("is_bid", DataType::Boolean, false),
         Field::new("is_limited", DataType::Boolean, false),
@@ -854,13 +852,11 @@ fn markets_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
         Field::new("fee", DataType::Float64, false),
     ]);
 
-    // Initialize vectors to hold market data
     let mut markets_vec: Vec<String> = Vec::new();
     let mut m_types: Vec<String> = Vec::new();
     let mut nodes: Vec<String> = Vec::new();
     let mut processgroups: Vec<String> = Vec::new();
     let mut directions: Vec<String> = Vec::new();
-    let mut realisations: Vec<bool> = Vec::new(); // New vector for realisation
     let mut reserve_types: Vec<String> = Vec::new();
     let mut is_bids: Vec<bool> = Vec::new();
     let mut is_limiteds: Vec<bool> = Vec::new();
@@ -874,7 +870,6 @@ fn markets_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
         nodes.push(market.node.clone());
         processgroups.push(market.processgroup.clone());
         directions.push(market.direction.clone());
-        realisations.push(!market.realisation.ts_data.is_empty()); // Check if realisation has time series data
         reserve_types.push(market.reserve_type.clone());
         is_bids.push(market.is_bid);
         is_limiteds.push(market.is_limited);
@@ -883,13 +878,11 @@ fn markets_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
         fees.push(market.fee);
     }
 
-    // Create arrays from the vectors
     let markets_array = Arc::new(StringArray::from(markets_vec)) as ArrayRef;
     let m_types_array = Arc::new(StringArray::from(m_types)) as ArrayRef;
     let nodes_array = Arc::new(StringArray::from(nodes)) as ArrayRef;
     let processgroups_array = Arc::new(StringArray::from(processgroups)) as ArrayRef;
     let directions_array = Arc::new(StringArray::from(directions)) as ArrayRef;
-    let realisations_array = Arc::new(BooleanArray::from(realisations)) as ArrayRef; // New array for realisation
     let reserve_types_array = Arc::new(StringArray::from(reserve_types)) as ArrayRef;
     let is_bids_array = Arc::new(BooleanArray::from(is_bids)) as ArrayRef;
     let is_limiteds_array = Arc::new(BooleanArray::from(is_limiteds)) as ArrayRef;
@@ -897,7 +890,6 @@ fn markets_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let max_bids_array = Arc::new(Float64Array::from(max_bids)) as ArrayRef;
     let fees_array = Arc::new(Float64Array::from(fees)) as ArrayRef;
 
-    // Now you can create the RecordBatch using these arrays
     let record_batch = RecordBatch::try_new(
         Arc::new(schema),
         vec![
@@ -906,7 +898,6 @@ fn markets_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
             nodes_array,
             processgroups_array,
             directions_array,
-            realisations_array, // Add realisation array to the RecordBatch
             reserve_types_array,
             is_bids_array,
             is_limiteds_array,
@@ -964,12 +955,10 @@ fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch, Ar
     let fields = schema_fields_from_scenarios(&market_names, &scenario_names);
     let mut scenario_values: BTreeMap<String, BTreeMap<String, BTreeMap<TimeStamp, Option<f64>>>> =
         BTreeMap::new();
-    // Handle the case where there are no realisation data
     let has_realisation_data = markets
         .values()
         .any(|market| !market.realisation.ts_data.is_empty());
     if !has_realisation_data {
-        // Initialize scenario values with None
         for market in &market_names {
             let mut market_map = BTreeMap::new();
             for scenario in &scenario_names {
@@ -982,7 +971,6 @@ fn market_realisation_to_arrow(input_data: &InputData) -> Result<RecordBatch, Ar
             scenario_values.insert(market.clone(), market_map);
         }
     } else {
-        // Collect timestamps and populate scenario values
         for market in markets.values() {
             for ts in &market.realisation.ts_data {
                 check_timestamps_match(&temporals.t, ts)?;
@@ -2904,42 +2892,42 @@ mod tests {
         assert_string_column(direction_array, &expected_direction, "direction");
 
         let reserve_type_array = record_batch
-            .column(6)
+            .column(5)
             .as_any()
             .downcast_ref::<StringArray>()
             .unwrap();
         assert_string_column(reserve_type_array, &expected_reserve_type, "reserve_type");
 
         let is_bid_array = record_batch
-            .column(7)
+            .column(6)
             .as_any()
             .downcast_ref::<BooleanArray>()
             .unwrap();
         assert_boolean_column(is_bid_array, &expected_is_bid, "is_bid");
 
         let is_limited_array = record_batch
-            .column(8)
+            .column(7)
             .as_any()
             .downcast_ref::<BooleanArray>()
             .unwrap();
         assert_boolean_column(is_limited_array, &expected_is_limited, "is_limited");
 
         let min_bid_array = record_batch
-            .column(9)
+            .column(8)
             .as_any()
             .downcast_ref::<Float64Array>()
             .unwrap();
         assert_float64_column(min_bid_array, &expected_min_bid, "min_bid");
 
         let max_bid_array = record_batch
-            .column(10)
+            .column(9)
             .as_any()
             .downcast_ref::<Float64Array>()
             .unwrap();
         assert_float64_column(max_bid_array, &expected_max_bid, "max_bid");
 
         let fee_array = record_batch
-            .column(11)
+            .column(10)
             .as_any()
             .downcast_ref::<Float64Array>()
             .unwrap();

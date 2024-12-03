@@ -1,7 +1,7 @@
 mod arrow_input;
 mod time_series;
 
-use crate::input_data::{self, InputData, TimeSeries, TimeSeriesData};
+use crate::input_data::{self, InputData, Market, TimeSeries, TimeSeriesData};
 use crate::input_data_base::{self, BaseInputData, BaseProcess};
 use crate::model::Model;
 use crate::scenarios::Scenario;
@@ -667,7 +667,7 @@ async fn generate_model_task(
             "update_model_data_task: electricity price data missing in optimization data"
                 .to_string(),
         )?;
-        if let Err(e) = update_npe_market_prices(&mut input_data, electricity_price_data) {
+        if let Err(e) = update_npe_market_prices(&mut input_data.markets, electricity_price_data) {
             return Err(format!(
                 "update_model_data_task: failed to update NPE market prices: {}",
                 e
@@ -683,11 +683,10 @@ async fn generate_model_task(
 }
 
 fn update_npe_market_prices(
-    input_data: &mut InputData,
+    markets: &mut BTreeMap<String, Market>,
     electricity_price_data: ElectricityPriceData,
 ) -> Result<(), String> {
     let electricity_market_name = "npe";
-    let markets = &mut input_data.markets;
     if let Some(npe_market) = markets.get_mut(electricity_market_name) {
         if let Some(price_data) = &electricity_price_data.price_data {
             npe_market.price.ts_data = price_data.ts_data.clone();

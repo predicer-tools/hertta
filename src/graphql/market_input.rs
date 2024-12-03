@@ -9,18 +9,18 @@ pub struct AddMarketInput {
     m_type: String,
     node: String,
     processgroup: String,
-    direction: String,
-    realisation: f64,
-    reserve_type: String,
+    direction: Option<String>,
+    realisation: Option<f64>,
+    reserve_type: Option<String>,
     is_bid: bool,
     is_limited: bool,
     min_bid: f64,
     max_bid: f64,
     fee: f64,
-    price: f64,
-    up_price: f64,
-    down_price: f64,
-    reserve_activation_price: f64,
+    price: Option<f64>,
+    up_price: Option<f64>,
+    down_price: Option<f64>,
+    reserve_activation_price: Option<f64>,
 }
 
 impl AddMarketInput {
@@ -30,9 +30,15 @@ impl AddMarketInput {
             m_type: self.m_type,
             node: self.node,
             processgroup: self.processgroup,
-            direction: self.direction,
+            direction: match self.direction {
+                Some(dir) => dir,
+                None => "none".to_string(),
+            },
             realisation: self.realisation,
-            reserve_type: self.reserve_type,
+            reserve_type: match self.reserve_type {
+                Some(reserve_type) => reserve_type,
+                None => "none".to_string(),
+            },
             is_bid: self.is_bid,
             is_limited: self.is_limited,
             min_bid: self.min_bid,
@@ -90,24 +96,25 @@ fn validate_market_to_add(
     } else {
         errors.push(ValidationError::new("processgroup", "no such group"));
     }
-    if ["up", "down", "updown"]
-        .iter()
-        .find(|d| **d == market.direction)
-        .is_none()
-    {
-        errors.push(ValidationError::new(
-            "direction",
-            "should be 'up', 'down' or 'updown'",
-        ));
+    if let Some(ref direction) = market.direction {
+        if ["up", "down", "updown"]
+            .iter()
+            .find(|d| **d == direction)
+            .is_none()
+        {
+            errors.push(ValidationError::new(
+                "direction",
+                "should be 'up', 'down', 'updown'",
+            ));
+        }
     }
-    if market.realisation < 0.0 || market.realisation > 1.0 {
-        errors.push(ValidationError::new("realisation", "should be in [0, 1]"));
-    }
-    if market.reserve_type.is_empty() {
-        errors.push(ValidationError::new(
-            "reserve_type",
-            "reserve_type is empty",
-        ));
+    if let Some(ref reserve_type) = market.reserve_type {
+        if reserve_type.is_empty() {
+            errors.push(ValidationError::new(
+                "reserve_type",
+                "reserve_type is empty",
+            ));
+        }
     }
     if market.min_bid > market.max_bid {
         errors.push(ValidationError::new("min_bid", "greater than max_bid"));
