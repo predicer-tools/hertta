@@ -68,6 +68,14 @@ impl From<Vec<ValidationError>> for ValidationErrors {
     }
 }
 
+impl From<ValidationError> for ValidationErrors {
+    fn from(value: ValidationError) -> Self {
+        ValidationErrors {
+            errors: vec![value],
+        }
+    }
+}
+
 #[derive(GraphQLInputObject)]
 #[graphql(description = "Location input.")]
 struct LocationInput {

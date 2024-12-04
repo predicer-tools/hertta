@@ -50,9 +50,12 @@ pub fn set_state_for_node(
     let node = match nodes.iter_mut().find(|p| p.name == node_name) {
         Some(p) => p,
         None => {
-            return ValidationErrors::from(vec![ValidationError::new(node_name, "no such node")])
+            return ValidationErrors::from(ValidationError::new(node_name, "no such node"));
         }
     };
+    if node.state.is_some() {
+        return ValidationErrors::from(ValidationError::new(node_name, "node already has a state"));
+    }
     node.state = state.and_then(|state| Some(state.to_state()));
     ValidationErrors::from(Vec::new())
 }
