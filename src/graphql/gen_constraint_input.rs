@@ -8,7 +8,7 @@ pub struct AddGenConstraintInput {
     gc_type: String,
     is_setpoint: bool,
     penalty: f64,
-    constant: f64,
+    constant: Option<f64>,
 }
 
 impl AddGenConstraintInput {
@@ -54,14 +54,14 @@ fn validate_gen_contraint_to_add(
             "a constraint with the same name exists",
         ));
     }
-    if ["eq", "st", "gt"]
+    if ["eq", "lt", "gt"]
         .iter()
         .find(|c| **c == constraint.gc_type)
         .is_none()
     {
         errors.push(ValidationError::new(
             "gc_type",
-            "should be 'eq', 'st' or 'gt'",
+            "should be 'eq', 'lt' or 'gt'",
         ));
     }
     errors
