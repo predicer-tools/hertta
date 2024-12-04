@@ -103,10 +103,7 @@ pub async fn event_loop(
         let settings_snapshot = vanilla_settings.lock().unwrap().clone();
         let model_snapshot = model.lock().unwrap().clone();
         let optimization_data = OptimizationData::with_input_data(model_snapshot.input_data);
-        let start_time: TimeStamp = Utc::now()
-            .duration_trunc(TimeDelta::try_hours(1).unwrap())
-            .unwrap()
-            .into();
+        let start_time: TimeStamp = Utc::now().duration_trunc(TimeDelta::hours(1)).unwrap();
         let control_processes = match expected_control_processes(&optimization_data.input_data) {
             Ok(names) => names,
             Err(error) => {
@@ -707,15 +704,16 @@ fn update_npe_market_prices(
 }
 
 fn check_stamps_match(
-    forecast: &Vec<(TimeStamp, f64)>,
+    checkable_series: &Vec<(TimeStamp, f64)>,
     time_line: &TimeLine,
+    context: &str,
 ) -> Result<(), String> {
-    if forecast.len() != time_line.len() {
-        return Err("weather forecast length doesn't match time line".to_string());
+    if checkable_series.len() != time_line.len() {
+        return Err(format!("{} length doesn't match time line", context));
     }
-    for (forecast_pair, time_stamp) in iter::zip(forecast, time_line) {
+    for (forecast_pair, time_stamp) in iter::zip(checkable_series, time_line) {
         if forecast_pair.0 != *time_stamp {
-            return Err("weather forecast time stamp doesn't match time line".to_string());
+            return Err(format!("{} time stamp doesn't match time line", context));
         }
     }
     Ok(())
@@ -749,7 +747,9 @@ async fn fetch_weather_data_task(
                     .time_data
                     .as_ref()
                     .ok_or("series missing from time data".to_string())?;
-                if let Err(error) = check_stamps_match(&weather_values, &time_line) {
+                if let Err(error) =
+                    check_stamps_match(&weather_values, &time_line, "weather forecast")
+                {
                     return Err(error);
                 }
                 let values =
@@ -1078,11 +1078,14 @@ async fn fetch_electricity_price_task(
         let format_string = "%Y-%m-%dT%H:%M:%S%.3fZ";
         let start_time = time_line.first().ok_or("time line is empty")?;
         let start_time_str = start_time.format(&format_string).to_string();
-        let end_time = time_line.last().ok_or("time line is empty")?;
+        let end_time = (*time_line.last().ok_or("time line is empty")? - TimeDelta::hours(1))
+            .duration_trunc(TimeDelta::hours(1))
+            .unwrap();
         let end_time_str = end_time.format(&format_string).to_string();
         match fetch_electricity_prices(start_time_str, end_time_str, &location.country).await {
             Ok(prices) => {
-                if let Err(error) = check_stamps_match(&prices, &time_line) {
+                let prices = fit_prices_to_time_line(&prices, time_line)?;
+                if let Err(error) = check_stamps_match(&prices, time_line, "electricity prices") {
                     return Err(error);
                 }
                 let prices = prices.iter().map(|pair| (pair.0.clone(), pair.1)).collect();
@@ -1102,6 +1105,36 @@ async fn fetch_electricity_price_task(
     } else {
         return Err("fetch_electricity_price_task: input channel closed".to_string());
     }
+}
+
+fn fit_prices_to_time_line(
+    prices: &Vec<(TimeStamp, f64)>,
+    time_line: &TimeLine,
+) -> Result<Vec<(TimeStamp, f64)>, String> {
+    let mut fitted = Vec::with_capacity(time_line.len());
+    if prices.is_empty() {
+        return Err("electricity prices should have at least one time stamp".into());
+    }
+    if prices[0].0 != time_line[0] {
+        return Err("first electricity price time stamp mismatches with time line start".into());
+    }
+    let mut price_iter = prices.iter();
+    let mut current_price = price_iter.next().unwrap().1;
+    let (mut next_time_stamp, mut next_price) = price_iter.next().unwrap();
+    for stamp in time_line {
+        if *stamp == next_time_stamp {
+            current_price = next_price;
+            (next_time_stamp, next_price) = match price_iter.next() {
+                Some((stamp, price)) => (*stamp, *price),
+                None => (
+                    *time_line.last().unwrap() + TimeDelta::hours(1),
+                    current_price,
+                ),
+            };
+        }
+        fitted.push((stamp.clone(), current_price));
+    }
+    Ok(fitted)
 }
 
 #[cfg(test)]
@@ -1471,6 +1504,47 @@ mod tests {
             let expected_date_time = Utc.with_ymd_and_hms(2024, 11, 18, 11, 00, 00).unwrap();
             let expected_time_series = vec![(expected_date_time, 70.05)];
             assert_eq!(time_series, expected_time_series);
+        }
+    }
+    mod fit_prices_to_time_line {
+        use chrono::TimeZone;
+
+        use super::*;
+        #[test]
+        fn test_last_price_is_extended_until_end_of_time_line() {
+            let prices = [
+                (Utc.with_ymd_and_hms(2024, 12, 4, 11, 0, 0), 2.2),
+                (Utc.with_ymd_and_hms(2024, 12, 4, 12, 0, 0), 2.3),
+            ]
+            .iter()
+            .map(|(s, p)| (s.unwrap(), *p))
+            .collect();
+            let time_line = [
+                Utc.with_ymd_and_hms(2024, 12, 4, 11, 0, 0),
+                Utc.with_ymd_and_hms(2024, 12, 4, 11, 30, 0),
+                Utc.with_ymd_and_hms(2024, 12, 4, 12, 0, 0),
+                Utc.with_ymd_and_hms(2024, 12, 4, 12, 30, 0),
+                Utc.with_ymd_and_hms(2024, 12, 4, 13, 0, 0),
+                Utc.with_ymd_and_hms(2024, 12, 4, 13, 30, 0),
+            ]
+            .iter()
+            .map(|s| s.unwrap())
+            .collect();
+            let fitted_prices =
+                fit_prices_to_time_line(&prices, &time_line).expect("fitting should not fail");
+            assert_eq!(fitted_prices.len(), time_line.len());
+            let expected_prices: Vec<(TimeStamp, f64)> = [
+                (Utc.with_ymd_and_hms(2024, 12, 4, 11, 0, 0), 2.2),
+                (Utc.with_ymd_and_hms(2024, 12, 4, 11, 30, 0), 2.2),
+                (Utc.with_ymd_and_hms(2024, 12, 4, 12, 0, 0), 2.3),
+                (Utc.with_ymd_and_hms(2024, 12, 4, 12, 30, 0), 2.3),
+                (Utc.with_ymd_and_hms(2024, 12, 4, 13, 0, 0), 2.3),
+                (Utc.with_ymd_and_hms(2024, 12, 4, 13, 30, 0), 2.3),
+            ]
+            .iter()
+            .map(|(s, p)| (s.unwrap(), *p))
+            .collect();
+            assert_eq!(fitted_prices, expected_prices);
         }
     }
 }
