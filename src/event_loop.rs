@@ -501,6 +501,8 @@ async fn optimization_task(
                                 }
                             };
                             is_running = false;
+                        } else if command == "Failed" {
+                            return Err("optimization_task: Predicer process failed".into());
                         } else {
                             return Err(format!(
                                 "optimization_task: received unknown command {}",

@@ -139,6 +139,10 @@ function send_results(socket::Socket, results::Dict{Any, Any})
     receive_acknowledgement(socket)
 end
 
+function send_failure(socket::Socket)
+    ZMQ.send(socket, "Failed")
+end
+
 function main()
     println("Connecting to server...")
     socket = Socket(zmq_context, REQ)
@@ -148,13 +152,19 @@ function main()
     println("All data received.")
     temporals = string.(ZonedDateTime.(pop!(data_dict, "temps").t, tz"UTC"))
     (system_data, timeseries_data) = split_data_to_system_and_time_series(data_dict)
-    input_data = Predicer.compile_input_data(system_data, timeseries_data, temporals)
-    mc, input_data = Predicer.generate_model(input_data)
-    Predicer.solve_model(mc)
-    result_dataframes = Predicer.get_all_result_dataframes(mc, input_data)
-    send_results(socket, result_dataframes)
-    ZMQ.close(socket)
-    ZMQ.close(zmq_context)
+    try
+        input_data = Predicer.compile_input_data(system_data, timeseries_data, temporals)
+        mc, input_data = Predicer.generate_model(input_data)
+        result_dataframes = Predicer.get_all_result_dataframes(mc, input_data)
+    catch error
+        send_failure(socket)
+        rethrow()
+    else
+        send_results(socket, result_dataframes)
+    finally
+        ZMQ.close(socket)
+        ZMQ.close(zmq_context)
+    end
 end
 
 main()
