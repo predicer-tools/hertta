@@ -265,7 +265,6 @@ fn nodes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
             t_e_conversions.push(state.t_e_conversion);
             residual_values.push(state.residual_value);
         } else {
-            // Provide default values for the fields in case state is None
             state_maxs.push(0.0);
             state_mins.push(0.0);
             in_maxs.push(0.0);

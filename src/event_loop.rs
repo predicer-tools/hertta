@@ -1,7 +1,7 @@
 mod arrow_input;
 mod time_series;
 
-use crate::input_data::{self, InputData, Market, TimeSeries, TimeSeriesData};
+use crate::input_data::{InputData, Market, TimeSeries, TimeSeriesData};
 use crate::input_data_base::{self, BaseInputData, BaseProcess};
 use crate::model::Model;
 use crate::scenarios::Scenario;
@@ -757,7 +757,11 @@ async fn fetch_weather_data_task(
                 let values =
                     time_series::extract_values_from_pairs_checked(&weather_values, &series)
                         .or_else(|e| Err(format!("fetch_weather_data: {}", e)))?;
-                optimization_data.weather_data = Some(update_weather_data(series, &values));
+                optimization_data.weather_data = Some(update_weather_data(
+                    series,
+                    &values,
+                    &optimization_data.input_data.scenarios,
+                ));
             }
             Err(e) => {
                 return Err(format!(
@@ -794,24 +798,28 @@ fn update_outside_node_inflow(
 }
 
 // Function to create TimeSeriesData from weather values and update the weather_data field in optimization_data
-fn update_weather_data(time_data: &TimeLine, values: &[f64]) -> Vec<TimeSeries> {
+fn update_weather_data(
+    time_data: &TimeLine,
+    values: &[f64],
+    scenarios: &Vec<Scenario>,
+) -> Vec<TimeSeries> {
     let paired_series = pair_timeseries_with_values(time_data, values);
-    create_time_series_data_with_scenarios(paired_series)
+    create_time_series_data_with_scenarios(paired_series, scenarios)
 }
 
-// Function to create TimeSeriesData with scenarios "s1" and "s2" using paired series
+// Function to create TimeSeriesData
 fn create_time_series_data_with_scenarios(
     paired_series: BTreeMap<TimeStamp, f64>,
+    scenarios: &Vec<Scenario>,
 ) -> Vec<TimeSeries> {
-    let time_series_s1 = input_data::TimeSeries {
-        scenario: "s1".to_string(),
-        series: paired_series.clone(),
-    };
-    let time_series_s2 = input_data::TimeSeries {
-        scenario: "s2".to_string(),
-        series: paired_series,
-    };
-    return vec![time_series_s1, time_series_s2];
+    let mut series = Vec::with_capacity(scenarios.len());
+    for scenario in scenarios {
+        series.push(TimeSeries {
+            scenario: scenario.name().clone(),
+            series: paired_series.clone(),
+        });
+    }
+    series
 }
 
 fn pair_timeseries_with_values(series: &[TimeStamp], values: &[f64]) -> BTreeMap<TimeStamp, f64> {
