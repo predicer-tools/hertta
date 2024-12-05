@@ -517,7 +517,7 @@ impl Mutation {
     }
 
     #[graphql(description = "Update state of a node. The state has to be set.")]
-    fn update_node_sate(
+    fn update_node_state(
         state: UpdateStateInput,
         node_name: String,
         context: &HerttaContext,
