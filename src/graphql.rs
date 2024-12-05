@@ -22,25 +22,25 @@ use crate::input_data_base::{
 use crate::model::{self, Model};
 use crate::scenarios::Scenario;
 use crate::settings::{LocationSettings, Settings};
-use gen_constraint_input::AddGenConstraintInput;
-use input_data_setup_input::InputDataSetupInput;
+use gen_constraint_input::NewGenConstraint;
+use input_data_setup_input::InputDataSetupUpdate;
 use juniper::{
     graphql_object, Context, EmptySubscription, FieldResult, GraphQLInputObject, GraphQLObject,
     GraphQLUnion, Nullable, RootNode,
 };
-use market_input::AddMarketInput;
-use node_input::AddNodeInput;
-use process_input::AddProcessInput;
-use risk_input::AddRiskInput;
-use state_input::{SetStateInput, UpdateStateInput};
+use market_input::NewMarket;
+use node_input::NewNode;
+use process_input::NewProcess;
+use risk_input::NewRisk;
+use state_input::{StateInput, StateUpdate};
 use status::Status;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
-use time_line_input::TimeLineInput;
+use time_line_input::TimeLineUpdate;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio::sync::Semaphore;
-use topology_input::AddTopologyInput;
+use topology_input::NewTopology;
 
 #[derive(Debug, GraphQLObject)]
 struct ValidationError {
@@ -380,17 +380,17 @@ impl Mutation {
 
     #[graphql(description = "Update model's time line.")]
     fn update_time_line(
-        time_line_input: TimeLineInput,
+        time_line_input: TimeLineUpdate,
         context: &HerttaContext,
     ) -> ValidationErrors {
         let mut model = context.model.lock().unwrap();
         time_line_input::update_time_line(time_line_input, &mut model.time_line)
     }
 
-    #[graphql(description = "Add new scenario to model.")]
-    fn add_scenario(name: String, weight: f64, context: &HerttaContext) -> MaybeError {
+    #[graphql(description = "Create new scenario.")]
+    fn create_scenario(name: String, weight: f64, context: &HerttaContext) -> MaybeError {
         let mut model = context.model.lock().unwrap();
-        scenario_input::add_scenario(name, weight, &mut model.input_data.scenarios)
+        scenario_input::create_scenario(name, weight, &mut model.input_data.scenarios)
     }
 
     #[graphql(description = "Save the model on disk.")]
@@ -411,32 +411,32 @@ impl Mutation {
 
     #[graphql(description = "Update input data setup.")]
     fn update_input_data_setup(
-        setup_update: InputDataSetupInput,
+        setup_update: InputDataSetupUpdate,
         context: &HerttaContext,
     ) -> ValidationErrors {
         let mut model = context.model.lock().unwrap();
         input_data_setup_input::update_input_data_setup(setup_update, &mut model.input_data.setup)
     }
 
-    #[graphql(description = "Add new node group to model")]
-    fn add_node_group(name: String, context: &HerttaContext) -> MaybeError {
+    #[graphql(description = "Create new node group")]
+    fn create_node_group(name: String, context: &HerttaContext) -> MaybeError {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
-        group_input::add_node_group(name, &mut model.input_data.groups)
+        group_input::create_node_group(name, &mut model.input_data.groups)
     }
 
-    #[graphql(description = "Add new process group to model")]
-    fn add_process_group(name: String, context: &HerttaContext) -> MaybeError {
+    #[graphql(description = "Create new process group.")]
+    fn create_process_group(name: String, context: &HerttaContext) -> MaybeError {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
-        group_input::add_process_group(name, &mut model.input_data.groups)
+        group_input::create_process_group(name, &mut model.input_data.groups)
     }
 
-    #[graphql(description = "Add new process to model.")]
-    fn add_process(process: AddProcessInput, context: &HerttaContext) -> ValidationErrors {
+    #[graphql(description = "Create new process.")]
+    fn create_process(process: NewProcess, context: &HerttaContext) -> ValidationErrors {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
-        process_input::add_process(
+        process_input::create_process(
             process,
             &mut model.input_data.processes,
             &mut model.input_data.nodes,
@@ -459,9 +459,9 @@ impl Mutation {
         )
     }
 
-    #[graphql(description = "Add new topology to given process.")]
-    fn add_topology(
-        topology: AddTopologyInput,
+    #[graphql(description = "Create new topology and add it to process.")]
+    fn create_topology(
+        topology: NewTopology,
         source_node_name: Option<String>,
         process_name: String,
         sink_node_name: Option<String>,
@@ -469,7 +469,7 @@ impl Mutation {
     ) -> ValidationErrors {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
-        topology_input::add_topology_to_process(
+        topology_input::create_topology(
             process_name,
             source_node_name,
             sink_node_name,
@@ -479,10 +479,11 @@ impl Mutation {
         )
     }
 
-    fn add_node(node: AddNodeInput, context: &HerttaContext) -> ValidationErrors {
+    #[graphql(description = "Create new node.")]
+    fn create_node(node: NewNode, context: &HerttaContext) -> ValidationErrors {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
-        node_input::add_node(
+        node_input::create_node(
             node,
             &mut model.input_data.nodes,
             &mut model.input_data.processes,
@@ -507,7 +508,7 @@ impl Mutation {
 
     #[graphql(description = "Set state for node. Null clears the state.")]
     fn set_node_state(
-        state: Option<SetStateInput>,
+        state: Option<StateInput>,
         node_name: String,
         context: &HerttaContext,
     ) -> ValidationErrors {
@@ -518,7 +519,7 @@ impl Mutation {
 
     #[graphql(description = "Update state of a node. The state has to be set.")]
     fn update_node_state(
-        state: UpdateStateInput,
+        state: StateUpdate,
         node_name: String,
         context: &HerttaContext,
     ) -> ValidationErrors {
@@ -527,8 +528,8 @@ impl Mutation {
         state_input::update_state_in_node(state, node_name, &mut model.input_data.nodes)
     }
 
-    #[graphql(description = "Add diffusion for node.")]
-    fn add_node_diffusion(
+    #[graphql(description = "Create new diffusion between nodes.")]
+    fn create_node_diffusion(
         from_node: String,
         to_node: String,
         coefficient: f64,
@@ -536,7 +537,7 @@ impl Mutation {
     ) -> ValidationErrors {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
-        node_diffusion_input::add_node_diffusion(
+        node_diffusion_input::create_node_diffusion(
             from_node,
             to_node,
             coefficient,
@@ -545,11 +546,11 @@ impl Mutation {
         )
     }
 
-    #[graphql(description = "Add new market to model.")]
-    fn add_market(market: AddMarketInput, context: &HerttaContext) -> ValidationErrors {
+    #[graphql(description = "Create new market.")]
+    fn create_market(market: NewMarket, context: &HerttaContext) -> ValidationErrors {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
-        market_input::add_market(
+        market_input::create_market(
             market,
             &mut model.input_data.markets,
             &model.input_data.nodes,
@@ -557,23 +558,26 @@ impl Mutation {
         )
     }
 
-    #[graphql(description = "Adds new risk to model.")]
-    fn add_risk(risk: AddRiskInput, context: &HerttaContext) -> ValidationErrors {
+    #[graphql(description = "Create new risk.")]
+    fn create_risk(risk: NewRisk, context: &HerttaContext) -> ValidationErrors {
         let mut model = context.model.lock().unwrap();
-        risk_input::add_risk(risk, &mut model.input_data.risk)
+        risk_input::create_risk(risk, &mut model.input_data.risk)
     }
 
-    #[graphql(description = "Add new generic constraint.")]
-    fn add_gen_constraint(
-        constraint: AddGenConstraintInput,
+    #[graphql(description = "Create new generic constraint.")]
+    fn create_gen_constraint(
+        constraint: NewGenConstraint,
         context: &HerttaContext,
     ) -> ValidationErrors {
         let mut model = context.model.lock().unwrap();
-        gen_constraint_input::add_gen_constraint(constraint, &mut model.input_data.gen_constraints)
+        gen_constraint_input::create_gen_constraint(
+            constraint,
+            &mut model.input_data.gen_constraints,
+        )
     }
 
-    #[graphql(description = "Add new flow constraint factor to given generic constraint.")]
-    fn add_flow_con_factor(
+    #[graphql(description = "Create new flow constraint factor and add it to generic constraint.")]
+    fn create_flow_con_factor(
         factor: f64,
         constraint_name: String,
         process_name: String,
@@ -582,7 +586,7 @@ impl Mutation {
     ) -> ValidationErrors {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
-        con_factor_input::add_flow_con_factor(
+        con_factor_input::create_flow_con_factor(
             factor,
             constraint_name,
             process_name,
@@ -592,8 +596,8 @@ impl Mutation {
         )
     }
 
-    #[graphql(description = "Add new state constraint factor to given generic constraint.")]
-    fn add_state_con_factor(
+    #[graphql(description = "Create new state constraint factor and add it to generic constraint.")]
+    fn create_state_con_factor(
         factor: f64,
         constraint_name: String,
         node_name: String,
@@ -601,7 +605,7 @@ impl Mutation {
     ) -> ValidationErrors {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
-        con_factor_input::add_state_con_factor(
+        con_factor_input::create_state_con_factor(
             factor,
             constraint_name,
             node_name,
@@ -610,8 +614,10 @@ impl Mutation {
         )
     }
 
-    #[graphql(description = "Add new online constraint factor to given generic constraint.")]
-    fn add_online_con_factor(
+    #[graphql(
+        description = "Create new online constraint factor and add it to generic constraint."
+    )]
+    fn create_online_con_factor(
         factor: f64,
         constraint_name: String,
         process_name: String,
@@ -619,7 +625,7 @@ impl Mutation {
     ) -> ValidationErrors {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
-        con_factor_input::add_online_con_factor(
+        con_factor_input::create_online_con_factor(
             factor,
             constraint_name,
             process_name,

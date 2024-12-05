@@ -2,15 +2,15 @@ use super::MaybeError;
 use crate::input_data::{Group, GroupType, Name};
 use crate::input_data_base::GroupMember;
 
-pub fn add_node_group(name: String, groups: &mut Vec<Group>) -> MaybeError {
-    add_group(name, GroupType::Node, groups)
+pub fn create_node_group(name: String, groups: &mut Vec<Group>) -> MaybeError {
+    create_group(name, GroupType::Node, groups)
 }
 
-pub fn add_process_group(name: String, groups: &mut Vec<Group>) -> MaybeError {
-    add_group(name, GroupType::Process, groups)
+pub fn create_process_group(name: String, groups: &mut Vec<Group>) -> MaybeError {
+    create_group(name, GroupType::Process, groups)
 }
 
-fn add_group(name: String, group_type: GroupType, groups: &mut Vec<Group>) -> MaybeError {
+fn create_group(name: String, group_type: GroupType, groups: &mut Vec<Group>) -> MaybeError {
     let maybe_error = validate_name(&name, &groups);
     if maybe_error.error.is_some() {
         return maybe_error;

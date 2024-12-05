@@ -3,7 +3,7 @@ use crate::input_data_base::{BaseNode, BaseProcess};
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
-pub struct AddProcessInput {
+pub struct NewProcess {
     name: String,
     #[graphql(description = "Must be 'unit' or 'transport'.")]
     conversion: String,
@@ -24,7 +24,7 @@ pub struct AddProcessInput {
     eff_ts: Option<f64>,
 }
 
-impl AddProcessInput {
+impl NewProcess {
     fn to_process(self) -> BaseProcess {
         BaseProcess {
             name: self.name,
@@ -53,12 +53,12 @@ impl AddProcessInput {
     }
 }
 
-pub fn add_process(
-    process: AddProcessInput,
+pub fn create_process(
+    process: NewProcess,
     processes: &mut Vec<BaseProcess>,
     nodes: &mut Vec<BaseNode>,
 ) -> ValidationErrors {
-    let errors = validate_process_to_add(&process, processes, nodes);
+    let errors = validate_process_creation(&process, processes, nodes);
     if !errors.is_empty() {
         return ValidationErrors::from(errors);
     }
@@ -66,8 +66,8 @@ pub fn add_process(
     ValidationErrors::default()
 }
 
-fn validate_process_to_add(
-    process: &AddProcessInput,
+fn validate_process_creation(
+    process: &NewProcess,
     processes: &Vec<BaseProcess>,
     nodes: &Vec<BaseNode>,
 ) -> Vec<ValidationError> {

@@ -10,13 +10,13 @@ struct DurationInput {
 }
 
 #[derive(GraphQLInputObject)]
-pub struct TimeLineInput {
+pub struct TimeLineUpdate {
     duration: Option<DurationInput>,
     step: Option<DurationInput>,
 }
 
 pub fn update_time_line(
-    input: TimeLineInput,
+    input: TimeLineUpdate,
     time_line: &mut TimeLineSettings,
 ) -> ValidationErrors {
     let mut errors = Vec::new();
@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn update_time_line_works() {
         let mut time_line_settings = TimeLineSettings::default();
-        let input = TimeLineInput {
+        let input = TimeLineUpdate {
             duration: Some(DurationInput {
                 hours: 13,
                 minutes: 0,
@@ -87,7 +87,7 @@ mod tests {
     #[test]
     fn setting_negative_duration_causes_error() {
         let mut time_line_settings = TimeLineSettings::default();
-        let input = TimeLineInput {
+        let input = TimeLineUpdate {
             duration: Some(DurationInput {
                 hours: -13,
                 minutes: 0,
@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn setting_negative_step_causes_error() {
         let mut time_line_settings = TimeLineSettings::default();
-        let input = TimeLineInput {
+        let input = TimeLineUpdate {
             duration: Some(DurationInput {
                 hours: 13,
                 minutes: 0,
@@ -138,7 +138,7 @@ mod tests {
     #[test]
     fn setting_step_longer_than_duration_causes_error() {
         let mut time_line_settings = TimeLineSettings::default();
-        let input = TimeLineInput {
+        let input = TimeLineUpdate {
             duration: Some(DurationInput {
                 hours: 13,
                 minutes: 0,
