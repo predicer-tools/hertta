@@ -1,6 +1,7 @@
 use crate::input_data::{
-    ConFactor, GenConstraint, Group, InflowBlock, InputData, InputDataSetup, Market, Name, Node,
-    NodeDiffusion, NodeHistory, Process, State, Temporals, TimeSeries, TimeSeriesData, Topology,
+    ConFactor, GenConstraint, Group, GroupType, InflowBlock, InputData, InputDataSetup, Market,
+    Name, Node, NodeDiffusion, NodeHistory, Process, State, Temporals, TimeSeries, TimeSeriesData,
+    Topology,
 };
 use crate::scenarios::Scenario;
 use crate::{TimeLine, TimeStamp};
@@ -36,7 +37,7 @@ fn expand_and_use_name_as_key<T: ExpandToTimeSeries + Name>(
 pub trait GroupMember {
     fn groups(&self) -> &Vec<String>;
     fn groups_mut(&mut self) -> &mut Vec<String>;
-    fn group_type() -> &'static str;
+    fn group_type() -> GroupType;
 }
 
 #[derive(Clone, Debug, Default, GraphQLObject, Deserialize, Serialize)]
@@ -246,8 +247,8 @@ pub struct BaseProcess {
 }
 
 impl GroupMember for BaseProcess {
-    fn group_type() -> &'static str {
-        "process"
+    fn group_type() -> GroupType {
+        GroupType::Process
     }
     fn groups(&self) -> &Vec<String> {
         &self.groups
@@ -355,14 +356,23 @@ impl ExpandToTimeSeries for BaseNode {
 }
 
 impl GroupMember for BaseNode {
-    fn group_type() -> &'static str {
-        "node"
+    fn group_type() -> GroupType {
+        GroupType::Node
     }
     fn groups(&self) -> &Vec<String> {
         &self.groups
     }
     fn groups_mut(&mut self) -> &mut Vec<String> {
         &mut self.groups
+    }
+}
+
+impl BaseNode {
+    pub fn with_name(name: String) -> Self {
+        BaseNode {
+            name,
+            ..BaseNode::default()
+        }
     }
 }
 
@@ -661,7 +671,7 @@ fn expand_optional_time_series(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input_data::BidSlot;
+    use crate::input_data::{BidSlot, GroupType};
     use chrono::{TimeZone, Utc};
     fn as_map<T: Name>(x: T) -> BTreeMap<String, T> {
         let mut map = BTreeMap::new();
@@ -766,7 +776,7 @@ mod tests {
             }],
         };
         let market = base_market.expand_to_time_series(&time_line, &scenarios);
-        let groups = vec![Group::default()];
+        let groups = vec![Group::new("The club".into(), GroupType::Node)];
         let scenarios =
             vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
         let reserve_type = vec![ReserveType {

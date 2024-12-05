@@ -449,7 +449,7 @@ fn groups_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let mut group_names: Vec<String> = Vec::with_capacity(row_count);
     for group in groups.values() {
         for member in &group.members {
-            types.push(group.g_type.clone());
+            types.push(group.g_type.to_string());
             entities.push(member.clone());
             group_names.push(group.name.clone());
         }
@@ -1517,11 +1517,7 @@ fn processes_cf_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowErr
             let column_values: Vec<Option<f64>> = temporals
                 .t
                 .iter()
-                .map(|t| {
-                    ts.series
-                        .get(t) // Use get to directly retrieve the value associated with the key
-                        .copied() // Convert Option<&f64> to Option<f64>
-                })
+                .map(|t| ts.series.get(t).copied())
                 .collect();
 
             // Add the data column

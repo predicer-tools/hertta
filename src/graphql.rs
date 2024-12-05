@@ -310,7 +310,7 @@ fn group_members<T: Clone + GroupMember + Name>(
         } else {
             return Err(format!(
                 "member {} '{}' does not exist",
-                T::group_type(),
+                T::group_type().to_string(),
                 member_name
             )
             .into());
@@ -452,8 +452,8 @@ impl Mutation {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
         group_input::add_to_group(
-            process_name,
-            group_name,
+            &process_name,
+            &group_name,
             &mut model.input_data.processes,
             &mut model.input_data.groups,
         )
@@ -498,8 +498,8 @@ impl Mutation {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
         group_input::add_to_group(
-            node_name,
-            group_name,
+            &node_name,
+            &group_name,
             &mut model.input_data.nodes,
             &mut model.input_data.groups,
         )

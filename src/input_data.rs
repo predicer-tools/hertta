@@ -1,11 +1,11 @@
 use crate::{TimeLine, TimeStamp};
 use chrono::DateTime;
 use hertta_derive::Name;
-use juniper::GraphQLObject;
+use juniper::{GraphQLEnum, GraphQLObject};
 use serde::de::{self, MapAccess, Visitor};
 use serde::{self, Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
-use std::fmt;
+use std::fmt::{self, Display};
 
 pub trait Name {
     fn name(&self) -> &String;
@@ -212,11 +212,38 @@ pub struct Market {
     pub fixed: Vec<(String, f64)>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, GraphQLEnum, PartialEq, Serialize)]
+pub enum GroupType {
+    #[graphql(name = "node")]
+    Node,
+    #[graphql(name = "process")]
+    Process,
+}
+
+impl Display for GroupType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GroupType::Node => write!(f, "node"),
+            GroupType::Process => write!(f, "process"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, GraphQLObject, Name, PartialEq, Serialize)]
 pub struct Group {
     pub name: String,
-    pub g_type: String,
+    pub g_type: GroupType,
     pub members: Vec<String>,
+}
+
+impl Group {
+    pub fn new(name: String, group_type: GroupType) -> Self {
+        Group {
+            name,
+            g_type: group_type,
+            members: Vec::new(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Name)]
