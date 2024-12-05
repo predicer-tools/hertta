@@ -214,9 +214,7 @@ pub struct Market {
 
 #[derive(Clone, Debug, Deserialize, GraphQLEnum, PartialEq, Serialize)]
 pub enum GroupType {
-    #[graphql(name = "node")]
     Node,
-    #[graphql(name = "process")]
     Process,
 }
 
