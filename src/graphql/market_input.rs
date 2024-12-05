@@ -4,7 +4,7 @@ use crate::input_data_base::{BaseMarket, BaseNode, BaseProcess, GroupMember};
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
-pub struct AddMarketInput {
+pub struct NewMarket {
     name: String,
     m_type: String,
     node: String,
@@ -23,7 +23,7 @@ pub struct AddMarketInput {
     reserve_activation_price: Option<f64>,
 }
 
-impl AddMarketInput {
+impl NewMarket {
     fn to_market(self) -> BaseMarket {
         BaseMarket {
             name: self.name,
@@ -53,13 +53,13 @@ impl AddMarketInput {
     }
 }
 
-pub fn add_market(
-    market: AddMarketInput,
+pub fn create_market(
+    market: NewMarket,
     markets: &mut Vec<BaseMarket>,
     nodes: &Vec<BaseNode>,
     groups: &Vec<Group>,
 ) -> ValidationErrors {
-    let errors = validate_market_to_add(&market, nodes, groups);
+    let errors = validate_market_creation(&market, nodes, groups);
     if !errors.is_empty() {
         return ValidationErrors::from(errors);
     }
@@ -67,8 +67,8 @@ pub fn add_market(
     ValidationErrors::default()
 }
 
-fn validate_market_to_add(
-    market: &AddMarketInput,
+fn validate_market_creation(
+    market: &NewMarket,
     nodes: &Vec<BaseNode>,
     groups: &Vec<Group>,
 ) -> Vec<ValidationError> {

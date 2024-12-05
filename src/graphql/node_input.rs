@@ -3,7 +3,7 @@ use crate::input_data_base::{BaseNode, BaseProcess};
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
-pub struct AddNodeInput {
+pub struct NewNode {
     name: String,
     is_commodity: bool,
     is_market: bool,
@@ -12,7 +12,7 @@ pub struct AddNodeInput {
     inflow: Option<f64>,
 }
 
-impl AddNodeInput {
+impl NewNode {
     fn to_node(self) -> BaseNode {
         BaseNode {
             name: self.name,
@@ -28,7 +28,7 @@ impl AddNodeInput {
 }
 
 #[derive(GraphQLInputObject)]
-pub struct NodeInput {
+pub struct NodeUpdate {
     name: Option<String>,
     is_commodity: Option<bool>,
     is_market: Option<bool>,
@@ -39,12 +39,12 @@ pub struct NodeInput {
     inflow: Option<f64>,
 }
 
-pub fn add_node(
-    node: AddNodeInput,
+pub fn create_node(
+    node: NewNode,
     nodes: &mut Vec<BaseNode>,
     processes: &mut Vec<BaseProcess>,
 ) -> ValidationErrors {
-    let errors = validate_node_to_add(&node, nodes, processes);
+    let errors = validate_node_creation(&node, nodes, processes);
     if !errors.is_empty() {
         return ValidationErrors::from(errors);
     }
@@ -52,8 +52,8 @@ pub fn add_node(
     ValidationErrors::default()
 }
 
-fn validate_node_to_add(
-    node: &AddNodeInput,
+fn validate_node_creation(
+    node: &NewNode,
     nodes: &Vec<BaseNode>,
     processes: &Vec<BaseProcess>,
 ) -> Vec<ValidationError> {

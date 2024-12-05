@@ -6,7 +6,7 @@ use crate::input_data_base::BaseNode;
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
-pub struct SetStateInput {
+pub struct StateInput {
     in_max: f64,
     out_max: f64,
     state_loss_proportional: f64,
@@ -19,7 +19,7 @@ pub struct SetStateInput {
     residual_value: f64,
 }
 
-impl SetStateInput {
+impl StateInput {
     fn to_state(self) -> State {
         State {
             in_max: self.in_max,
@@ -38,7 +38,7 @@ impl SetStateInput {
 
 pub fn set_state_for_node(
     node_name: &str,
-    state: Option<SetStateInput>,
+    state: Option<StateInput>,
     nodes: &mut Vec<BaseNode>,
 ) -> ValidationErrors {
     if let Some(ref real_state) = state {
@@ -60,7 +60,7 @@ pub fn set_state_for_node(
     ValidationErrors::from(Vec::new())
 }
 
-fn validate_state_to_set(state: &SetStateInput) -> Vec<ValidationError> {
+fn validate_state_to_set(state: &StateInput) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     validate_state_min(state.state_min, state.state_max, &mut errors);
     validate_state_loss_proportional(state.state_loss_proportional, &mut errors);
@@ -83,7 +83,7 @@ fn validate_state_loss_proportional(state_loss: f64, errors: &mut Vec<Validation
 }
 
 #[derive(GraphQLInputObject)]
-pub struct UpdateStateInput {
+pub struct StateUpdate {
     in_max: Option<f64>,
     out_max: Option<f64>,
     state_loss_proportional: Option<f64>,
@@ -96,7 +96,7 @@ pub struct UpdateStateInput {
     residual_value: Option<f64>,
 }
 
-impl UpdateStateInput {
+impl StateUpdate {
     fn update_state(self, state: &mut State) {
         optional_update(self.in_max, &mut state.in_max);
         optional_update(self.out_max, &mut state.out_max);
@@ -124,7 +124,7 @@ fn optional_update<T>(source: Option<T>, target: &mut T) {
 }
 
 pub fn update_state_in_node(
-    state: UpdateStateInput,
+    state: StateUpdate,
     node_name: String,
     nodes: &mut Vec<BaseNode>,
 ) -> ValidationErrors {
@@ -149,10 +149,7 @@ pub fn update_state_in_node(
     ValidationErrors::default()
 }
 
-fn validate_state_to_update(
-    state_update: &UpdateStateInput,
-    state: &State,
-) -> Vec<ValidationError> {
+fn validate_state_to_update(state_update: &StateUpdate, state: &State) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     if state_update.state_min.is_some() || state_update.state_max.is_some() {
         let min = state_update.state_min.unwrap_or(state.state_min);

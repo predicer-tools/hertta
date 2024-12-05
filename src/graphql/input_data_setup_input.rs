@@ -4,7 +4,7 @@ use juniper::GraphQLInputObject;
 use super::ValidationErrors;
 
 #[derive(GraphQLInputObject)]
-pub struct InputDataSetupInput {
+pub struct InputDataSetupUpdate {
     contains_reserves: Option<bool>,
     contains_online: Option<bool>,
     contains_states: Option<bool>,
@@ -23,7 +23,7 @@ pub struct InputDataSetupInput {
     ramp_dummy_variable_cost: Option<f64>,
 }
 
-impl InputDataSetupInput {
+impl InputDataSetupUpdate {
     fn update_input_data_setup(self, setup: &mut BaseInputDataSetup) {
         if let Some(flag) = self.contains_reserves {
             setup.contains_reserves = flag;
@@ -77,7 +77,7 @@ impl InputDataSetupInput {
 }
 
 pub fn update_input_data_setup(
-    setup_update: InputDataSetupInput,
+    setup_update: InputDataSetupUpdate,
     setup: &mut BaseInputDataSetup,
 ) -> ValidationErrors {
     setup_update.update_input_data_setup(setup);

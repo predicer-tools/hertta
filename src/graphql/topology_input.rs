@@ -3,7 +3,7 @@ use crate::input_data_base::{BaseNode, BaseProcess, BaseTopology};
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
-pub struct AddTopologyInput {
+pub struct NewTopology {
     pub capacity: f64,
     pub vom_cost: f64,
     pub ramp_up: f64,
@@ -13,7 +13,7 @@ pub struct AddTopologyInput {
     pub cap_ts: Option<f64>,
 }
 
-impl AddTopologyInput {
+impl NewTopology {
     fn to_topology(self, source: String, sink: String) -> BaseTopology {
         BaseTopology {
             source: source,
@@ -29,11 +29,11 @@ impl AddTopologyInput {
     }
 }
 
-pub fn add_topology_to_process(
+pub fn create_topology(
     process_name: String,
     source_node_name: Option<String>,
     sink_node_name: Option<String>,
-    topology: AddTopologyInput,
+    topology: NewTopology,
     processes: &mut Vec<BaseProcess>,
     nodes: &mut Vec<BaseNode>,
 ) -> ValidationErrors {
@@ -46,7 +46,7 @@ pub fn add_topology_to_process(
             )]);
         }
     };
-    let errors = validate_topology_to_add(
+    let errors = validate_topology_creation(
         &topology,
         &source_node_name,
         &sink_node_name,
@@ -62,8 +62,8 @@ pub fn add_topology_to_process(
     ValidationErrors::default()
 }
 
-fn validate_topology_to_add(
-    topology: &AddTopologyInput,
+fn validate_topology_creation(
+    topology: &NewTopology,
     source_node: &Option<String>,
     sink_node: &Option<String>,
     process: &BaseProcess,

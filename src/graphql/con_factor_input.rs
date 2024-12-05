@@ -1,7 +1,7 @@
 use super::{ValidationError, ValidationErrors};
 use crate::input_data_base::{BaseConFactor, BaseGenConstraint, BaseNode, BaseProcess, VariableId};
 
-pub fn add_flow_con_factor(
+pub fn create_flow_con_factor(
     factor: f64,
     constraint_name: String,
     process_name: String,
@@ -13,7 +13,7 @@ pub fn add_flow_con_factor(
         Ok(constraint) => constraint,
         Err(errors) => return errors,
     };
-    let errors = validate_flow_con_factor_to_add(
+    let errors = validate_flow_con_factor_creation(
         &process_name,
         &source_or_sink_node_name,
         constraint,
@@ -50,7 +50,7 @@ fn find_constraint<'a>(
     Ok(constraint)
 }
 
-fn validate_flow_con_factor_to_add(
+fn validate_flow_con_factor_creation(
     process: &String,
     source_or_sink_node: &String,
     constraint: &BaseGenConstraint,
@@ -99,7 +99,7 @@ fn validate_flow_con_factor_to_add(
     errors
 }
 
-pub fn add_state_con_factor(
+pub fn create_state_con_factor(
     factor: f64,
     constraint_name: String,
     node_name: String,
@@ -110,7 +110,7 @@ pub fn add_state_con_factor(
         Ok(constraint) => constraint,
         Err(errors) => return errors,
     };
-    let errors = validate_state_con_factor_to_add(&node_name, constraint, nodes);
+    let errors = validate_state_con_factor_creation(&node_name, constraint, nodes);
     if !errors.is_empty() {
         return ValidationErrors::from(errors);
     }
@@ -126,7 +126,7 @@ pub fn add_state_con_factor(
     ValidationErrors::default()
 }
 
-fn validate_state_con_factor_to_add(
+fn validate_state_con_factor_creation(
     node: &String,
     constraint: &BaseGenConstraint,
     nodes: &Vec<BaseNode>,
@@ -152,7 +152,7 @@ fn validate_state_con_factor_to_add(
     errors
 }
 
-pub fn add_online_con_factor(
+pub fn create_online_con_factor(
     factor: f64,
     constraint_name: String,
     process_name: String,
@@ -163,7 +163,7 @@ pub fn add_online_con_factor(
         Ok(constraint) => constraint,
         Err(errors) => return errors,
     };
-    let errors = validate_online_con_factor_to_add(&process_name, constraint, processes);
+    let errors = validate_online_con_factor_creation(&process_name, constraint, processes);
     if !errors.is_empty() {
         return ValidationErrors::from(errors);
     }
@@ -179,7 +179,7 @@ pub fn add_online_con_factor(
     ValidationErrors::default()
 }
 
-fn validate_online_con_factor_to_add(
+fn validate_online_con_factor_creation(
     process: &String,
     constraint: &BaseGenConstraint,
     processes: &Vec<BaseProcess>,

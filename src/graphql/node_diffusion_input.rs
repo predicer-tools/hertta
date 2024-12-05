@@ -9,14 +9,14 @@ fn to_node_diffusion(from_node: String, to_node: String, coefficient: f64) -> Ba
     }
 }
 
-pub fn add_node_diffusion(
+pub fn create_node_diffusion(
     from_node: String,
     to_node: String,
     coefficient: f64,
     diffusions: &mut Vec<BaseNodeDiffusion>,
     nodes: &Vec<BaseNode>,
 ) -> ValidationErrors {
-    let errors = validate_node_diffusion(&from_node, &to_node, diffusions, nodes);
+    let errors = validate_node_diffusion_creation(&from_node, &to_node, diffusions, nodes);
     if !errors.is_empty() {
         return ValidationErrors::from(errors);
     }
@@ -24,7 +24,7 @@ pub fn add_node_diffusion(
     ValidationErrors::default()
 }
 
-fn validate_node_diffusion(
+fn validate_node_diffusion_creation(
     from_node: &String,
     to_node: &String,
     diffusions: &Vec<BaseNodeDiffusion>,

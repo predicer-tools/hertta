@@ -3,7 +3,7 @@ use crate::input_data_base::BaseGenConstraint;
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
-pub struct AddGenConstraintInput {
+pub struct NewGenConstraint {
     name: String,
     gc_type: String,
     is_setpoint: bool,
@@ -11,7 +11,7 @@ pub struct AddGenConstraintInput {
     constant: Option<f64>,
 }
 
-impl AddGenConstraintInput {
+impl NewGenConstraint {
     fn to_gen_constraint(self) -> BaseGenConstraint {
         BaseGenConstraint {
             name: self.name,
@@ -24,11 +24,11 @@ impl AddGenConstraintInput {
     }
 }
 
-pub fn add_gen_constraint(
-    constraint: AddGenConstraintInput,
+pub fn create_gen_constraint(
+    constraint: NewGenConstraint,
     constraints: &mut Vec<BaseGenConstraint>,
 ) -> ValidationErrors {
-    let errors = validate_gen_contraint_to_add(&constraint, constraints);
+    let errors = validate_gen_contraint_creation(&constraint, constraints);
     if !errors.is_empty() {
         return ValidationErrors::from(errors);
     }
@@ -36,8 +36,8 @@ pub fn add_gen_constraint(
     ValidationErrors::default()
 }
 
-fn validate_gen_contraint_to_add(
-    constraint: &AddGenConstraintInput,
+fn validate_gen_contraint_creation(
+    constraint: &NewGenConstraint,
     constraints: &Vec<BaseGenConstraint>,
 ) -> Vec<ValidationError> {
     let mut errors = Vec::new();

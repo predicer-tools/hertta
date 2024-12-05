@@ -1,7 +1,7 @@
 use super::MaybeError;
 use crate::scenarios::Scenario;
 
-pub fn add_scenario(name: String, weight: f64, scenarios: &mut Vec<Scenario>) -> MaybeError {
+pub fn create_scenario(name: String, weight: f64, scenarios: &mut Vec<Scenario>) -> MaybeError {
     if scenarios.iter().find(|s| *s.name() == name).is_some() {
         return "a scenario with the same name exists".into();
     }
