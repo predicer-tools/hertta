@@ -5,41 +5,26 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-# Enable sync runtime
-sync-rt = ["jl-sys/fast-tls"]
-# Enable async runtime
-async-rt = ["async", "deadqueue", "futures-concurrency", "jl-sys/fast-tls"]
-# Enable async-std as backing runtime
-async-std-rt = ["async-rt", "async-std"]
-# Enable tokio as backing runtime
-tokio-rt = ["async-rt", "tokio"]
-
-# Enable task and channel traits used by the async runtime
-async = ["futures", "crossbeam-channel", "async-trait"]
-# Enable `ccall` feature, link `libuv`, and enable `CCall::us_async_send`
-uv = ["jl-sys/uv", "ccall"]
-
 [dependencies]
-calamine = "0.19.1"
-fs = "0.0.5"
-pathbuf = "0.3.1"
-umya-spreadsheet = "0.8.7"
-jlrs = {version = "0.19.0", features = ["tokio-rt", "julia-1-8"]}
+hertta_derive = { path = "hertta_derive" }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
-csv = "1.2.1"
-indexmap = "1.9.3"
-ordered-float = "3.7.0"
 warp = "0.3"
-reqwest = { version = "0.11.9", features = ["blocking", "json"] } #reqwest = "0.11"
-serde_yaml = "0.8"
+reqwest = { version = "0.11.9", features = ["blocking", "json"] }
+serde_yaml = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
-time = "0.3.30"
-async-trait = { version = "0.1", optional = true }
-mockito = "0.28.0"
-chrono = "0.4.31"
-chrono-tz = "0.8.6"
-futures = "0.3.30"
+chrono = { version = "0.4", features = ["now", "serde"] }
+arrow = { version = "53.1", features = ["chrono-tz", "ipc"] }
+thiserror = "1.0.60"
+clap = { version = "4.5", features = ["derive"] }
+arrow-ipc = "53.1"
+zmq = "0.10"
+directories = "5.0"
+config = "0.14"
+toml = "0.8"
+juniper = { version = "0.16", features = ["chrono", "schema-language"] }
+juniper_warp = "0.8"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "rt", "time", "sync"]}
+tempfile = "3.12"
