@@ -7,7 +7,7 @@ use crate::input_data::{
 use crate::scenarios::Scenario;
 use crate::{TimeLine, TimeStamp};
 use hertta_derive::{Members, Name};
-use juniper::{graphql_object, GraphQLObject};
+use juniper::{graphql_object, FieldError, GraphQLObject};
 use serde::{self, Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -496,8 +496,7 @@ impl BaseNode {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
-#[graphql(name = "NodeDiffusion")]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct BaseNodeDiffusion {
     pub from_node: String,
     pub to_node: String,
@@ -517,6 +516,33 @@ impl ExpandToTimeSeries for BaseNodeDiffusion {
             node2: self.to_node.clone(),
             coefficient: to_time_series(self.coefficient, &time_line, scenarios),
         }
+    }
+}
+
+#[graphql_object]
+#[graphql(name = "NodeDiffusion", context = HerttaContext)]
+impl BaseNodeDiffusion {
+    fn from_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+        let model = context.model().lock().unwrap();
+        Self::find_node(&self.from_node, "from_node", &model.input_data.nodes)
+    }
+    fn to_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+        let model = context.model().lock().unwrap();
+        Self::find_node(&self.to_node, "to_node", &model.input_data.nodes)
+    }
+    #[graphql(ignore)]
+    fn find_node(
+        node_name: &String,
+        node_type: &str,
+        nodes: &Vec<BaseNode>,
+    ) -> Result<BaseNode, FieldError> {
+        match nodes.iter().find(|&n| n.name == *node_name) {
+            Some(node) => Ok(node.clone()),
+            None => Err(format!("{} '{}' doesn't exist", node_type, node_name).into()),
+        }
+    }
+    fn coefficient(&self) -> f64 {
+        self.coefficient
     }
 }
 
