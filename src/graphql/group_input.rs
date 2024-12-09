@@ -1,56 +1,53 @@
 use super::MaybeError;
-use crate::input_data::{Group, GroupType, Name};
-use crate::input_data_base::GroupMember;
+use crate::input_data::Name;
+use crate::input_data_base::{GroupMember, Members, NamedGroup, NodeGroup, ProcessGroup};
 
-pub fn create_node_group(name: String, groups: &mut Vec<Group>) -> MaybeError {
-    create_group(name, GroupType::Node, groups)
+pub fn create_node_group(name: String, groups: &mut Vec<NodeGroup>) -> MaybeError {
+    create_group(name, groups)
 }
 
-pub fn create_process_group(name: String, groups: &mut Vec<Group>) -> MaybeError {
-    create_group(name, GroupType::Process, groups)
+pub fn create_process_group(name: String, groups: &mut Vec<ProcessGroup>) -> MaybeError {
+    create_group(name, groups)
 }
 
-fn create_group(name: String, group_type: GroupType, groups: &mut Vec<Group>) -> MaybeError {
+fn create_group<T: Name + NamedGroup>(name: String, groups: &mut Vec<T>) -> MaybeError {
     let maybe_error = validate_name(&name, &groups);
     if maybe_error.error.is_some() {
         return maybe_error;
     }
-    groups.push(Group::new(name, group_type));
+    groups.push(T::new(name));
     MaybeError::new_ok()
 }
 
-fn validate_name(name: &String, groups: &Vec<Group>) -> MaybeError {
+fn validate_name<T: Name>(name: &String, groups: &Vec<T>) -> MaybeError {
     if name.is_empty() {
         return "name is empty".into();
     }
-    if groups.iter().find(|g| g.name == *name).is_some() {
+    if groups.iter().find(|&g| *g.name() == *name).is_some() {
         return "a group with the same name exists".into();
     }
     MaybeError::new_ok()
 }
 
-pub fn add_to_group<T: GroupMember + Name>(
+pub fn add_to_group<M: GroupMember + Name, G: Members + Name>(
     item_name: &str,
     group_name: &str,
-    items: &mut Vec<T>,
-    groups: &mut Vec<Group>,
+    items: &mut Vec<M>,
+    groups: &mut Vec<G>,
 ) -> MaybeError {
     let item = match items.iter_mut().find(|n| n.name() == item_name) {
         Some(node) => node,
-        None => return format!("no such {}", T::group_type()).into(),
+        None => return format!("no such {}", M::group_type()).into(),
     };
-    if item.groups().iter().find(|g| **g == group_name).is_some() {
-        return format!("{} is in the group already", T::group_type()).into();
+    if item.groups().iter().find(|&g| *g == group_name).is_some() {
+        return format!("{} is in the group already", M::group_type()).into();
     }
-    let group = match groups.iter_mut().find(|g| g.name == group_name) {
+    let group = match groups.iter_mut().find(|g| g.name() == group_name) {
         Some(group) => group,
         None => return "no such group".into(),
     };
-    if group.g_type != T::group_type() {
-        return MaybeError::from(format!("wrong target group type '{}'", group.g_type).as_str());
-    }
     item.groups_mut().push(group_name.into());
-    group.members.push(item_name.into());
+    group.members_mut().push(item_name.into());
     MaybeError::new_ok()
 }
 
@@ -61,7 +58,7 @@ mod tests {
     #[test]
     fn add_to_group_adds_member_to_group() {
         let mut items = vec![BaseNode::with_name("my node".into())];
-        let mut groups = vec![Group::new("nodes".into(), GroupType::Node)];
+        let mut groups = vec![NodeGroup::new("nodes".into())];
         let maybe_error = add_to_group("my node", "nodes", &mut items, &mut groups);
         assert!(maybe_error.error.is_none());
         assert_eq!(items.len(), 1);

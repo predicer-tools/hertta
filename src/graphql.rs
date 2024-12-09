@@ -14,10 +14,10 @@ mod time_line_input;
 mod topology_input;
 
 use crate::event_loop::{OptimizationState, OptimizationTask};
-use crate::input_data::{Group, Name};
+use crate::input_data::Name;
 use crate::input_data_base::{
     BaseGenConstraint, BaseInputData, BaseMarket, BaseNode, BaseNodeDiffusion, BaseProcess,
-    GroupMember,
+    GroupMember, Members, NodeGroup, ProcessGroup,
 };
 use crate::model::{self, Model};
 use crate::scenarios::Scenario;
@@ -167,6 +167,10 @@ impl HerttaContext {
             rx_state,
         }
     }
+
+    pub fn model(&self) -> &Arc<Mutex<Model>> {
+        &self.model
+    }
 }
 
 pub struct Query;
@@ -195,11 +199,11 @@ impl Query {
             .map(|g| g.clone())
             .ok_or_else(|| "no such generic constraint".into())
     }
-    fn group(name: String, context: &HerttaContext) -> FieldResult<Group> {
+    fn node_group(name: String, context: &HerttaContext) -> FieldResult<NodeGroup> {
         let model = context.model.lock().unwrap();
         model
             .input_data
-            .groups
+            .node_groups
             .iter()
             .find(|g| g.name == name)
             .map(|g| g.clone())
@@ -207,13 +211,31 @@ impl Query {
     }
     fn nodes_in_group(name: String, context: &HerttaContext) -> FieldResult<Vec<BaseNode>> {
         let model = context.model.lock().unwrap();
-        group_members(&model.input_data.groups, &name, &model.input_data.nodes)
-            .map_err(|error| error.into())
+        group_members(
+            &model.input_data.node_groups,
+            &name,
+            &model.input_data.nodes,
+        )
+        .map_err(|error| error.into())
+    }
+    fn process_group(name: String, context: &HerttaContext) -> FieldResult<ProcessGroup> {
+        let model = context.model.lock().unwrap();
+        model
+            .input_data
+            .process_groups
+            .iter()
+            .find(|g| g.name == name)
+            .map(|g| g.clone())
+            .ok_or_else(|| "no such group".into())
     }
     fn processes_in_group(name: String, context: &HerttaContext) -> FieldResult<Vec<BaseProcess>> {
         let model = context.model.lock().unwrap();
-        group_members(&model.input_data.groups, &name, &model.input_data.processes)
-            .map_err(|error| error.into())
+        group_members(
+            &model.input_data.process_groups,
+            &name,
+            &model.input_data.processes,
+        )
+        .map_err(|error| error.into())
     }
     fn market(name: String, context: &HerttaContext) -> FieldResult<BaseMarket> {
         let model = context.model.lock().unwrap();
@@ -235,11 +257,15 @@ impl Query {
             .map(|n| n.clone())
             .ok_or_else(|| "no such node".into())
     }
-    #[graphql(description = "return all groups the given node is member of")]
-    fn groups_for_node(name: String, context: &HerttaContext) -> FieldResult<Vec<Group>> {
+    #[graphql(description = "Return all groups the given node is member of.")]
+    fn groups_for_node(name: String, context: &HerttaContext) -> FieldResult<Vec<NodeGroup>> {
         let model = context.model.lock().unwrap();
-        member_groups(&model.input_data.nodes, &name, &model.input_data.groups)
-            .map_err(|error| error.into())
+        member_groups(
+            &model.input_data.nodes,
+            &name,
+            &model.input_data.node_groups,
+        )
+        .map_err(|error| error.into())
     }
     fn node_diffusion(
         from_node: String,
@@ -255,11 +281,15 @@ impl Query {
             .map(|n| n.clone())
             .ok_or_else(|| "no such node diffusion".into())
     }
-    #[graphql(description = "return all groups the given process is member of")]
-    fn groups_for_process(name: String, context: &HerttaContext) -> FieldResult<Vec<Group>> {
+    #[graphql(description = "Return all groups the given process is member of.")]
+    fn groups_for_process(name: String, context: &HerttaContext) -> FieldResult<Vec<ProcessGroup>> {
         let model = context.model.lock().unwrap();
-        member_groups(&model.input_data.processes, &name, &model.input_data.groups)
-            .map_err(|error| error.into())
+        member_groups(
+            &model.input_data.processes,
+            &name,
+            &model.input_data.process_groups,
+        )
+        .map_err(|error| error.into())
     }
     fn process(name: String, context: &HerttaContext) -> FieldResult<BaseProcess> {
         let model = context.model.lock().unwrap();
@@ -291,26 +321,23 @@ impl Query {
     }
 }
 
-fn group_members<T: Clone + GroupMember + Name>(
-    groups: &Vec<Group>,
+fn group_members<G: Members + Name, M: Clone + GroupMember + Name>(
+    groups: &Vec<G>,
     group_name: &str,
-    candidates: &Vec<T>,
-) -> Result<Vec<T>, String> {
+    candidates: &Vec<M>,
+) -> Result<Vec<M>, String> {
     let group = groups
         .iter()
-        .find(|g| g.name == group_name)
+        .find(|&g| g.name() == group_name)
         .ok_or("no such group")?;
-    if group.g_type != T::group_type() {
-        return Err("wrong group type".into());
-    }
-    let mut members = Vec::with_capacity(group.members.len());
-    for member_name in &group.members {
+    let mut members = Vec::with_capacity(group.members().len());
+    for member_name in group.members() {
         if let Some(member) = candidates.iter().find(|m| *m.name() == *member_name) {
             members.push(member.clone())
         } else {
             return Err(format!(
                 "member {} '{}' does not exist",
-                T::group_type().to_string(),
+                M::group_type().to_string(),
                 member_name
             )
             .into());
@@ -319,23 +346,23 @@ fn group_members<T: Clone + GroupMember + Name>(
     Ok(members)
 }
 
-fn member_groups<T: GroupMember + Name>(
-    items: &Vec<T>,
+fn member_groups<M: GroupMember + Name, G: Clone + Name>(
+    items: &Vec<M>,
     member_name: &str,
-    groups: &Vec<Group>,
-) -> Result<Vec<Group>, String> {
+    groups: &Vec<G>,
+) -> Result<Vec<G>, String> {
     let member = items
         .iter()
         .find(|i| i.name() == member_name)
-        .ok_or_else(|| format!("no such {}", T::group_type()))?;
+        .ok_or_else(|| format!("no such {}", M::group_type()))?;
     let mut groups_of_member = Vec::with_capacity(member.groups().len());
     for group_name in member.groups() {
-        if let Some(group) = groups.iter().find(|g| g.name == *group_name) {
+        if let Some(group) = groups.iter().find(|&g| *g.name() == *group_name) {
             groups_of_member.push(group.clone());
         } else {
             return Err(format!(
                 "{} group '{}' does not exist",
-                T::group_type(),
+                M::group_type(),
                 group_name
             ));
         }
@@ -422,14 +449,14 @@ impl Mutation {
     fn create_node_group(name: String, context: &HerttaContext) -> MaybeError {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
-        group_input::create_node_group(name, &mut model.input_data.groups)
+        group_input::create_node_group(name, &mut model.input_data.node_groups)
     }
 
     #[graphql(description = "Create new process group.")]
     fn create_process_group(name: String, context: &HerttaContext) -> MaybeError {
         let mut model_ref = context.model.lock().unwrap();
         let model = model_ref.deref_mut();
-        group_input::create_process_group(name, &mut model.input_data.groups)
+        group_input::create_process_group(name, &mut model.input_data.process_groups)
     }
 
     #[graphql(description = "Create new process.")]
@@ -455,7 +482,7 @@ impl Mutation {
             &process_name,
             &group_name,
             &mut model.input_data.processes,
-            &mut model.input_data.groups,
+            &mut model.input_data.process_groups,
         )
     }
 
@@ -502,7 +529,7 @@ impl Mutation {
             &node_name,
             &group_name,
             &mut model.input_data.nodes,
-            &mut model.input_data.groups,
+            &mut model.input_data.node_groups,
         )
     }
 
@@ -554,7 +581,7 @@ impl Mutation {
             market,
             &mut model.input_data.markets,
             &model.input_data.nodes,
-            &model.input_data.groups,
+            &model.input_data.process_groups,
         )
     }
 

@@ -1,6 +1,5 @@
 use super::{ValidationError, ValidationErrors};
-use crate::input_data::Group;
-use crate::input_data_base::{BaseMarket, BaseNode, BaseProcess, GroupMember};
+use crate::input_data_base::{BaseMarket, BaseNode, ProcessGroup};
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
@@ -57,7 +56,7 @@ pub fn create_market(
     market: NewMarket,
     markets: &mut Vec<BaseMarket>,
     nodes: &Vec<BaseNode>,
-    groups: &Vec<Group>,
+    groups: &Vec<ProcessGroup>,
 ) -> ValidationErrors {
     let errors = validate_market_creation(&market, nodes, groups);
     if !errors.is_empty() {
@@ -70,7 +69,7 @@ pub fn create_market(
 fn validate_market_creation(
     market: &NewMarket,
     nodes: &Vec<BaseNode>,
-    groups: &Vec<Group>,
+    groups: &Vec<ProcessGroup>,
 ) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     if market.name.is_empty() {
@@ -89,11 +88,11 @@ fn validate_market_creation(
     if nodes.iter().find(|n| n.name == market.node).is_none() {
         errors.push(ValidationError::new("node", "no such node"));
     }
-    if let Some(group) = groups.iter().find(|g| g.name == market.processgroup) {
-        if group.g_type != BaseProcess::group_type() {
-            errors.push(ValidationError::new("processgroup", "wrong group type"));
-        }
-    } else {
+    if groups
+        .iter()
+        .find(|g| g.name == market.processgroup)
+        .is_none()
+    {
         errors.push(ValidationError::new("processgroup", "no such group"));
     }
     if let Some(ref direction) = market.direction {

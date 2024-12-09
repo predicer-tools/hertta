@@ -1,3 +1,4 @@
+use crate::graphql::HerttaContext;
 use crate::input_data::{
     ConFactor, GenConstraint, Group, GroupType, InflowBlock, InputData, InputDataSetup, Market,
     Name, Node, NodeDiffusion, NodeHistory, Process, State, Temporals, TimeSeries, TimeSeriesData,
@@ -5,8 +6,8 @@ use crate::input_data::{
 };
 use crate::scenarios::Scenario;
 use crate::{TimeLine, TimeStamp};
-use hertta_derive::Name;
-use juniper::GraphQLObject;
+use hertta_derive::{Members, Name};
+use juniper::{graphql_object, GraphQLObject};
 use serde::{self, Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -40,8 +41,8 @@ pub trait GroupMember {
     fn group_type() -> GroupType;
 }
 
-#[derive(Clone, Debug, Default, GraphQLObject, Deserialize, Serialize)]
-#[graphql(name = "InputData", description = "The model itself.")]
+#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
+#[graphql(name = "InputData", description = "The model itself.", context = HerttaContext)]
 pub struct BaseInputData {
     pub scenarios: Vec<Scenario>,
     pub setup: BaseInputDataSetup,
@@ -51,7 +52,8 @@ pub struct BaseInputData {
     pub node_delay: Vec<Delay>,
     pub node_histories: Vec<BaseNodeHistory>,
     pub markets: Vec<BaseMarket>,
-    pub groups: Vec<Group>,
+    pub node_groups: Vec<NodeGroup>,
+    pub process_groups: Vec<ProcessGroup>,
     pub reserve_type: Vec<ReserveType>,
     pub risk: Vec<Risk>,
     pub inflow_blocks: Vec<BaseInflowBlock>,
@@ -112,6 +114,9 @@ impl Risk {
 
 impl BaseInputData {
     pub fn expand_to_time_series(&self, time_line: &TimeLine) -> InputData {
+        let mut groups = Vec::with_capacity(self.node_groups.len() + self.process_groups.len());
+        groups.extend(self.node_groups.iter().map(|g| Group::from(g)));
+        groups.extend(self.process_groups.iter().map(|g| Group::from(g)));
         InputData {
             temporals: make_temporals(time_line),
             setup: self.setup.expand_to_time_series(time_line, &self.scenarios),
@@ -145,11 +150,7 @@ impl BaseInputData {
                 .iter()
                 .map(|market| expand_and_use_name_as_key(market, time_line, &self.scenarios))
                 .collect(),
-            groups: self
-                .groups
-                .iter()
-                .map(|group| use_name_as_key(group))
-                .collect(),
+            groups: groups.iter().map(|group| use_name_as_key(group)).collect(),
             scenarios: Scenario::to_map(&self.scenarios),
             reserve_type: ReserveType::to_map(&self.reserve_type),
             risk: Risk::to_map(&self.risk),
@@ -219,8 +220,7 @@ impl ExpandToTimeSeries for BaseInputDataSetup {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, Serialize)]
-#[graphql(name = "Process")]
+#[derive(Clone, Debug, Default, Deserialize, Name, Serialize)]
 pub struct BaseProcess {
     pub name: String,
     pub groups: Vec<String>,
@@ -306,6 +306,86 @@ impl ExpandToTimeSeries for BaseProcess {
     }
 }
 
+#[graphql_object]
+#[graphql(name = "Process", context = HerttaContext)]
+impl BaseProcess {
+    fn name(&self) -> &String {
+        &self.name
+    }
+    fn groups(&self, context: &HerttaContext) -> Vec<ProcessGroup> {
+        let model = context.model().lock().unwrap();
+        model
+            .input_data
+            .process_groups
+            .iter()
+            .filter(|&g| {
+                self.groups
+                    .iter()
+                    .find(|&g_name| *g_name == g.name)
+                    .is_some()
+            })
+            .cloned()
+            .collect()
+    }
+    fn conversion(&self) -> &String {
+        &self.conversion
+    }
+    fn is_cf(&self) -> bool {
+        self.is_cf
+    }
+    fn is_cf_fix(&self) -> bool {
+        self.is_cf_fix
+    }
+    fn is_online(&self) -> bool {
+        self.is_online
+    }
+    fn is_res(&self) -> bool {
+        self.is_res
+    }
+    fn eff(&self) -> f64 {
+        self.eff
+    }
+    fn load_min(&self) -> f64 {
+        self.load_min
+    }
+    fn load_max(&self) -> f64 {
+        self.load_max
+    }
+    fn start_cost(&self) -> f64 {
+        self.start_cost
+    }
+    fn min_online(&self) -> f64 {
+        self.min_online
+    }
+    fn min_offline(&self) -> f64 {
+        self.min_offline
+    }
+    fn max_online(&self) -> f64 {
+        self.max_online
+    }
+    fn max_offline(&self) -> f64 {
+        self.max_offline
+    }
+    fn is_scenario_independent(&self) -> bool {
+        self.is_scenario_independent
+    }
+    fn topos(&self) -> &Vec<BaseTopology> {
+        &self.topos
+    }
+    fn cf(&self) -> f64 {
+        self.cf
+    }
+    fn eff_ts(&self) -> Option<f64> {
+        self.eff_ts
+    }
+    fn eff_ops(&self) -> &Vec<String> {
+        &self.eff_ops
+    }
+    fn eff_fun(&self) -> &Vec<Point> {
+        &self.eff_fun
+    }
+}
+
 impl BaseProcess {
     fn conversion_as_int(&self) -> Result<i64, String> {
         match self.conversion.as_str() {
@@ -320,8 +400,7 @@ impl BaseProcess {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, Serialize)]
-#[graphql(name = "Node")]
+#[derive(Clone, Debug, Default, Deserialize, Name, Serialize)]
 pub struct BaseNode {
     pub name: String,
     pub groups: Vec<String>,
@@ -364,6 +443,47 @@ impl GroupMember for BaseNode {
     }
     fn groups_mut(&mut self) -> &mut Vec<String> {
         &mut self.groups
+    }
+}
+
+#[graphql_object]
+#[graphql(name = "Node", context = HerttaContext)]
+impl BaseNode {
+    fn name(&self) -> &String {
+        &self.name
+    }
+    fn groups(&self, context: &HerttaContext) -> Vec<NodeGroup> {
+        let model = context.model().lock().unwrap();
+        model
+            .input_data
+            .node_groups
+            .iter()
+            .filter(|&g| {
+                self.groups
+                    .iter()
+                    .find(|&g_name| *g_name == g.name)
+                    .is_some()
+            })
+            .cloned()
+            .collect()
+    }
+    fn is_commodity(&self) -> bool {
+        self.is_commodity
+    }
+    fn is_market(&self) -> bool {
+        self.is_market
+    }
+    fn is_res(&self) -> bool {
+        self.is_res
+    }
+    fn state(&self) -> &Option<State> {
+        &self.state
+    }
+    fn cost(&self) -> Option<f64> {
+        self.cost
+    }
+    fn inflow(&self) -> Option<f64> {
+        self.inflow
     }
 }
 
@@ -488,6 +608,101 @@ impl ExpandToTimeSeries for BaseMarket {
                 .iter()
                 .map(|fix| (fix.name.clone(), fix.factor))
                 .collect(),
+        }
+    }
+}
+
+pub trait NamedGroup {
+    fn new(name: String) -> Self;
+}
+
+pub trait Members {
+    fn members(&self) -> &Vec<String>;
+    fn members_mut(&mut self) -> &mut Vec<String>;
+}
+
+#[derive(Clone, Debug, Deserialize, Members, Name, PartialEq, Serialize)]
+pub struct NodeGroup {
+    pub name: String,
+    pub members: Vec<String>,
+}
+
+impl NamedGroup for NodeGroup {
+    fn new(name: String) -> Self {
+        NodeGroup {
+            name,
+            members: Vec::new(),
+        }
+    }
+}
+
+#[graphql_object]
+#[graphql(context = HerttaContext)]
+impl NodeGroup {
+    fn name(&self) -> &String {
+        &self.name
+    }
+    fn members(&self, context: &HerttaContext) -> Vec<BaseNode> {
+        let model = context.model().lock().unwrap();
+        model
+            .input_data
+            .nodes
+            .iter()
+            .filter(|&n| self.members.iter().find(|&m| *m == n.name).is_some())
+            .cloned()
+            .collect()
+    }
+}
+
+impl From<&NodeGroup> for Group {
+    fn from(value: &NodeGroup) -> Self {
+        Group {
+            name: value.name.clone(),
+            g_type: BaseNode::group_type(),
+            members: value.members.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Members, Name, PartialEq, Serialize)]
+pub struct ProcessGroup {
+    pub name: String,
+    pub members: Vec<String>,
+}
+
+impl NamedGroup for ProcessGroup {
+    fn new(name: String) -> Self {
+        ProcessGroup {
+            name,
+            members: Vec::new(),
+        }
+    }
+}
+
+#[graphql_object]
+#[graphql(context = HerttaContext)]
+impl ProcessGroup {
+    fn name(&self) -> &String {
+        &self.name
+    }
+    fn members(&self, context: &HerttaContext) -> Vec<BaseProcess> {
+        let model = context.model().lock().unwrap();
+        model
+            .input_data
+            .processes
+            .iter()
+            .filter(|&n| self.members.iter().find(|&m| *m == n.name).is_some())
+            .cloned()
+            .collect()
+    }
+}
+
+impl From<&ProcessGroup> for Group {
+    fn from(value: &ProcessGroup) -> Self {
+        Group {
+            name: value.name.clone(),
+            g_type: BaseProcess::group_type(),
+            members: value.members.clone(),
         }
     }
 }
@@ -671,7 +886,7 @@ fn expand_optional_time_series(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input_data::{BidSlot, GroupType};
+    use crate::input_data::{BidSlot, Group, GroupType};
     use chrono::{TimeZone, Utc};
     fn as_map<T: Name>(x: T) -> BTreeMap<String, T> {
         let mut map = BTreeMap::new();
@@ -776,7 +991,8 @@ mod tests {
             }],
         };
         let market = base_market.expand_to_time_series(&time_line, &scenarios);
-        let groups = vec![Group::new("The club".into(), GroupType::Node)];
+        let node_groups = vec![NodeGroup::new("The node club".into())];
+        let process_groups = vec![ProcessGroup::new("The process club".into())];
         let scenarios =
             vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
         let reserve_type = vec![ReserveType {
@@ -819,7 +1035,8 @@ mod tests {
             node_delay: node_delay,
             node_histories: vec![base_node_history],
             markets: vec![base_market],
-            groups: groups.clone(),
+            node_groups,
+            process_groups,
             reserve_type: reserve_type,
             risk: risk,
             inflow_blocks: vec![base_inflow_block],
@@ -845,13 +1062,24 @@ mod tests {
         );
         assert_eq!(input_data.node_histories, as_map(node_history));
         assert_eq!(input_data.markets, as_map(market));
-        assert_eq!(
-            input_data.groups,
-            base.groups
-                .iter()
-                .map(|group| use_name_as_key(group))
-                .collect::<BTreeMap<String, Group>>()
+        let mut groups = BTreeMap::new();
+        groups.insert(
+            "The node club".to_string(),
+            Group {
+                name: "The node club".into(),
+                g_type: GroupType::Node,
+                members: Vec::new(),
+            },
         );
+        groups.insert(
+            "The process club".to_string(),
+            Group {
+                name: "The process club".into(),
+                g_type: GroupType::Process,
+                members: Vec::new(),
+            },
+        );
+        assert_eq!(input_data.groups, groups,);
         assert_eq!(input_data.scenarios, Scenario::to_map(&base.scenarios));
         assert_eq!(
             input_data.reserve_type,
