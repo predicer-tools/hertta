@@ -7,7 +7,7 @@ use crate::input_data::{
 use crate::scenarios::Scenario;
 use crate::{TimeLine, TimeStamp};
 use hertta_derive::{Members, Name};
-use juniper::{graphql_object, FieldError, GraphQLObject};
+use juniper::{graphql_object, FieldError, GraphQLObject, GraphQLUnion};
 use serde::{self, Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -60,14 +60,35 @@ pub struct BaseInputData {
     pub gen_constraints: Vec<BaseGenConstraint>,
 }
 
-#[derive(Clone, Debug, Default, GraphQLObject, Deserialize, Serialize)]
-#[graphql(description = "Delay for connections between nodes.")]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Delay {
     pub from_node: String,
     pub to_node: String,
     pub delay: f64,
     pub min_delay_flow: f64,
     pub max_delay_flow: f64,
+}
+
+#[graphql_object]
+#[graphql(description = "Delay for connections between nodes.", context = HerttaContext)]
+impl Delay {
+    fn from_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+        let model = context.model().lock().unwrap();
+        find_node(&self.from_node, "from_node", &model.input_data.nodes)
+    }
+    fn to_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+        let model = context.model().lock().unwrap();
+        find_node(&self.to_node, "to_node", &model.input_data.nodes)
+    }
+    fn delay(&self) -> f64 {
+        self.delay
+    }
+    fn min_delay_flow(&self) -> f64 {
+        self.min_delay_flow
+    }
+    fn max_delay_flow(&self) -> f64 {
+        self.max_delay_flow
+    }
 }
 
 impl Delay {
@@ -171,8 +192,7 @@ impl BaseInputData {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, PartialEq, Serialize)]
-#[graphql(name = "InputDataSetup")]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct BaseInputDataSetup {
     pub contains_reserves: bool,
     pub contains_online: bool,
@@ -217,6 +237,68 @@ impl ExpandToTimeSeries for BaseInputDataSetup {
             node_dummy_variable_cost: self.node_dummy_variable_cost,
             ramp_dummy_variable_cost: self.ramp_dummy_variable_cost,
         }
+    }
+}
+
+#[graphql_object]
+#[graphql(name = "InputDataSetup", context = HerttaContext)]
+impl BaseInputDataSetup {
+    fn contains_reserves(&self) -> bool {
+        self.contains_reserves
+    }
+    fn contain_online(&self) -> bool {
+        self.contains_online
+    }
+    fn contains_states(&self) -> bool {
+        self.contains_states
+    }
+    fn contains_piecewise_eff(&self) -> bool {
+        self.contains_piecewise_eff
+    }
+    fn contains_risk(&self) -> bool {
+        self.contains_risk
+    }
+    fn contains_diffusion(&self) -> bool {
+        self.contains_diffusion
+    }
+    fn contains_delay(&self) -> bool {
+        self.contains_delay
+    }
+    fn contains_markets(&self) -> bool {
+        self.contains_markets
+    }
+    fn reserve_realisation(&self) -> bool {
+        self.reserve_realisation
+    }
+    fn use_market_bids(&self) -> bool {
+        self.use_market_bids
+    }
+    fn common_time_steps(&self) -> i32 {
+        self.common_timesteps
+    }
+    fn common_scenario(&self, context: &HerttaContext) -> Result<Scenario, FieldError> {
+        let model = context.model().lock().unwrap();
+        match model
+            .input_data
+            .scenarios
+            .iter()
+            .find(|&s| *s.name() == self.common_scenario_name)
+        {
+            Some(scenario) => Ok(scenario.clone()),
+            None => Err(format!("scenario '{}' doesn't exist", self.common_scenario_name).into()),
+        }
+    }
+    fn use_node_dummy_variables(&self) -> bool {
+        self.use_node_dummy_variables
+    }
+    fn use_ramp_dummy_variables(&self) -> bool {
+        self.use_ramp_dummy_variables
+    }
+    fn node_dummy_variable_cost(&self) -> f64 {
+        self.node_dummy_variable_cost
+    }
+    fn ramp_dummy_variable_cost(&self) -> f64 {
+        self.ramp_dummy_variable_cost
     }
 }
 
@@ -524,30 +606,29 @@ impl ExpandToTimeSeries for BaseNodeDiffusion {
 impl BaseNodeDiffusion {
     fn from_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
         let model = context.model().lock().unwrap();
-        Self::find_node(&self.from_node, "from_node", &model.input_data.nodes)
+        find_node(&self.from_node, "from_node", &model.input_data.nodes)
     }
     fn to_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
         let model = context.model().lock().unwrap();
-        Self::find_node(&self.to_node, "to_node", &model.input_data.nodes)
-    }
-    #[graphql(ignore)]
-    fn find_node(
-        node_name: &String,
-        node_type: &str,
-        nodes: &Vec<BaseNode>,
-    ) -> Result<BaseNode, FieldError> {
-        match nodes.iter().find(|&n| n.name == *node_name) {
-            Some(node) => Ok(node.clone()),
-            None => Err(format!("{} '{}' doesn't exist", node_type, node_name).into()),
-        }
+        find_node(&self.to_node, "to_node", &model.input_data.nodes)
     }
     fn coefficient(&self) -> f64 {
         self.coefficient
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
-#[graphql(name = "NodeHistory")]
+fn find_node(
+    node_name: &String,
+    node_type: &str,
+    nodes: &Vec<BaseNode>,
+) -> Result<BaseNode, FieldError> {
+    match nodes.iter().find(|&n| n.name == *node_name) {
+        Some(node) => Ok(node.clone()),
+        None => Err(format!("{} '{}' doesn't exist", node_type, node_name).into()),
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct BaseNodeHistory {
     pub node: String,
     pub steps: f64,
@@ -556,6 +637,18 @@ pub struct BaseNodeHistory {
 impl Name for BaseNodeHistory {
     fn name(&self) -> &String {
         &self.node
+    }
+}
+
+#[graphql_object]
+#[graphql(name = "NodeHistory", context = HerttaContext)]
+impl BaseNodeHistory {
+    fn node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+        let model = context.model().lock().unwrap();
+        find_node(&self.node, "node", &model.input_data.nodes)
+    }
+    fn steps(&self) -> f64 {
+        self.steps
     }
 }
 
@@ -573,8 +666,7 @@ impl ExpandToTimeSeries for BaseNodeHistory {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, Serialize)]
-#[graphql(name = "Market")]
+#[derive(Clone, Debug, Default, Deserialize, Name, Serialize)]
 pub struct BaseMarket {
     pub name: String,
     pub m_type: String,
@@ -635,6 +727,72 @@ impl ExpandToTimeSeries for BaseMarket {
                 .map(|fix| (fix.name.clone(), fix.factor))
                 .collect(),
         }
+    }
+}
+
+#[graphql_object]
+#[graphql(name = "Market", context = HerttaContext)]
+impl BaseMarket {
+    fn name(&self) -> &String {
+        &self.name
+    }
+    fn m_type(&self) -> &String {
+        &self.m_type
+    }
+    fn node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+        let model = context.model().lock().unwrap();
+        find_node(&self.node, "node", &model.input_data.nodes)
+    }
+    fn process_group(&self, context: &HerttaContext) -> Result<ProcessGroup, FieldError> {
+        let model = context.model().lock().unwrap();
+        match model
+            .input_data
+            .process_groups
+            .iter()
+            .find(|&g| g.name == self.processgroup)
+        {
+            Some(group) => Ok(group.clone()),
+            None => Err(format!("process group '{}' doesn't exist", self.processgroup).into()),
+        }
+    }
+    fn direction(&self) -> &String {
+        &self.direction
+    }
+    fn realisation(&self) -> Option<f64> {
+        self.realisation
+    }
+    fn reserve_type(&self) -> &String {
+        &self.reserve_type
+    }
+    fn is_bid(&self) -> bool {
+        self.is_bid
+    }
+    fn is_limited(&self) -> bool {
+        self.is_limited
+    }
+    fn min_bid(&self) -> f64 {
+        self.min_bid
+    }
+    fn max_bid(&self) -> f64 {
+        self.max_bid
+    }
+    fn fee(&self) -> f64 {
+        self.fee
+    }
+    fn price(&self) -> Option<f64> {
+        self.price
+    }
+    fn up_price(&self) -> Option<f64> {
+        self.up_price
+    }
+    fn down_price(&self) -> Option<f64> {
+        self.down_price
+    }
+    fn reserve_activation_price(&self) -> Option<f64> {
+        self.reserve_activation_price
+    }
+    fn fixed(&self) -> &Vec<MarketFix> {
+        &self.fixed
     }
 }
 
@@ -733,8 +891,7 @@ impl From<&ProcessGroup> for Group {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, Serialize)]
-#[graphql(name = "InflowBlock")]
+#[derive(Clone, Debug, Default, Deserialize, Name, Serialize)]
 pub struct BaseInflowBlock {
     pub name: String,
     pub node: String,
@@ -757,8 +914,23 @@ impl ExpandToTimeSeries for BaseInflowBlock {
     }
 }
 
+#[graphql_object]
+#[graphql(name = "InflowBlock", context = HerttaContext)]
+impl BaseInflowBlock {
+    fn name(&self) -> &String {
+        &self.name
+    }
+    fn node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+        let model = context.model().lock().unwrap();
+        find_node(&self.node, "node", &model.input_data.nodes)
+    }
+    fn data(&self) -> f64 {
+        self.data
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, Serialize)]
-#[graphql(name = "GenConstraint")]
+#[graphql(name = "GenConstraint", context = HerttaContext)]
 pub struct BaseGenConstraint {
     pub name: String,
     pub gc_type: String,
@@ -790,8 +962,7 @@ impl ExpandToTimeSeries for BaseGenConstraint {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
-#[graphql(name = "Topology")]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct BaseTopology {
     pub source: String,
     pub sink: String,
@@ -825,15 +996,61 @@ impl ExpandToTimeSeries for BaseTopology {
     }
 }
 
+#[derive(GraphQLUnion)]
+#[graphql(context = HerttaContext)]
+pub enum NodeOrProcess {
+    Node(BaseNode),
+    Process(BaseProcess),
+}
+
+#[graphql_object]
+#[graphql(name = "Topology", context = HerttaContext)]
+impl BaseTopology {
+    fn source(&self, context: &HerttaContext) -> Result<NodeOrProcess, FieldError> {
+        let model = context.model().lock().unwrap();
+        find_node_or_process(
+            &self.source,
+            "source",
+            &model.input_data.nodes,
+            &model.input_data.processes,
+        )
+    }
+    fn sink(&self, context: &HerttaContext) -> Result<NodeOrProcess, FieldError> {
+        let model = context.model().lock().unwrap();
+        find_node_or_process(
+            &self.sink,
+            "sink",
+            &model.input_data.nodes,
+            &model.input_data.processes,
+        )
+    }
+}
+
+fn find_node_or_process(
+    name: &str,
+    entity_type: &str,
+    nodes: &Vec<BaseNode>,
+    processes: &Vec<BaseProcess>,
+) -> Result<NodeOrProcess, FieldError> {
+    if let Some(node) = nodes.iter().find(|&n| n.name == name) {
+        return Ok(NodeOrProcess::Node(node.clone()));
+    } else {
+        return match processes.iter().find(|&p| p.name == name) {
+            Some(process) => Ok(NodeOrProcess::Process(process.clone())),
+            None => Err(format!("{} node or process '{}' doesn't exist", entity_type, name).into()),
+        };
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
-#[graphql(name = "ConFactor")]
+#[graphql(name = "ConFactor", context = HerttaContext)]
 pub struct BaseConFactor {
     pub var_type: String,
     pub var_tuple: VariableId,
     pub data: f64,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct VariableId {
     pub entity: String,
     pub identifier: Option<String>,
@@ -857,6 +1074,32 @@ impl ExpandToTimeSeries for BaseConFactor {
                     .into(),
             ),
             data: to_time_series(self.data, time_line, scenarios),
+        }
+    }
+}
+
+#[graphql_object]
+#[graphql(context = HerttaContext)]
+impl VariableId {
+    fn entity(&self, context: &HerttaContext) -> Result<NodeOrProcess, FieldError> {
+        let model = context.model().lock().unwrap();
+        find_node_or_process(
+            &self.entity,
+            "entity",
+            &model.input_data.nodes,
+            &model.input_data.processes,
+        )
+    }
+    fn identifier(&self, context: &HerttaContext) -> Result<Option<BaseNode>, FieldError> {
+        let model = context.model().lock().unwrap();
+        if let Some(ref node_name) = self.identifier {
+            return Ok(Some(find_node(
+                node_name,
+                "identifier",
+                &model.input_data.nodes,
+            )?));
+        } else {
+            return Ok(None);
         }
     }
 }
