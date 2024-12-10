@@ -1168,10 +1168,28 @@ fn find_node_or_process(
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, GraphQLEnum, PartialEq, Serialize)]
+pub enum ConversionFactorType {
+    Flow,
+    State,
+    Online,
+}
+
+impl ConversionFactorType {
+    fn to_input(&self) -> String {
+        match self {
+            ConversionFactorType::Flow => "flow",
+            ConversionFactorType::State => "state",
+            ConversionFactorType::Online => "online",
+        }
+        .into()
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
 #[graphql(name = "ConFactor", context = HerttaContext)]
 pub struct BaseConFactor {
-    pub var_type: String,
+    pub var_type: ConversionFactorType,
     pub var_tuple: VariableId,
     pub data: f64,
 }
@@ -1190,7 +1208,7 @@ impl ExpandToTimeSeries for BaseConFactor {
         scenarios: &Vec<Scenario>,
     ) -> Self::Expanded {
         ConFactor {
-            var_type: self.var_type.clone(),
+            var_type: self.var_type.to_input(),
             var_tuple: (
                 self.var_tuple.entity.clone(),
                 self.var_tuple
@@ -1405,7 +1423,7 @@ mod tests {
         };
         let inflow_block = base_inflow_block.expand_to_time_series(&time_line, &scenarios);
         let base_con_factor = BaseConFactor {
-            var_type: "state".to_string(),
+            var_type: ConversionFactorType::State,
             var_tuple: VariableId {
                 entity: "interior_air".to_string(),
                 identifier: None,
@@ -1711,7 +1729,7 @@ mod tests {
         let scenarios =
             vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
         let base_con_factor = BaseConFactor {
-            var_type: "state".to_string(),
+            var_type: ConversionFactorType::State,
             var_tuple: VariableId {
                 entity: "interior_air".to_string(),
                 identifier: None,
@@ -1771,7 +1789,7 @@ mod tests {
     #[test]
     fn expanding_con_factor_works() {
         let base = BaseConFactor {
-            var_type: "state".to_string(),
+            var_type: ConversionFactorType::State,
             var_tuple: VariableId {
                 entity: "interior_air".to_string(),
                 identifier: None,
