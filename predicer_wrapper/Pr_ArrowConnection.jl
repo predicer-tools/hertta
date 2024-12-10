@@ -155,6 +155,7 @@ function main()
     try
         input_data = Predicer.compile_input_data(system_data, timeseries_data, temporals)
         mc, input_data = Predicer.generate_model(input_data)
+        Predicer.solve_model(mc)
         result_dataframes = Predicer.get_all_result_dataframes(mc, input_data)
     catch error
         send_failure(socket)
