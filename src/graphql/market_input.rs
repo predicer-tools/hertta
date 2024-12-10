@@ -7,7 +7,7 @@ pub struct NewMarket {
     name: String,
     m_type: MarketType,
     node: String,
-    processgroup: String,
+    process_group: String,
     direction: Option<MarketDirection>,
     realisation: Option<f64>,
     reserve_type: Option<String>,
@@ -28,7 +28,7 @@ impl NewMarket {
             name: self.name,
             m_type: self.m_type,
             node: self.node,
-            processgroup: self.processgroup,
+            process_group: self.process_group,
             direction: self.direction,
             realisation: self.realisation,
             reserve_type: self.reserve_type,
@@ -74,7 +74,7 @@ fn validate_market_creation(
     }
     if groups
         .iter()
-        .find(|g| g.name == market.processgroup)
+        .find(|g| g.name == market.process_group)
         .is_none()
     {
         errors.push(ValidationError::new("processgroup", "no such group"));

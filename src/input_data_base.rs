@@ -743,7 +743,7 @@ pub struct BaseMarket {
     pub name: String,
     pub m_type: MarketType,
     pub node: String,
-    pub processgroup: String,
+    pub process_group: String,
     pub direction: Option<MarketDirection>,
     pub realisation: Option<f64>,
     pub reserve_type: Option<String>,
@@ -776,7 +776,7 @@ impl ExpandToTimeSeries for BaseMarket {
             name: self.name.clone(),
             m_type: self.m_type.to_input(),
             node: self.node.clone(),
-            processgroup: self.processgroup.clone(),
+            processgroup: self.process_group.clone(),
             direction: match self.direction {
                 Some(dir) => dir.to_input(),
                 None => "none".to_string(),
@@ -827,10 +827,10 @@ impl BaseMarket {
             .input_data
             .process_groups
             .iter()
-            .find(|&g| g.name == self.processgroup)
+            .find(|&g| g.name == self.process_group)
         {
             Some(group) => Ok(group.clone()),
-            None => Err(format!("process group '{}' doesn't exist", self.processgroup).into()),
+            None => Err(format!("process group '{}' doesn't exist", self.process_group).into()),
         }
     }
     fn direction(&self) -> Option<MarketDirection> {
@@ -1385,7 +1385,7 @@ mod tests {
             name: "Market".to_string(),
             m_type: MarketType::Energy,
             node: "North".to_string(),
-            processgroup: "Group".to_string(),
+            process_group: "Group".to_string(),
             direction: None,
             realisation: Some(1.0),
             reserve_type: Some("not none".to_string()),
@@ -1652,7 +1652,7 @@ mod tests {
             name: "Market".to_string(),
             m_type: MarketType::Energy,
             node: "North".to_string(),
-            processgroup: "Group".to_string(),
+            process_group: "Group".to_string(),
             direction: None,
             realisation: Some(1.1),
             reserve_type: Some("not none".to_string()),
