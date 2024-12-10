@@ -1031,7 +1031,7 @@ pub enum ConstraintType {
 impl ConstraintType {
     fn to_input(&self) -> String {
         match self {
-            ConstraintType::LessThan => "lt",
+            ConstraintType::LessThan => "st",
             ConstraintType::Equal => "eq",
             ConstraintType::GreaterThan => "gt",
         }
