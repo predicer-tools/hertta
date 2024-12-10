@@ -2,6 +2,7 @@ mod con_factor_input;
 mod gen_constraint_input;
 mod group_input;
 mod input_data_setup_input;
+mod job_status;
 mod market_input;
 mod node_diffusion_input;
 mod node_input;
@@ -9,7 +10,6 @@ mod process_input;
 mod risk_input;
 mod scenario_input;
 mod state_input;
-mod status;
 mod time_line_input;
 mod topology_input;
 
@@ -24,6 +24,7 @@ use crate::scenarios::Scenario;
 use crate::settings::{LocationSettings, Settings};
 use gen_constraint_input::NewGenConstraint;
 use input_data_setup_input::InputDataSetupUpdate;
+use job_status::JobStatus;
 use juniper::{
     graphql_object, Context, EmptySubscription, FieldResult, GraphQLInputObject, GraphQLObject,
     GraphQLUnion, Nullable, RootNode,
@@ -33,7 +34,6 @@ use node_input::NewNode;
 use process_input::NewProcess;
 use risk_input::NewRisk;
 use state_input::{StateInput, StateUpdate};
-use status::Status;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 use time_line_input::TimeLineUpdate;
@@ -311,12 +311,30 @@ impl Query {
             .map(|s| s.clone())
             .ok_or_else(|| "no such scenario".into())
     }
-    fn status(context: &HerttaContext) -> Status {
+    fn job_status(job_id: i32, context: &HerttaContext) -> FieldResult<JobStatus> {
         match *context.rx_state.borrow() {
-            OptimizationState::Idle => return Status::new_idle(),
-            OptimizationState::InProgress(job_id) => return Status::new_in_progress(job_id),
-            OptimizationState::Finished(job_id) => return Status::new_finished(job_id),
-            OptimizationState::Error(job_id, ref error) => return Status::new_error(job_id, error),
+            OptimizationState::Idle => Err("no such job".into()),
+            OptimizationState::InProgress(current_job_id) => {
+                if job_id == current_job_id {
+                    Ok(JobStatus::new_in_progress())
+                } else {
+                    Err("no such job".into())
+                }
+            }
+            OptimizationState::Finished(current_job_id) => {
+                if job_id == current_job_id {
+                    Ok(JobStatus::new_finished())
+                } else {
+                    Err("no such job".into())
+                }
+            }
+            OptimizationState::Error(current_job_id, ref error) => {
+                if job_id == current_job_id {
+                    Ok(JobStatus::new_failed(error))
+                } else {
+                    Err("no such job".into())
+                }
+            }
         }
     }
 }

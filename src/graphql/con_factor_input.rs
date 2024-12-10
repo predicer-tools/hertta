@@ -1,5 +1,7 @@
 use super::{ValidationError, ValidationErrors};
-use crate::input_data_base::{BaseConFactor, BaseGenConstraint, BaseNode, BaseProcess, VariableId};
+use crate::input_data_base::{
+    BaseConFactor, BaseGenConstraint, BaseNode, BaseProcess, ConversionFactorType, VariableId,
+};
 
 pub fn create_flow_con_factor(
     factor: f64,
@@ -23,7 +25,7 @@ pub fn create_flow_con_factor(
         return ValidationErrors::from(errors);
     }
     let con_factor = BaseConFactor {
-        var_type: "flow".into(),
+        var_type: ConversionFactorType::Flow,
         var_tuple: VariableId {
             entity: process_name,
             identifier: Some(source_or_sink_node_name),
@@ -82,7 +84,7 @@ fn validate_flow_con_factor_creation(
         .factors
         .iter()
         .find(|f| {
-            f.var_type == "flow"
+            f.var_type == ConversionFactorType::Flow
                 && f.var_tuple.entity == *process
                 && f.var_tuple
                     .identifier
@@ -115,7 +117,7 @@ pub fn create_state_con_factor(
         return ValidationErrors::from(errors);
     }
     let con_factor = BaseConFactor {
-        var_type: "state".into(),
+        var_type: ConversionFactorType::State,
         var_tuple: VariableId {
             entity: node_name,
             identifier: None,
@@ -141,7 +143,7 @@ fn validate_state_con_factor_creation(
     if constraint
         .factors
         .iter()
-        .find(|f| f.var_type == "state" && f.var_tuple.entity == *node)
+        .find(|f| f.var_type == ConversionFactorType::State && f.var_tuple.entity == *node)
         .is_some()
     {
         errors.push(ValidationError::new(
@@ -168,7 +170,7 @@ pub fn create_online_con_factor(
         return ValidationErrors::from(errors);
     }
     let con_factor = BaseConFactor {
-        var_type: "online".into(),
+        var_type: ConversionFactorType::Online,
         var_tuple: VariableId {
             entity: process_name,
             identifier: None,
@@ -194,7 +196,7 @@ fn validate_online_con_factor_creation(
     if constraint
         .factors
         .iter()
-        .find(|f| f.var_type == "online" && f.var_tuple.entity == *process)
+        .find(|f| f.var_type == ConversionFactorType::Online && f.var_tuple.entity == *process)
         .is_some()
     {
         errors.push(ValidationError::new(

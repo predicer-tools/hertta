@@ -1393,18 +1393,15 @@ mod tests {
     }
     mod processes_and_column_prefixes {
         use super::*;
-        use crate::input_data_base::BaseTopology;
+        use crate::input_data_base::{BaseTopology, Conversion};
         #[test]
         fn column_prefix_gets_generated() {
-            let processes = vec![BaseProcess {
-                name: "control_process".to_string(),
-                topos: vec![BaseTopology {
-                    source: "input_node".to_string(),
-                    sink: "control_process".to_string(),
-                    ..BaseTopology::default()
-                }],
-                ..BaseProcess::default()
-            }];
+            let mut process = BaseProcess::new("control_process".to_string(), Conversion::Unit);
+            process.topos.push(BaseTopology::new(
+                "input_node".to_string(),
+                "control_process".to_string(),
+            ));
+            let processes = vec![process];
             let input_node_names = vec!["input_node".to_string()];
             let process_names = processes_and_column_prefixes(processes.iter(), &input_node_names);
             assert_eq!(process_names.len(), 1);

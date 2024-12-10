@@ -1,11 +1,11 @@
 use super::{ValidationError, ValidationErrors};
-use crate::input_data_base::BaseGenConstraint;
+use crate::input_data_base::{BaseGenConstraint, ConstraintType};
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
 pub struct NewGenConstraint {
     name: String,
-    gc_type: String,
+    gc_type: ConstraintType,
     is_setpoint: bool,
     penalty: f64,
     constant: Option<f64>,
@@ -52,16 +52,6 @@ fn validate_gen_contraint_creation(
         errors.push(ValidationError::new(
             "name",
             "a constraint with the same name exists",
-        ));
-    }
-    if ["eq", "lt", "gt"]
-        .iter()
-        .find(|c| **c == constraint.gc_type)
-        .is_none()
-    {
-        errors.push(ValidationError::new(
-            "gc_type",
-            "should be 'eq', 'lt' or 'gt'",
         ));
     }
     errors
