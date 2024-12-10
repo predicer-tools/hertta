@@ -1,12 +1,11 @@
 use super::{ValidationError, ValidationErrors};
-use crate::input_data_base::{BaseNode, BaseProcess};
+use crate::input_data_base::{BaseNode, BaseProcess, Conversion};
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
 pub struct NewProcess {
     name: String,
-    #[graphql(description = "Must be 'unit' or 'transport'.")]
-    conversion: String,
+    conversion: Conversion,
     is_cf_fix: bool,
     is_online: bool,
     is_res: bool,
@@ -85,16 +84,6 @@ fn validate_process_creation(
         errors.push(ValidationError::new(
             "name",
             "a node with the same name exists",
-        ));
-    }
-    if ["unit", "transport", "market"]
-        .iter()
-        .find(|conversion| **conversion == process.conversion)
-        .is_none()
-    {
-        errors.push(ValidationError::new(
-            "conversion",
-            "should be 'unit', 'transport' or 'market'",
         ));
     }
     if process.load_min < 0.0 || process.load_min > 1.0 {

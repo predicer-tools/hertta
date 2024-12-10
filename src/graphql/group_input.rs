@@ -57,7 +57,7 @@ mod tests {
     use crate::input_data_base::BaseNode;
     #[test]
     fn add_to_group_adds_member_to_group() {
-        let mut items = vec![BaseNode::with_name("my node".into())];
+        let mut items = vec![BaseNode::new("my node".into())];
         let mut groups = vec![NodeGroup::new("nodes".into())];
         let maybe_error = add_to_group("my node", "nodes", &mut items, &mut groups);
         assert!(maybe_error.error.is_none());

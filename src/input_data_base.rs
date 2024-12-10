@@ -7,7 +7,7 @@ use crate::input_data::{
 use crate::scenarios::Scenario;
 use crate::{TimeLine, TimeStamp};
 use hertta_derive::{Members, Name};
-use juniper::{graphql_object, FieldError, GraphQLObject, GraphQLUnion};
+use juniper::{graphql_object, FieldError, GraphQLEnum, GraphQLObject, GraphQLUnion};
 use serde::{self, Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -60,7 +60,7 @@ pub struct BaseInputData {
     pub gen_constraints: Vec<BaseGenConstraint>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Delay {
     pub from_node: String,
     pub to_node: String,
@@ -103,7 +103,7 @@ impl Delay {
     }
 }
 
-#[derive(Clone, Debug, Default, GraphQLObject, Deserialize, Serialize)]
+#[derive(Clone, Debug, GraphQLObject, Deserialize, Serialize)]
 pub struct ReserveType {
     pub name: String,
     pub ramp_rate: f64,
@@ -118,7 +118,7 @@ impl ReserveType {
     }
 }
 
-#[derive(Clone, Debug, Default, GraphQLObject, Deserialize, Serialize)]
+#[derive(Clone, Debug, GraphQLObject, Deserialize, Serialize)]
 pub struct Risk {
     pub parameter: String,
     pub value: f64,
@@ -302,11 +302,28 @@ impl BaseInputDataSetup {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Name, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, GraphQLEnum, Serialize)]
+pub enum Conversion {
+    Unit,
+    Transport,
+    Market,
+}
+
+impl Conversion {
+    fn to_int(&self) -> i64 {
+        match self {
+            Conversion::Unit => 1,
+            Conversion::Transport => 2,
+            Conversion::Market => 3,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Name, Serialize)]
 pub struct BaseProcess {
     pub name: String,
     pub groups: Vec<String>,
-    pub conversion: String,
+    pub conversion: Conversion,
     pub is_cf: bool,
     pub is_cf_fix: bool,
     pub is_online: bool,
@@ -340,7 +357,7 @@ impl GroupMember for BaseProcess {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
+#[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
 pub struct Point {
     pub x: f64,
     pub y: f64,
@@ -356,7 +373,7 @@ impl ExpandToTimeSeries for BaseProcess {
         Process {
             name: self.name.clone(),
             groups: self.groups.clone(),
-            conversion: self.conversion_as_int().unwrap_or(1),
+            conversion: self.conversion.to_int(),
             is_cf: self.is_cf,
             is_cf_fix: self.is_cf_fix,
             is_online: self.is_online,
@@ -409,8 +426,8 @@ impl BaseProcess {
             .cloned()
             .collect()
     }
-    fn conversion(&self) -> &String {
-        &self.conversion
+    fn conversion(&self) -> Conversion {
+        self.conversion
     }
     fn is_cf(&self) -> bool {
         self.is_cf
@@ -469,20 +486,35 @@ impl BaseProcess {
 }
 
 impl BaseProcess {
-    fn conversion_as_int(&self) -> Result<i64, String> {
-        match self.conversion.as_str() {
-            "unit" => Ok(1),
-            "transport" => Ok(2),
-            "market" => Ok(3),
-            _ => Err(format!(
-                "unknown conversion {}; valid values ['unit', 'transport', 'market']",
-                self.conversion
-            )),
+    pub fn new(name: String, conversion: Conversion) -> Self {
+        BaseProcess {
+            name,
+            groups: Vec::new(),
+            conversion,
+            is_cf: false,
+            is_cf_fix: false,
+            is_online: false,
+            is_res: false,
+            eff: 0.0,
+            load_min: 0.0,
+            load_max: 0.0,
+            start_cost: 0.0,
+            min_online: 0.0,
+            min_offline: 0.0,
+            max_online: 0.0,
+            max_offline: 0.0,
+            initial_state: false,
+            is_scenario_independent: false,
+            topos: Vec::new(),
+            cf: 0.0,
+            eff_ts: None,
+            eff_ops: Vec::new(),
+            eff_fun: Vec::new(),
         }
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Name, Serialize)]
+#[derive(Clone, Debug, Deserialize, Name, Serialize)]
 pub struct BaseNode {
     pub name: String,
     pub groups: Vec<String>,
@@ -570,15 +602,21 @@ impl BaseNode {
 }
 
 impl BaseNode {
-    pub fn with_name(name: String) -> Self {
+    pub fn new(name: String) -> Self {
         BaseNode {
             name,
-            ..BaseNode::default()
+            groups: Vec::new(),
+            is_commodity: false,
+            is_market: false,
+            is_res: false,
+            state: None,
+            cost: None,
+            inflow: None,
         }
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct BaseNodeDiffusion {
     pub from_node: String,
     pub to_node: String,
@@ -628,7 +666,7 @@ fn find_node(
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct BaseNodeHistory {
     pub node: String,
     pub steps: f64,
@@ -666,7 +704,7 @@ impl ExpandToTimeSeries for BaseNodeHistory {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Name, Serialize)]
+#[derive(Clone, Debug, Deserialize, Name, Serialize)]
 pub struct BaseMarket {
     pub name: String,
     pub m_type: String,
@@ -891,7 +929,7 @@ impl From<&ProcessGroup> for Group {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Name, Serialize)]
+#[derive(Clone, Debug, Deserialize, Name, Serialize)]
 pub struct BaseInflowBlock {
     pub name: String,
     pub node: String,
@@ -929,7 +967,7 @@ impl BaseInflowBlock {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Name, Serialize)]
+#[derive(Clone, Debug, Deserialize, GraphQLObject, Name, Serialize)]
 #[graphql(name = "GenConstraint", context = HerttaContext)]
 pub struct BaseGenConstraint {
     pub name: String,
@@ -962,7 +1000,7 @@ impl ExpandToTimeSeries for BaseGenConstraint {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct BaseTopology {
     pub source: String,
     pub sink: String,
@@ -992,6 +1030,22 @@ impl ExpandToTimeSeries for BaseTopology {
             initial_load: self.initial_load,
             initial_flow: self.initial_flow,
             cap_ts: expand_optional_time_series(self.cap_ts, time_line, scenarios),
+        }
+    }
+}
+
+impl BaseTopology {
+    pub fn new(source: String, sink: String) -> Self {
+        BaseTopology {
+            source,
+            sink,
+            capacity: 0.0,
+            vom_cost: 0.0,
+            ramp_up: 0.0,
+            ramp_down: 0.0,
+            initial_load: 0.0,
+            initial_flow: 0.0,
+            cap_ts: None,
         }
     }
 }
@@ -1042,7 +1096,7 @@ fn find_node_or_process(
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
+#[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
 #[graphql(name = "ConFactor", context = HerttaContext)]
 pub struct BaseConFactor {
     pub var_type: String,
@@ -1050,7 +1104,7 @@ pub struct BaseConFactor {
     pub data: f64,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct VariableId {
     pub entity: String,
     pub identifier: Option<String>,
@@ -1186,7 +1240,7 @@ mod tests {
         let base_process = BaseProcess {
             name: "Conversion".to_string(),
             groups: vec!["Group".to_string()],
-            conversion: "unit".to_string(),
+            conversion: Conversion::Unit,
             is_cf: true,
             is_cf_fix: false,
             is_online: true,
@@ -1382,7 +1436,7 @@ mod tests {
         let base = BaseProcess {
             name: "Conversion".to_string(),
             groups: vec!["Group".to_string()],
-            conversion: "transport".to_string(),
+            conversion: Conversion::Transport,
             is_cf: true,
             is_cf_fix: false,
             is_online: true,
@@ -1678,43 +1732,25 @@ mod tests {
         }
         #[test]
         fn test_non_input_nodes_are_filtered() {
-            let commodity_nodes = vec![BaseNode {
-                name: "commodity".to_string(),
-                is_commodity: true,
-                ..BaseNode::default()
-            }];
+            let mut commodity_nodes = vec![BaseNode::new("commodity".to_string())];
+            commodity_nodes[0].is_commodity = true;
             assert!(find_input_node_names(commodity_nodes.iter()).is_empty());
-            let market_nodes = vec![BaseNode {
-                name: "market".to_string(),
-                is_market: true,
-                ..BaseNode::default()
-            }];
+            let mut market_nodes = vec![BaseNode::new("market".to_string())];
+            market_nodes[0].is_market = true;
             assert!(find_input_node_names(market_nodes.iter()).is_empty());
-            let state_nodes = vec![BaseNode {
-                name: "state".to_string(),
-                state: Some(State::default()),
-                ..BaseNode::default()
-            }];
+            let mut state_nodes = vec![BaseNode::new("state".to_string())];
+            state_nodes[0].state = Some(State::default());
             assert!(find_input_node_names(state_nodes.iter()).is_empty());
-            let res_nodes = vec![BaseNode {
-                name: "res".to_string(),
-                is_res: true,
-                ..BaseNode::default()
-            }];
+            let mut res_nodes = vec![BaseNode::new("res".to_string())];
+            res_nodes[0].is_res = true;
             assert!(find_input_node_names(res_nodes.iter()).is_empty());
-            let inflow_nodes = vec![BaseNode {
-                name: "inflow".to_string(),
-                inflow: Some(2.3),
-                ..BaseNode::default()
-            }];
+            let mut inflow_nodes = vec![BaseNode::new("inflow".to_string())];
+            inflow_nodes[0].inflow = Some(2.3);
             assert!(find_input_node_names(inflow_nodes.iter()).is_empty());
         }
         #[test]
         fn true_input_node_gets_found() {
-            let input_nodes = vec![BaseNode {
-                name: "input".to_string(),
-                ..BaseNode::default()
-            }];
+            let input_nodes = vec![BaseNode::new("input".to_string())];
             let input_nodes = find_input_node_names(input_nodes.iter());
             assert_eq!(input_nodes.len(), 1);
             assert_eq!(input_nodes[0], "input");
