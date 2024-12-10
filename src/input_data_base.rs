@@ -1021,11 +1021,29 @@ impl BaseInflowBlock {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, GraphQLEnum, Serialize)]
+pub enum ConstraintType {
+    LessThan,
+    Equal,
+    GreaterThan,
+}
+
+impl ConstraintType {
+    fn to_input(&self) -> String {
+        match self {
+            ConstraintType::LessThan => "lt",
+            ConstraintType::Equal => "eq",
+            ConstraintType::GreaterThan => "gt",
+        }
+        .into()
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, GraphQLObject, Name, Serialize)]
 #[graphql(name = "GenConstraint", context = HerttaContext)]
 pub struct BaseGenConstraint {
     pub name: String,
-    pub gc_type: String,
+    pub gc_type: ConstraintType,
     pub is_setpoint: bool,
     pub penalty: f64,
     pub factors: Vec<BaseConFactor>,
@@ -1041,7 +1059,7 @@ impl ExpandToTimeSeries for BaseGenConstraint {
     ) -> Self::Expanded {
         GenConstraint {
             name: self.name.clone(),
-            gc_type: self.gc_type.clone(),
+            gc_type: self.gc_type.to_input(),
             is_setpoint: self.is_setpoint,
             penalty: self.penalty,
             factors: self
@@ -1396,7 +1414,7 @@ mod tests {
         };
         let base_gen_constraint = BaseGenConstraint {
             name: "Constraint".to_string(),
-            gc_type: "gt".to_string(),
+            gc_type: ConstraintType::GreaterThan,
             is_setpoint: true,
             penalty: 1.1,
             factors: vec![base_con_factor],
@@ -1703,7 +1721,7 @@ mod tests {
         let con_factor = base_con_factor.expand_to_time_series(&time_line, &scenarios);
         let base = BaseGenConstraint {
             name: "Constraint".to_string(),
-            gc_type: "gt".to_string(),
+            gc_type: ConstraintType::GreaterThan,
             is_setpoint: true,
             penalty: 1.1,
             factors: vec![base_con_factor],
