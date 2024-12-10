@@ -1,14 +1,14 @@
 use super::{ValidationError, ValidationErrors};
-use crate::input_data_base::{BaseMarket, BaseNode, ProcessGroup};
+use crate::input_data_base::{BaseMarket, BaseNode, MarketDirection, MarketType, ProcessGroup};
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
 pub struct NewMarket {
     name: String,
-    m_type: String,
+    m_type: MarketType,
     node: String,
     processgroup: String,
-    direction: Option<String>,
+    direction: Option<MarketDirection>,
     realisation: Option<f64>,
     reserve_type: Option<String>,
     is_bid: bool,
@@ -29,15 +29,9 @@ impl NewMarket {
             m_type: self.m_type,
             node: self.node,
             processgroup: self.processgroup,
-            direction: match self.direction {
-                Some(dir) => dir,
-                None => "none".to_string(),
-            },
+            direction: self.direction,
             realisation: self.realisation,
-            reserve_type: match self.reserve_type {
-                Some(reserve_type) => reserve_type,
-                None => "none".to_string(),
-            },
+            reserve_type: self.reserve_type,
             is_bid: self.is_bid,
             is_limited: self.is_limited,
             min_bid: self.min_bid,
@@ -75,16 +69,6 @@ fn validate_market_creation(
     if market.name.is_empty() {
         errors.push(ValidationError::new("name", "name is empty"));
     }
-    if ["energy", "reserve"]
-        .iter()
-        .find(|t| **t == market.m_type)
-        .is_none()
-    {
-        errors.push(ValidationError::new(
-            "m_type",
-            "should be 'energy' or 'reserve'",
-        ));
-    }
     if nodes.iter().find(|n| n.name == market.node).is_none() {
         errors.push(ValidationError::new("node", "no such node"));
     }
@@ -94,18 +78,6 @@ fn validate_market_creation(
         .is_none()
     {
         errors.push(ValidationError::new("processgroup", "no such group"));
-    }
-    if let Some(ref direction) = market.direction {
-        if ["up", "down", "updown"]
-            .iter()
-            .find(|d| **d == direction)
-            .is_none()
-        {
-            errors.push(ValidationError::new(
-                "direction",
-                "should be 'up', 'down', 'updown'",
-            ));
-        }
     }
     if let Some(ref reserve_type) = market.reserve_type {
         if reserve_type.is_empty() {

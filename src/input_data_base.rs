@@ -310,7 +310,7 @@ pub enum Conversion {
 }
 
 impl Conversion {
-    fn to_int(&self) -> i64 {
+    fn to_input(&self) -> i64 {
         match self {
             Conversion::Unit => 1,
             Conversion::Transport => 2,
@@ -373,7 +373,7 @@ impl ExpandToTimeSeries for BaseProcess {
         Process {
             name: self.name.clone(),
             groups: self.groups.clone(),
-            conversion: self.conversion.to_int(),
+            conversion: self.conversion.to_input(),
             is_cf: self.is_cf,
             is_cf_fix: self.is_cf_fix,
             is_online: self.is_online,
@@ -704,15 +704,49 @@ impl ExpandToTimeSeries for BaseNodeHistory {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, GraphQLEnum, Serialize)]
+pub enum MarketType {
+    Energy,
+    Reserve,
+}
+
+impl MarketType {
+    fn to_input(&self) -> String {
+        match self {
+            MarketType::Energy => "energy",
+            MarketType::Reserve => "reserve",
+        }
+        .into()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, GraphQLEnum, Serialize)]
+pub enum MarketDirection {
+    Up,
+    Down,
+    UpDown,
+}
+
+impl MarketDirection {
+    fn to_input(&self) -> String {
+        match self {
+            MarketDirection::Up => "up",
+            MarketDirection::Down => "down",
+            MarketDirection::UpDown => "updown",
+        }
+        .into()
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Name, Serialize)]
 pub struct BaseMarket {
     pub name: String,
-    pub m_type: String,
+    pub m_type: MarketType,
     pub node: String,
     pub processgroup: String,
-    pub direction: String,
+    pub direction: Option<MarketDirection>,
     pub realisation: Option<f64>,
-    pub reserve_type: String,
+    pub reserve_type: Option<String>,
     pub is_bid: bool,
     pub is_limited: bool,
     pub min_bid: f64,
@@ -740,12 +774,18 @@ impl ExpandToTimeSeries for BaseMarket {
     ) -> Self::Expanded {
         Market {
             name: self.name.clone(),
-            m_type: self.m_type.clone(),
+            m_type: self.m_type.to_input(),
             node: self.node.clone(),
             processgroup: self.processgroup.clone(),
-            direction: self.direction.clone(),
+            direction: match self.direction {
+                Some(dir) => dir.to_input(),
+                None => "none".to_string(),
+            },
             realisation: expand_optional_time_series(self.realisation, time_line, scenarios),
-            reserve_type: self.reserve_type.clone(),
+            reserve_type: match self.reserve_type {
+                Some(ref reserve_type) => reserve_type.clone(),
+                None => String::new(),
+            },
             is_bid: self.is_bid,
             is_limited: self.is_limited,
             min_bid: self.min_bid,
@@ -774,8 +814,8 @@ impl BaseMarket {
     fn name(&self) -> &String {
         &self.name
     }
-    fn m_type(&self) -> &String {
-        &self.m_type
+    fn m_type(&self) -> MarketType {
+        self.m_type
     }
     fn node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
         let model = context.model().lock().unwrap();
@@ -793,14 +833,28 @@ impl BaseMarket {
             None => Err(format!("process group '{}' doesn't exist", self.processgroup).into()),
         }
     }
-    fn direction(&self) -> &String {
-        &self.direction
+    fn direction(&self) -> Option<MarketDirection> {
+        self.direction
     }
     fn realisation(&self) -> Option<f64> {
         self.realisation
     }
-    fn reserve_type(&self) -> &String {
-        &self.reserve_type
+    fn reserve_type(&self, context: &HerttaContext) -> Result<Option<ReserveType>, FieldError> {
+        let model = context.model().lock().unwrap();
+        if let Some(ref type_name) = self.reserve_type {
+            if let Some(reserve_type) = model
+                .input_data
+                .reserve_type
+                .iter()
+                .find(|r| r.name == *type_name)
+            {
+                return Ok(Some(reserve_type.clone()));
+            } else {
+                return Err(format!("reserve type '{}' doesn't exist", type_name).into());
+            }
+        } else {
+            return Ok(None);
+        }
     }
     fn is_bid(&self) -> bool {
         self.is_bid
@@ -1293,12 +1347,12 @@ mod tests {
         let node_history = base_node_history.expand_to_time_series(&time_line, &scenarios);
         let base_market = BaseMarket {
             name: "Market".to_string(),
-            m_type: "energy".to_string(),
+            m_type: MarketType::Energy,
             node: "North".to_string(),
             processgroup: "Group".to_string(),
-            direction: "none".to_string(),
+            direction: None,
             realisation: Some(1.0),
-            reserve_type: "not none".to_string(),
+            reserve_type: Some("not none".to_string()),
             is_bid: true,
             is_limited: false,
             min_bid: 1.2,
@@ -1560,12 +1614,12 @@ mod tests {
             vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
         let base = BaseMarket {
             name: "Market".to_string(),
-            m_type: "energy".to_string(),
+            m_type: MarketType::Energy,
             node: "North".to_string(),
             processgroup: "Group".to_string(),
-            direction: "none".to_string(),
+            direction: None,
             realisation: Some(1.1),
-            reserve_type: "not none".to_string(),
+            reserve_type: Some("not none".to_string()),
             is_bid: true,
             is_limited: false,
             min_bid: 1.2,
