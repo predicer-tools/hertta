@@ -3,6 +3,7 @@ use crate::TimeLine;
 use juniper::{GraphQLObject, GraphQLUnion};
 
 pub enum Job {
+    ElectricityPrice,
     Optimization,
     WeatherForecast,
 }
@@ -57,8 +58,21 @@ impl JobFailure {
 
 #[derive(Clone, GraphQLUnion)]
 pub enum JobOutcome {
+    ElectiricityPrice(ElectricityPriceOutcome),
     Optimization(OptimizationOutcome),
     WeatherForecast(WeatherForecastOutcome),
+}
+
+#[derive(Clone, GraphQLObject)]
+pub struct ElectricityPriceOutcome {
+    time: TimeLine,
+    price: Vec<f64>,
+}
+
+impl ElectricityPriceOutcome {
+    pub fn new(time: TimeLine, price: Vec<f64>) -> Self {
+        ElectricityPriceOutcome { time, price }
+    }
 }
 
 #[derive(Clone, GraphQLObject)]

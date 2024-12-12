@@ -395,6 +395,17 @@ impl Mutation {
                 .await?;
         Ok(job_id)
     }
+    #[graphql(description = "Start electricity price fetch job. Return job ID.")]
+    async fn start_electricity_price_fetch(context: &HerttaContext) -> FieldResult<i32> {
+        let job_id = event_loop::start_job(
+            Job::ElectricityPrice,
+            &context.job_store,
+            &context.job_sender,
+        )
+        .await?;
+        Ok(job_id)
+    }
+
     #[graphql(description = "Start weather forecast job. Return job ID.")]
     async fn start_weather_forecast_fetch(context: &HerttaContext) -> FieldResult<i32> {
         let job_id = event_loop::start_job(
