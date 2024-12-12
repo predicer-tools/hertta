@@ -29,10 +29,10 @@ impl JobStatus {
         }
     }
 
-    pub fn new_failed(message: &str) -> Self {
+    pub fn new_failed(message: String) -> Self {
         JobStatus {
             state: JobState::Failed,
-            message: Some(String::from(message)),
+            message: Some(message),
         }
     }
 

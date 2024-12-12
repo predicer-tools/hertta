@@ -1,8 +1,10 @@
 use clap::Parser;
-use hertta::event_loop::{self, OptimizationState, OptimizationTask, ResultData};
+use hertta::event_loop;
+use hertta::event_loop::job_store::JobStore;
+use hertta::event_loop::jobs::NewJob;
 use hertta::graphql::{HerttaContext, Mutation, Query, Schema};
 use hertta::model::{self, Model};
-use hertta::settings;
+use hertta::settings::{self, Settings};
 use juniper::{EmptySubscription, RootNode};
 use std::error::Error;
 use std::fs;
@@ -10,10 +12,9 @@ use std::fs::File;
 use std::io::Write;
 use std::marker::{Send, Sync};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::sync::watch;
-use tokio::sync::Semaphore;
+use tokio::sync::Mutex;
 use warp::Filter;
 
 #[derive(Parser)]
@@ -67,6 +68,17 @@ fn get_model() -> Model {
     model::Model::default()
 }
 
+fn spawn_event_loop(
+    settings: Arc<Mutex<Settings>>,
+    job_store: JobStore,
+    model: Arc<Mutex<Model>>,
+    job_receiver: mpsc::Receiver<NewJob>,
+) {
+    tokio::spawn(async move {
+        event_loop::event_loop(settings, job_store, model, job_receiver).await;
+    });
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = CommandLineArgs::parse();
@@ -83,60 +95,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
         &settings::make_settings_file_path(),
     )?));
     {
-        let settings = settings.lock().unwrap();
+        let settings = settings.lock().await;
         if !settings.predicer_runner_project.is_empty() {
             fs::create_dir_all(Path::new(&settings.predicer_runner_project))?;
         }
         settings::validate_settings(&settings)?;
     }
-    let (tx_optimize, rx_optimize) = mpsc::channel::<(i32, OptimizationTask)>(1);
-    let (tx_state, rx_state) = watch::channel::<OptimizationState>(OptimizationState::Idle);
-    let settings_clone = Arc::clone(&settings);
+    let (job_sender, job_receiver) = mpsc::channel::<NewJob>(32);
+    let job_store = JobStore::default();
     let model = Arc::new(Mutex::new(get_model()));
-    let model_clone = Arc::clone(&model);
-    let result_data = Arc::new(Mutex::<Option<ResultData>>::new(None));
-    let result_data_clone = Arc::clone(&result_data);
-    tokio::spawn(async move {
-        event_loop::event_loop(
-            settings_clone,
-            model_clone,
-            result_data_clone,
-            rx_optimize,
-            tx_state,
-        )
-        .await;
-    });
+    spawn_event_loop(
+        Arc::clone(&settings),
+        job_store.clone(),
+        Arc::clone(&model),
+        job_receiver,
+    );
     let schema = Arc::new(Schema::new(Query, Mutation, EmptySubscription::new()));
-    let settings_clone = Arc::clone(&settings);
-    let model_clone = Arc::clone(&model);
-    let job_id = Arc::new(Mutex::new(0));
-    let optimize_permit = Arc::new(Semaphore::new(1));
     let graphql_route = warp::path("graphql").and(juniper_warp::make_graphql_filter(
         schema,
         warp::any()
-            .and(inject_clone(settings_clone))
-            .and(inject_clone(model_clone))
-            .and(inject_clone(job_id))
-            .and(inject_clone(optimize_permit))
-            .and(inject_clone(tx_optimize))
-            .and(inject_clone(rx_state.clone()))
-            .map(
-                |settings_clone,
-                 model_clone,
-                 job_id_clone,
-                 optimize_permit,
-                 tx_optimize,
-                 rx_state| {
-                    HerttaContext::new(
-                        &settings_clone,
-                        &model_clone,
-                        &job_id_clone,
-                        &optimize_permit,
-                        tx_optimize,
-                        rx_state,
-                    )
-                },
-            ),
+            .and(inject_clone(settings))
+            .and(inject_clone(job_store))
+            .and(inject_clone(model))
+            .and(inject_clone(job_sender))
+            .map(|settings_clone, job_store_clone, model_clone, job_sender| {
+                HerttaContext::new(settings_clone, job_store_clone, model_clone, job_sender)
+            }),
     ));
     let server_handle = warp::serve(graphql_route).run(([127, 0, 0, 1], 3030));
     server_handle.await;

@@ -72,12 +72,12 @@ pub struct Delay {
 #[graphql_object]
 #[graphql(description = "Delay for connections between nodes.", context = HerttaContext)]
 impl Delay {
-    fn from_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
-        let model = context.model().lock().unwrap();
+    async fn from_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+        let model = context.model().lock().await;
         find_node(&self.from_node, "from_node", &model.input_data.nodes)
     }
-    fn to_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
-        let model = context.model().lock().unwrap();
+    async fn to_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+        let model = context.model().lock().await;
         find_node(&self.to_node, "to_node", &model.input_data.nodes)
     }
     fn delay(&self) -> f64 {
@@ -276,8 +276,8 @@ impl BaseInputDataSetup {
     fn common_time_steps(&self) -> i32 {
         self.common_timesteps
     }
-    fn common_scenario(&self, context: &HerttaContext) -> Result<Scenario, FieldError> {
-        let model = context.model().lock().unwrap();
+    async fn common_scenario(&self, context: &HerttaContext) -> Result<Scenario, FieldError> {
+        let model = context.model().lock().await;
         match model
             .input_data
             .scenarios
@@ -411,8 +411,8 @@ impl BaseProcess {
     fn name(&self) -> &String {
         &self.name
     }
-    fn groups(&self, context: &HerttaContext) -> Vec<ProcessGroup> {
-        let model = context.model().lock().unwrap();
+    async fn groups(&self, context: &HerttaContext) -> Vec<ProcessGroup> {
+        let model = context.model().lock().await;
         model
             .input_data
             .process_groups
@@ -566,8 +566,8 @@ impl BaseNode {
     fn name(&self) -> &String {
         &self.name
     }
-    fn groups(&self, context: &HerttaContext) -> Vec<NodeGroup> {
-        let model = context.model().lock().unwrap();
+    async fn groups(&self, context: &HerttaContext) -> Vec<NodeGroup> {
+        let model = context.model().lock().await;
         model
             .input_data
             .node_groups
@@ -642,12 +642,12 @@ impl ExpandToTimeSeries for BaseNodeDiffusion {
 #[graphql_object]
 #[graphql(name = "NodeDiffusion", context = HerttaContext)]
 impl BaseNodeDiffusion {
-    fn from_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
-        let model = context.model().lock().unwrap();
+    async fn from_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+        let model = context.model().lock().await;
         find_node(&self.from_node, "from_node", &model.input_data.nodes)
     }
-    fn to_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
-        let model = context.model().lock().unwrap();
+    async fn to_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+        let model = context.model().lock().await;
         find_node(&self.to_node, "to_node", &model.input_data.nodes)
     }
     fn coefficient(&self) -> f64 {
@@ -681,8 +681,8 @@ impl Name for BaseNodeHistory {
 #[graphql_object]
 #[graphql(name = "NodeHistory", context = HerttaContext)]
 impl BaseNodeHistory {
-    fn node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
-        let model = context.model().lock().unwrap();
+    async fn node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+        let model = context.model().lock().await;
         find_node(&self.node, "node", &model.input_data.nodes)
     }
     fn steps(&self) -> f64 {
@@ -817,12 +817,12 @@ impl BaseMarket {
     fn m_type(&self) -> MarketType {
         self.m_type
     }
-    fn node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
-        let model = context.model().lock().unwrap();
+    async fn node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+        let model = context.model().lock().await;
         find_node(&self.node, "node", &model.input_data.nodes)
     }
-    fn process_group(&self, context: &HerttaContext) -> Result<ProcessGroup, FieldError> {
-        let model = context.model().lock().unwrap();
+    async fn process_group(&self, context: &HerttaContext) -> Result<ProcessGroup, FieldError> {
+        let model = context.model().lock().await;
         match model
             .input_data
             .process_groups
@@ -839,8 +839,11 @@ impl BaseMarket {
     fn realisation(&self) -> Option<f64> {
         self.realisation
     }
-    fn reserve_type(&self, context: &HerttaContext) -> Result<Option<ReserveType>, FieldError> {
-        let model = context.model().lock().unwrap();
+    async fn reserve_type(
+        &self,
+        context: &HerttaContext,
+    ) -> Result<Option<ReserveType>, FieldError> {
+        let model = context.model().lock().await;
         if let Some(ref type_name) = self.reserve_type {
             if let Some(reserve_type) = model
                 .input_data
@@ -918,8 +921,8 @@ impl NodeGroup {
     fn name(&self) -> &String {
         &self.name
     }
-    fn members(&self, context: &HerttaContext) -> Vec<BaseNode> {
-        let model = context.model().lock().unwrap();
+    async fn members(&self, context: &HerttaContext) -> Vec<BaseNode> {
+        let model = context.model().lock().await;
         model
             .input_data
             .nodes
@@ -961,8 +964,8 @@ impl ProcessGroup {
     fn name(&self) -> &String {
         &self.name
     }
-    fn members(&self, context: &HerttaContext) -> Vec<BaseProcess> {
-        let model = context.model().lock().unwrap();
+    async fn members(&self, context: &HerttaContext) -> Vec<BaseProcess> {
+        let model = context.model().lock().await;
         model
             .input_data
             .processes
@@ -1012,8 +1015,8 @@ impl BaseInflowBlock {
     fn name(&self) -> &String {
         &self.name
     }
-    fn node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
-        let model = context.model().lock().unwrap();
+    async fn node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+        let model = context.model().lock().await;
         find_node(&self.node, "node", &model.input_data.nodes)
     }
     fn data(&self) -> f64 {
@@ -1132,8 +1135,8 @@ pub enum NodeOrProcess {
 #[graphql_object]
 #[graphql(name = "Topology", context = HerttaContext)]
 impl BaseTopology {
-    fn source(&self, context: &HerttaContext) -> Result<NodeOrProcess, FieldError> {
-        let model = context.model().lock().unwrap();
+    async fn source(&self, context: &HerttaContext) -> Result<NodeOrProcess, FieldError> {
+        let model = context.model().lock().await;
         find_node_or_process(
             &self.source,
             "source",
@@ -1141,8 +1144,8 @@ impl BaseTopology {
             &model.input_data.processes,
         )
     }
-    fn sink(&self, context: &HerttaContext) -> Result<NodeOrProcess, FieldError> {
-        let model = context.model().lock().unwrap();
+    async fn sink(&self, context: &HerttaContext) -> Result<NodeOrProcess, FieldError> {
+        let model = context.model().lock().await;
         find_node_or_process(
             &self.sink,
             "sink",
@@ -1225,8 +1228,8 @@ impl ExpandToTimeSeries for BaseConFactor {
 #[graphql_object]
 #[graphql(context = HerttaContext)]
 impl VariableId {
-    fn entity(&self, context: &HerttaContext) -> Result<NodeOrProcess, FieldError> {
-        let model = context.model().lock().unwrap();
+    async fn entity(&self, context: &HerttaContext) -> Result<NodeOrProcess, FieldError> {
+        let model = context.model().lock().await;
         find_node_or_process(
             &self.entity,
             "entity",
@@ -1234,8 +1237,8 @@ impl VariableId {
             &model.input_data.processes,
         )
     }
-    fn identifier(&self, context: &HerttaContext) -> Result<Option<BaseNode>, FieldError> {
-        let model = context.model().lock().unwrap();
+    async fn identifier(&self, context: &HerttaContext) -> Result<Option<BaseNode>, FieldError> {
+        let model = context.model().lock().await;
         if let Some(ref node_name) = self.identifier {
             return Ok(Some(find_node(
                 node_name,
