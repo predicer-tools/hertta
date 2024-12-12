@@ -60,9 +60,10 @@ pub async fn start(
     let control_processes = match expected_control_processes(&optimization_data.input_data) {
         Ok(names) => names,
         Err(error) => {
-            let _ = job_store
+            job_store
                 .set_job_status(job_id, Arc::new(JobStatus::Failed(error.into())))
-                .await;
+                .await
+                .expect("setting job status should not fail");
             return;
         }
     };
@@ -103,14 +104,15 @@ pub async fn start(
     let location_snapshot = match settings_snapshot.location {
         Some(location) => location.clone(),
         None => {
-            let _ = job_store
+            job_store
                 .set_job_status(
                     job_id,
                     Arc::new(JobStatus::Failed(
                         "cannot fetch weather data: no location set".into(),
                     )),
                 )
-                .await;
+                .await
+                .expect("setting job status should not fail");
             return;
         }
     };
@@ -141,14 +143,15 @@ pub async fn start(
     let optimization_handle =
         tokio::spawn(async move { optimization_task(rx_optimization, zmq_port).await });
     if tx_time_line.send(optimization_data).is_err() {
-        let _ = job_store
+        job_store
             .set_job_status(
                 job_id,
                 Arc::new(JobStatus::Failed(
                     "failed to send initial data to optimization pipeline".into(),
                 )),
             )
-            .await;
+            .await
+            .expect("setting job status should not fail");
         return;
     }
     let julia_exec_clone = settings_snapshot.julia_exec.clone();
@@ -182,9 +185,10 @@ pub async fn start(
         flatten_handle(update_model_data_handle),
         flatten_handle(data_conversion_handle)
     ) {
-        let _ = job_store
+        job_store
             .set_job_status(job_id, Arc::new(JobStatus::Failed(error.into())))
-            .await;
+            .await
+            .expect("setting job status should not fail");
         return;
     }
     match optimization_handle.await.unwrap() {
@@ -193,9 +197,10 @@ pub async fn start(
                 let time_stamps = match time_stamps_from_result_batch(&result_batch) {
                     Ok(stamps) => stamps,
                     Err(error) => {
-                        let _ = job_store
+                        job_store
                             .set_job_status(job_id, Arc::new(JobStatus::Failed(error.into())))
-                            .await;
+                            .await
+                            .expect("setting job status should not fail");
                         return;
                     }
                 };
@@ -203,23 +208,28 @@ pub async fn start(
                     match controls_from_result_batch(&result_batch, control_processes) {
                         Ok(d) => d,
                         Err(error) => {
-                            let _ = job_store
+                            job_store
                                 .set_job_status(job_id, Arc::new(JobStatus::Failed(error.into())))
-                                .await;
+                                .await
+                                .expect("setting job status should not fail");
                             return;
                         }
                     };
                 let result_data = OptimizationOutcome::new(time_stamps, control_data);
-                let _ = job_store.set_job_status(
-                    job_id,
-                    Arc::new(JobStatus::Finished(JobOutcome::Optimization(result_data))),
-                );
+                job_store
+                    .set_job_status(
+                        job_id,
+                        Arc::new(JobStatus::Finished(JobOutcome::Optimization(result_data))),
+                    )
+                    .await
+                    .expect("setting job status should not fail");
             }
             None => {
                 let message = "no v_flow in result batch".to_string();
-                let _ = job_store
+                job_store
                     .set_job_status(job_id, Arc::new(JobStatus::Failed(message.into())))
-                    .await;
+                    .await
+                    .expect("settings job status should not fail");
                 return;
             }
         },
