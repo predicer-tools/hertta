@@ -27,12 +27,13 @@ pub async fn start(
     let place = match location {
         Some(location) => location.place,
         None => {
-            let _ = job_store
+            job_store
                 .set_job_status(
                     job_id,
                     Arc::new(JobStatus::Failed("location/place has not been set".into())),
                 )
-                .await;
+                .await
+                .expect("setting job status should not fail");
             return;
         }
     };
@@ -61,7 +62,10 @@ pub async fn start(
             }
         }
         Err(error) => {
-            let _ = job_store.set_job_status(job_id, Arc::new(JobStatus::Failed(error.into())));
+            job_store
+                .set_job_status(job_id, Arc::new(JobStatus::Failed(error.into())))
+                .await
+                .expect("setting job status should not fail");
             return;
         }
     }

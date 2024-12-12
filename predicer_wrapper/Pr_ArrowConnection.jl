@@ -152,6 +152,7 @@ function main()
     println("All data received.")
     temporals = string.(ZonedDateTime.(pop!(data_dict, "temps").t, tz"UTC"))
     (system_data, timeseries_data) = split_data_to_system_and_time_series(data_dict)
+    result_dataframes = nothing
     try
         input_data = Predicer.compile_input_data(system_data, timeseries_data, temporals)
         mc, input_data = Predicer.generate_model(input_data)
