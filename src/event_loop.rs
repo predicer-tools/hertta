@@ -1,4 +1,5 @@
 mod arrow_input;
+mod electricity_price_job;
 pub mod job_store;
 pub mod jobs;
 mod optimization_job;
@@ -65,6 +66,15 @@ pub async fn event_loop(
 ) {
     while let Some(new_job) = message_receiver.recv().await {
         match new_job.job() {
+            Job::ElectricityPrice => {
+                start_electricity_price_fetch(
+                    new_job.job_id(),
+                    Arc::clone(&settings),
+                    job_store.clone(),
+                    model.lock().await.time_line.clone(),
+                )
+                .await
+            }
             Job::Optimization => {
                 start_optimization(
                     new_job.job_id(),
@@ -85,6 +95,17 @@ pub async fn event_loop(
             }
         };
     }
+}
+
+async fn start_electricity_price_fetch(
+    job_id: i32,
+    settings: Arc<Mutex<Settings>>,
+    job_store: JobStore,
+    time_line_settings: TimeLineSettings,
+) {
+    tokio::spawn(async move {
+        electricity_price_job::start(job_id, settings, job_store, time_line_settings).await
+    });
 }
 
 async fn start_optimization(
