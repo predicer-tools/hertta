@@ -16,6 +16,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use warp::Filter;
+use warp::cors;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -111,6 +112,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         job_receiver,
     );
     let schema = Arc::new(Schema::new(Query, Mutation, EmptySubscription::new()));
+
+    // Create CORS configuration
+    let cors = cors()
+    .allow_any_origin()
+    .allow_methods(vec!["POST", "GET"])
+    .allow_headers(vec!["content-type", "authorization"])
+    .build();
+
     let graphql_route = warp::path("graphql").and(juniper_warp::make_graphql_filter(
         schema,
         warp::any()
@@ -121,7 +130,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .map(|settings_clone, job_store_clone, model_clone, job_sender| {
                 HerttaContext::new(settings_clone, job_store_clone, model_clone, job_sender)
             }),
-    ));
+    ))
+    .with(cors);
     let server_handle = warp::serve(graphql_route).run(([127, 0, 0, 1], 3030));
     server_handle.await;
     Ok(())
