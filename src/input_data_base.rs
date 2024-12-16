@@ -7,7 +7,7 @@ use crate::input_data::{
 use crate::scenarios::Scenario;
 use crate::{TimeLine, TimeStamp};
 use hertta_derive::{Members, Name};
-use juniper::{graphql_object, FieldError, GraphQLEnum, GraphQLObject, GraphQLUnion};
+use juniper::{graphql_object, FieldResult, GraphQLEnum, GraphQLObject, GraphQLUnion};
 use serde::{self, Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -72,11 +72,11 @@ pub struct Delay {
 #[graphql_object]
 #[graphql(description = "Delay for connections between nodes.", context = HerttaContext)]
 impl Delay {
-    async fn from_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+    async fn from_node(&self, context: &HerttaContext) -> FieldResult<BaseNode> {
         let model = context.model().lock().await;
         find_node(&self.from_node, "from_node", &model.input_data.nodes)
     }
-    async fn to_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+    async fn to_node(&self, context: &HerttaContext) -> FieldResult<BaseNode> {
         let model = context.model().lock().await;
         find_node(&self.to_node, "to_node", &model.input_data.nodes)
     }
@@ -276,7 +276,7 @@ impl BaseInputDataSetup {
     fn common_time_steps(&self) -> i32 {
         self.common_timesteps
     }
-    async fn common_scenario(&self, context: &HerttaContext) -> Result<Scenario, FieldError> {
+    async fn common_scenario(&self, context: &HerttaContext) -> FieldResult<Scenario> {
         let model = context.model().lock().await;
         match model
             .input_data
@@ -642,11 +642,11 @@ impl ExpandToTimeSeries for BaseNodeDiffusion {
 #[graphql_object]
 #[graphql(name = "NodeDiffusion", context = HerttaContext)]
 impl BaseNodeDiffusion {
-    async fn from_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+    async fn from_node(&self, context: &HerttaContext) -> FieldResult<BaseNode> {
         let model = context.model().lock().await;
         find_node(&self.from_node, "from_node", &model.input_data.nodes)
     }
-    async fn to_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+    async fn to_node(&self, context: &HerttaContext) -> FieldResult<BaseNode> {
         let model = context.model().lock().await;
         find_node(&self.to_node, "to_node", &model.input_data.nodes)
     }
@@ -655,11 +655,7 @@ impl BaseNodeDiffusion {
     }
 }
 
-fn find_node(
-    node_name: &String,
-    node_type: &str,
-    nodes: &Vec<BaseNode>,
-) -> Result<BaseNode, FieldError> {
+fn find_node(node_name: &String, node_type: &str, nodes: &Vec<BaseNode>) -> FieldResult<BaseNode> {
     match nodes.iter().find(|&n| n.name == *node_name) {
         Some(node) => Ok(node.clone()),
         None => Err(format!("{} '{}' doesn't exist", node_type, node_name).into()),
@@ -681,7 +677,7 @@ impl Name for BaseNodeHistory {
 #[graphql_object]
 #[graphql(name = "NodeHistory", context = HerttaContext)]
 impl BaseNodeHistory {
-    async fn node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+    async fn node(&self, context: &HerttaContext) -> FieldResult<BaseNode> {
         let model = context.model().lock().await;
         find_node(&self.node, "node", &model.input_data.nodes)
     }
@@ -817,11 +813,11 @@ impl BaseMarket {
     fn m_type(&self) -> MarketType {
         self.m_type
     }
-    async fn node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+    async fn node(&self, context: &HerttaContext) -> FieldResult<BaseNode> {
         let model = context.model().lock().await;
         find_node(&self.node, "node", &model.input_data.nodes)
     }
-    async fn process_group(&self, context: &HerttaContext) -> Result<ProcessGroup, FieldError> {
+    async fn process_group(&self, context: &HerttaContext) -> FieldResult<ProcessGroup> {
         let model = context.model().lock().await;
         match model
             .input_data
@@ -839,10 +835,7 @@ impl BaseMarket {
     fn realisation(&self) -> Option<f64> {
         self.realisation
     }
-    async fn reserve_type(
-        &self,
-        context: &HerttaContext,
-    ) -> Result<Option<ReserveType>, FieldError> {
+    async fn reserve_type(&self, context: &HerttaContext) -> FieldResult<Option<ReserveType>> {
         let model = context.model().lock().await;
         if let Some(ref type_name) = self.reserve_type {
             if let Some(reserve_type) = model
@@ -1015,7 +1008,7 @@ impl BaseInflowBlock {
     fn name(&self) -> &String {
         &self.name
     }
-    async fn node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+    async fn node(&self, context: &HerttaContext) -> FieldResult<BaseNode> {
         let model = context.model().lock().await;
         find_node(&self.node, "node", &model.input_data.nodes)
     }
@@ -1135,7 +1128,7 @@ pub enum NodeOrProcess {
 #[graphql_object]
 #[graphql(name = "Topology", context = HerttaContext)]
 impl BaseTopology {
-    async fn source(&self, context: &HerttaContext) -> Result<NodeOrProcess, FieldError> {
+    async fn source(&self, context: &HerttaContext) -> FieldResult<NodeOrProcess> {
         let model = context.model().lock().await;
         find_node_or_process(
             &self.source,
@@ -1144,7 +1137,7 @@ impl BaseTopology {
             &model.input_data.processes,
         )
     }
-    async fn sink(&self, context: &HerttaContext) -> Result<NodeOrProcess, FieldError> {
+    async fn sink(&self, context: &HerttaContext) -> FieldResult<NodeOrProcess> {
         let model = context.model().lock().await;
         find_node_or_process(
             &self.sink,
@@ -1160,7 +1153,7 @@ fn find_node_or_process(
     entity_type: &str,
     nodes: &Vec<BaseNode>,
     processes: &Vec<BaseProcess>,
-) -> Result<NodeOrProcess, FieldError> {
+) -> FieldResult<NodeOrProcess> {
     if let Some(node) = nodes.iter().find(|&n| n.name == name) {
         return Ok(NodeOrProcess::Node(node.clone()));
     } else {
@@ -1228,7 +1221,7 @@ impl ExpandToTimeSeries for BaseConFactor {
 #[graphql_object]
 #[graphql(context = HerttaContext)]
 impl VariableId {
-    async fn entity(&self, context: &HerttaContext) -> Result<NodeOrProcess, FieldError> {
+    async fn entity(&self, context: &HerttaContext) -> FieldResult<NodeOrProcess> {
         let model = context.model().lock().await;
         find_node_or_process(
             &self.entity,
@@ -1237,7 +1230,7 @@ impl VariableId {
             &model.input_data.processes,
         )
     }
-    async fn identifier(&self, context: &HerttaContext) -> Result<Option<BaseNode>, FieldError> {
+    async fn identifier(&self, context: &HerttaContext) -> FieldResult<Option<BaseNode>> {
         let model = context.model().lock().await;
         if let Some(ref node_name) = self.identifier {
             return Ok(Some(find_node(
