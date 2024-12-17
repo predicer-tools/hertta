@@ -70,14 +70,10 @@ fn validate_market_creation(
     if market.name.is_empty() {
         errors.push(ValidationError::new("name", "name is empty"));
     }
-    if nodes.iter().find(|n| n.name == market.node).is_none() {
+    if !nodes.iter().any(|n| n.name == market.node) {
         errors.push(ValidationError::new("node", "no such node"));
     }
-    if groups
-        .iter()
-        .find(|g| g.name == market.process_group)
-        .is_none()
-    {
+    if !groups.iter().any(|g| g.name == market.process_group) {
         errors.push(ValidationError::new("processgroup", "no such group"));
     }
     if let Some(ref reserve_type) = market.reserve_type {

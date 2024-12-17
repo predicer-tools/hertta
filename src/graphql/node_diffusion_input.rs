@@ -37,16 +37,15 @@ fn validate_node_diffusion_creation(
             "to node and from node are the same",
         ));
     }
-    if nodes.iter().find(|n| n.name == *from_node).is_none() {
+    if !nodes.iter().any(|n| n.name == *from_node) {
         errors.push(ValidationError::new("from_node", "no such node"));
     }
-    if nodes.iter().find(|n| n.name == *to_node).is_none() {
+    if !nodes.iter().any(|n| n.name == *to_node) {
         errors.push(ValidationError::new("to_node", "no such node"));
     }
     if diffusions
         .iter()
-        .find(|d| d.from_node == *from_node && d.to_node == *to_node)
-        .is_some()
+        .any(|d| d.from_node == *from_node && d.to_node == *to_node)
     {
         errors.push(ValidationError::new(
             "from_node",

@@ -77,12 +77,12 @@ fn validate_topology_creation(
         ));
     }
     if let Some(ref sink) = sink_node {
-        if nodes.iter().find(|n| n.name == *sink).is_none() {
+        if !nodes.iter().any(|n| n.name == *sink) {
             errors.push(ValidationError::new("sink_node", "no such node"));
         }
     }
     if let Some(ref source) = source_node {
-        if nodes.iter().find(|n| n.name == *source).is_none() {
+        if !nodes.iter().any(|n| n.name == *source) {
             errors.push(ValidationError::new("source_node", "no such node"));
         }
     }
@@ -97,8 +97,7 @@ fn validate_topology_creation(
     if process
         .topos
         .iter()
-        .find(|t| t.source == *source && t.sink == *sink)
-        .is_some()
+        .any(|t| t.source == *source && t.sink == *sink)
     {
         errors.push(ValidationError::new(
             "process_name",

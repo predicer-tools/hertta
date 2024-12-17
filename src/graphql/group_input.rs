@@ -39,10 +39,10 @@ fn validate_name<G: Name + TypeName, H: Name + TypeName>(
     if name.is_empty() {
         return "name is empty".into();
     }
-    if groups.iter().find(|&g| *g.name() == *name).is_some() {
+    if groups.iter().any(|g| *g.name() == *name) {
         return format!("a {} with the same name exists", G::type_name()).into();
     }
-    if other_groups.iter().find(|&g| *g.name() == *name).is_some() {
+    if other_groups.iter().any(|g| *g.name() == *name) {
         return format!("a {} with the same name exists", H::type_name()).into();
     }
     MaybeError::new_ok()
@@ -58,7 +58,7 @@ pub fn add_to_group<M: GroupMember + Name + TypeName, G: Members + Name>(
         Some(node) => node,
         None => return format!("no such {}", M::type_name()).into(),
     };
-    if item.groups().iter().find(|&g| *g == group_name).is_some() {
+    if item.groups().iter().any(|g| g == group_name) {
         return format!("{} is in the group already", M::type_name()).into();
     }
     let group = match groups.iter_mut().find(|g| g.name() == group_name) {

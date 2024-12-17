@@ -435,12 +435,7 @@ impl BaseProcess {
             .input_data
             .process_groups
             .iter()
-            .filter(|&g| {
-                self.groups
-                    .iter()
-                    .find(|&g_name| *g_name == g.name)
-                    .is_some()
-            })
+            .filter(|&g| self.groups.iter().any(|g_name| *g_name == g.name))
             .cloned()
             .collect()
     }
@@ -593,12 +588,7 @@ impl BaseNode {
             .input_data
             .node_groups
             .iter()
-            .filter(|&g| {
-                self.groups
-                    .iter()
-                    .find(|&g_name| *g_name == g.name)
-                    .is_some()
-            })
+            .filter(|&g| self.groups.iter().any(|g_name| *g_name == g.name))
             .cloned()
             .collect()
     }
@@ -953,7 +943,7 @@ impl NodeGroup {
             .input_data
             .nodes
             .iter()
-            .filter(|&n| self.members.iter().find(|&m| *m == n.name).is_some())
+            .filter(|&n| self.members.iter().any(|m| *m == n.name))
             .cloned()
             .collect()
     }
@@ -1002,7 +992,7 @@ impl ProcessGroup {
             .input_data
             .processes
             .iter()
-            .filter(|&n| self.members.iter().find(|&m| *m == n.name).is_some())
+            .filter(|&n| self.members.iter().any(|m| *m == n.name))
             .cloned()
             .collect()
     }

@@ -78,13 +78,13 @@ fn validate_process_creation(
     if process.name.is_empty() {
         errors.push(ValidationError::new("name", "name is empty"));
     }
-    if processes.iter().find(|p| p.name == process.name).is_some() {
+    if processes.iter().any(|p| p.name == process.name) {
         errors.push(ValidationError::new(
             "name",
             "a process with the same name exists",
         ));
     }
-    if nodes.iter().find(|n| n.name == process.name).is_some() {
+    if nodes.iter().any(|n| n.name == process.name) {
         errors.push(ValidationError::new(
             "name",
             "a node with the same name exists",

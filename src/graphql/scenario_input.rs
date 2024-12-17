@@ -6,7 +6,7 @@ pub fn create_scenario(name: String, weight: f64, scenarios: &mut Vec<Scenario>)
     if name.is_empty() {
         return "name is empty".into();
     }
-    if scenarios.iter().find(|s| *s.name() == name).is_some() {
+    if scenarios.iter().any(|s| *s.name() == name) {
         return "a scenario with the same name exists".into();
     }
     let scenario = match Scenario::new(&name, weight) {

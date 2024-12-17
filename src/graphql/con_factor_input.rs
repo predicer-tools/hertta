@@ -66,11 +66,10 @@ fn validate_flow_con_factor_creation(
         ));
     }
     if let Some(process) = processes.iter().find(|p| p.name == *process) {
-        if process
+        if !process
             .topos
             .iter()
-            .find(|t| t.source == *source_or_sink_node || t.sink == *source_or_sink_node)
-            .is_none()
+            .any(|t| t.source == *source_or_sink_node || t.sink == *source_or_sink_node)
         {
             errors.push(ValidationError::new(
                 "source_or_sink_node_name",
@@ -80,19 +79,14 @@ fn validate_flow_con_factor_creation(
     } else {
         errors.push(ValidationError::new("process_name", "no such process"));
     }
-    if constraint
-        .factors
-        .iter()
-        .find(|f| {
-            f.var_type == ConstraintFactorType::Flow
-                && f.var_tuple.entity == *process
-                && f.var_tuple
-                    .identifier
-                    .as_ref()
-                    .is_some_and(|i| i == source_or_sink_node)
-        })
-        .is_some()
-    {
+    if constraint.factors.iter().any(|f| {
+        f.var_type == ConstraintFactorType::Flow
+            && f.var_tuple.entity == *process
+            && f.var_tuple
+                .identifier
+                .as_ref()
+                .is_some_and(|i| i == source_or_sink_node)
+    }) {
         errors.push(ValidationError::new(
             "constraint_name",
             "a flow constraint factor with same process and node exists",
@@ -137,14 +131,13 @@ fn validate_state_con_factor_creation(
     if node.is_empty() {
         errors.push(ValidationError::new("node_name", "name is empty"));
     }
-    if nodes.iter().find(|n| n.name == *node).is_none() {
+    if !nodes.iter().any(|n| n.name == *node) {
         errors.push(ValidationError::new("node_name", "no such node"));
     }
     if constraint
         .factors
         .iter()
-        .find(|f| f.var_type == ConstraintFactorType::State && f.var_tuple.entity == *node)
-        .is_some()
+        .any(|f| f.var_type == ConstraintFactorType::State && f.var_tuple.entity == *node)
     {
         errors.push(ValidationError::new(
             "constraint_name",
@@ -190,14 +183,13 @@ fn validate_online_con_factor_creation(
     if process.is_empty() {
         errors.push(ValidationError::new("process_name", "name is empty"));
     }
-    if processes.iter().find(|p| p.name == *process).is_none() {
+    if !processes.iter().any(|p| p.name == *process) {
         errors.push(ValidationError::new("process_name", "no such process"));
     }
     if constraint
         .factors
         .iter()
-        .find(|f| f.var_type == ConstraintFactorType::Online && f.var_tuple.entity == *process)
-        .is_some()
+        .any(|f| f.var_type == ConstraintFactorType::Online && f.var_tuple.entity == *process)
     {
         errors.push(ValidationError::new(
             "constraint_name",
