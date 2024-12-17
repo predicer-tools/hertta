@@ -1,4 +1,4 @@
-use super::{ValidationError, ValidationErrors};
+use super::{MaybeError, ValidationError, ValidationErrors};
 use crate::input_data_base::{BaseNode, BaseProcess, BaseTopology};
 use juniper::GraphQLInputObject;
 
@@ -112,4 +112,35 @@ fn validate_topology_creation(
         errors.push(ValidationError::new("ramp_up", "should be in [0, 1]"))
     }
     errors
+}
+
+pub fn delete_topology(
+    process_name: &str,
+    source_node_name: &Option<String>,
+    sink_node_name: &Option<String>,
+
+    processes: &mut Vec<BaseProcess>,
+) -> MaybeError {
+    let process = match processes.iter_mut().find(|p| p.name == process_name) {
+        Some(process) => process,
+        None => return "no such process".into(),
+    };
+    let source_name = source_node_name
+        .as_ref()
+        .map(|n| n.as_str())
+        .unwrap_or(process_name);
+    let sink_name = sink_node_name
+        .as_ref()
+        .map(|n| n.as_str())
+        .unwrap_or(process_name);
+    if let Some(position) = process
+        .topos
+        .iter()
+        .position(|t| t.source == source_name && t.sink == sink_name)
+    {
+        process.topos.swap_remove(position);
+    } else {
+        return "no such topology".into();
+    }
+    MaybeError::new_ok()
 }

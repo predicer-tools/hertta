@@ -7,9 +7,13 @@ use crate::input_data::{
 use crate::scenarios::Scenario;
 use crate::{TimeLine, TimeStamp};
 use hertta_derive::{Members, Name};
-use juniper::{graphql_object, FieldError, GraphQLEnum, GraphQLObject, GraphQLUnion};
+use juniper::{graphql_object, FieldResult, GraphQLEnum, GraphQLObject, GraphQLUnion};
 use serde::{self, Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+pub trait TypeName {
+    fn type_name() -> &'static str;
+}
 
 pub trait ExpandToTimeSeries {
     type Expanded;
@@ -38,7 +42,6 @@ fn expand_and_use_name_as_key<T: ExpandToTimeSeries + Name>(
 pub trait GroupMember {
     fn groups(&self) -> &Vec<String>;
     fn groups_mut(&mut self) -> &mut Vec<String>;
-    fn group_type() -> GroupType;
 }
 
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
@@ -72,11 +75,11 @@ pub struct Delay {
 #[graphql_object]
 #[graphql(description = "Delay for connections between nodes.", context = HerttaContext)]
 impl Delay {
-    async fn from_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+    async fn from_node(&self, context: &HerttaContext) -> FieldResult<BaseNode> {
         let model = context.model().lock().await;
         find_node(&self.from_node, "from_node", &model.input_data.nodes)
     }
-    async fn to_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+    async fn to_node(&self, context: &HerttaContext) -> FieldResult<BaseNode> {
         let model = context.model().lock().await;
         find_node(&self.to_node, "to_node", &model.input_data.nodes)
     }
@@ -122,6 +125,18 @@ impl ReserveType {
 pub struct Risk {
     pub parameter: String,
     pub value: f64,
+}
+
+impl Name for Risk {
+    fn name(&self) -> &String {
+        &self.parameter
+    }
+}
+
+impl TypeName for Risk {
+    fn type_name() -> &'static str {
+        "risk"
+    }
 }
 
 impl Risk {
@@ -276,7 +291,7 @@ impl BaseInputDataSetup {
     fn common_time_steps(&self) -> i32 {
         self.common_timesteps
     }
-    async fn common_scenario(&self, context: &HerttaContext) -> Result<Scenario, FieldError> {
+    async fn common_scenario(&self, context: &HerttaContext) -> FieldResult<Scenario> {
         let model = context.model().lock().await;
         match model
             .input_data
@@ -346,14 +361,17 @@ pub struct BaseProcess {
 }
 
 impl GroupMember for BaseProcess {
-    fn group_type() -> GroupType {
-        GroupType::Process
-    }
     fn groups(&self) -> &Vec<String> {
         &self.groups
     }
     fn groups_mut(&mut self) -> &mut Vec<String> {
         &mut self.groups
+    }
+}
+
+impl TypeName for BaseProcess {
+    fn type_name() -> &'static str {
+        "process"
     }
 }
 
@@ -526,6 +544,12 @@ pub struct BaseNode {
     pub inflow: Option<f64>,
 }
 
+impl TypeName for BaseNode {
+    fn type_name() -> &'static str {
+        "node"
+    }
+}
+
 impl ExpandToTimeSeries for BaseNode {
     type Expanded = Node;
     fn expand_to_time_series(
@@ -549,9 +573,6 @@ impl ExpandToTimeSeries for BaseNode {
 }
 
 impl GroupMember for BaseNode {
-    fn group_type() -> GroupType {
-        GroupType::Node
-    }
     fn groups(&self) -> &Vec<String> {
         &self.groups
     }
@@ -642,11 +663,11 @@ impl ExpandToTimeSeries for BaseNodeDiffusion {
 #[graphql_object]
 #[graphql(name = "NodeDiffusion", context = HerttaContext)]
 impl BaseNodeDiffusion {
-    async fn from_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+    async fn from_node(&self, context: &HerttaContext) -> FieldResult<BaseNode> {
         let model = context.model().lock().await;
         find_node(&self.from_node, "from_node", &model.input_data.nodes)
     }
-    async fn to_node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+    async fn to_node(&self, context: &HerttaContext) -> FieldResult<BaseNode> {
         let model = context.model().lock().await;
         find_node(&self.to_node, "to_node", &model.input_data.nodes)
     }
@@ -655,11 +676,7 @@ impl BaseNodeDiffusion {
     }
 }
 
-fn find_node(
-    node_name: &String,
-    node_type: &str,
-    nodes: &Vec<BaseNode>,
-) -> Result<BaseNode, FieldError> {
+fn find_node(node_name: &String, node_type: &str, nodes: &Vec<BaseNode>) -> FieldResult<BaseNode> {
     match nodes.iter().find(|&n| n.name == *node_name) {
         Some(node) => Ok(node.clone()),
         None => Err(format!("{} '{}' doesn't exist", node_type, node_name).into()),
@@ -681,7 +698,7 @@ impl Name for BaseNodeHistory {
 #[graphql_object]
 #[graphql(name = "NodeHistory", context = HerttaContext)]
 impl BaseNodeHistory {
-    async fn node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+    async fn node(&self, context: &HerttaContext) -> FieldResult<BaseNode> {
         let model = context.model().lock().await;
         find_node(&self.node, "node", &model.input_data.nodes)
     }
@@ -759,6 +776,12 @@ pub struct BaseMarket {
     pub fixed: Vec<MarketFix>,
 }
 
+impl TypeName for BaseMarket {
+    fn type_name() -> &'static str {
+        "market"
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
 pub struct MarketFix {
     pub name: String,
@@ -817,11 +840,11 @@ impl BaseMarket {
     fn m_type(&self) -> MarketType {
         self.m_type
     }
-    async fn node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+    async fn node(&self, context: &HerttaContext) -> FieldResult<BaseNode> {
         let model = context.model().lock().await;
         find_node(&self.node, "node", &model.input_data.nodes)
     }
-    async fn process_group(&self, context: &HerttaContext) -> Result<ProcessGroup, FieldError> {
+    async fn process_group(&self, context: &HerttaContext) -> FieldResult<ProcessGroup> {
         let model = context.model().lock().await;
         match model
             .input_data
@@ -839,10 +862,7 @@ impl BaseMarket {
     fn realisation(&self) -> Option<f64> {
         self.realisation
     }
-    async fn reserve_type(
-        &self,
-        context: &HerttaContext,
-    ) -> Result<Option<ReserveType>, FieldError> {
+    async fn reserve_type(&self, context: &HerttaContext) -> FieldResult<Option<ReserveType>> {
         let model = context.model().lock().await;
         if let Some(ref type_name) = self.reserve_type {
             if let Some(reserve_type) = model
@@ -906,6 +926,12 @@ pub struct NodeGroup {
     pub members: Vec<String>,
 }
 
+impl TypeName for NodeGroup {
+    fn type_name() -> &'static str {
+        "node group"
+    }
+}
+
 impl NamedGroup for NodeGroup {
     fn new(name: String) -> Self {
         NodeGroup {
@@ -937,7 +963,7 @@ impl From<&NodeGroup> for Group {
     fn from(value: &NodeGroup) -> Self {
         Group {
             name: value.name.clone(),
-            g_type: BaseNode::group_type(),
+            g_type: GroupType::Node,
             members: value.members.clone(),
         }
     }
@@ -947,6 +973,12 @@ impl From<&NodeGroup> for Group {
 pub struct ProcessGroup {
     pub name: String,
     pub members: Vec<String>,
+}
+
+impl TypeName for ProcessGroup {
+    fn type_name() -> &'static str {
+        "process group"
+    }
 }
 
 impl NamedGroup for ProcessGroup {
@@ -980,7 +1012,7 @@ impl From<&ProcessGroup> for Group {
     fn from(value: &ProcessGroup) -> Self {
         Group {
             name: value.name.clone(),
-            g_type: BaseProcess::group_type(),
+            g_type: GroupType::Process,
             members: value.members.clone(),
         }
     }
@@ -1015,7 +1047,7 @@ impl BaseInflowBlock {
     fn name(&self) -> &String {
         &self.name
     }
-    async fn node(&self, context: &HerttaContext) -> Result<BaseNode, FieldError> {
+    async fn node(&self, context: &HerttaContext) -> FieldResult<BaseNode> {
         let model = context.model().lock().await;
         find_node(&self.node, "node", &model.input_data.nodes)
     }
@@ -1051,6 +1083,12 @@ pub struct BaseGenConstraint {
     pub penalty: f64,
     pub factors: Vec<BaseConFactor>,
     pub constant: Option<f64>,
+}
+
+impl TypeName for BaseGenConstraint {
+    fn type_name() -> &'static str {
+        "generic constraint"
+    }
 }
 
 impl ExpandToTimeSeries for BaseGenConstraint {
@@ -1135,7 +1173,7 @@ pub enum NodeOrProcess {
 #[graphql_object]
 #[graphql(name = "Topology", context = HerttaContext)]
 impl BaseTopology {
-    async fn source(&self, context: &HerttaContext) -> Result<NodeOrProcess, FieldError> {
+    async fn source(&self, context: &HerttaContext) -> FieldResult<NodeOrProcess> {
         let model = context.model().lock().await;
         find_node_or_process(
             &self.source,
@@ -1144,7 +1182,7 @@ impl BaseTopology {
             &model.input_data.processes,
         )
     }
-    async fn sink(&self, context: &HerttaContext) -> Result<NodeOrProcess, FieldError> {
+    async fn sink(&self, context: &HerttaContext) -> FieldResult<NodeOrProcess> {
         let model = context.model().lock().await;
         find_node_or_process(
             &self.sink,
@@ -1160,7 +1198,7 @@ fn find_node_or_process(
     entity_type: &str,
     nodes: &Vec<BaseNode>,
     processes: &Vec<BaseProcess>,
-) -> Result<NodeOrProcess, FieldError> {
+) -> FieldResult<NodeOrProcess> {
     if let Some(node) = nodes.iter().find(|&n| n.name == name) {
         return Ok(NodeOrProcess::Node(node.clone()));
     } else {
@@ -1172,18 +1210,18 @@ fn find_node_or_process(
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, GraphQLEnum, PartialEq, Serialize)]
-pub enum ConversionFactorType {
+pub enum ConstraintFactorType {
     Flow,
     State,
     Online,
 }
 
-impl ConversionFactorType {
+impl ConstraintFactorType {
     fn to_input(&self) -> String {
         match self {
-            ConversionFactorType::Flow => "flow",
-            ConversionFactorType::State => "state",
-            ConversionFactorType::Online => "online",
+            ConstraintFactorType::Flow => "flow",
+            ConstraintFactorType::State => "state",
+            ConstraintFactorType::Online => "online",
         }
         .into()
     }
@@ -1192,7 +1230,7 @@ impl ConversionFactorType {
 #[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
 #[graphql(name = "ConFactor", context = HerttaContext)]
 pub struct BaseConFactor {
-    pub var_type: ConversionFactorType,
+    pub var_type: ConstraintFactorType,
     pub var_tuple: VariableId,
     pub data: f64,
 }
@@ -1225,10 +1263,31 @@ impl ExpandToTimeSeries for BaseConFactor {
     }
 }
 
+impl BaseConFactor {
+    pub fn is_flow(&self) -> bool {
+        match self.var_type {
+            ConstraintFactorType::Flow => true,
+            _ => false,
+        }
+    }
+    pub fn is_state(&self) -> bool {
+        match self.var_type {
+            ConstraintFactorType::State => true,
+            _ => false,
+        }
+    }
+    pub fn is_online(&self) -> bool {
+        match self.var_type {
+            ConstraintFactorType::Online => true,
+            _ => false,
+        }
+    }
+}
+
 #[graphql_object]
 #[graphql(context = HerttaContext)]
 impl VariableId {
-    async fn entity(&self, context: &HerttaContext) -> Result<NodeOrProcess, FieldError> {
+    async fn entity(&self, context: &HerttaContext) -> FieldResult<NodeOrProcess> {
         let model = context.model().lock().await;
         find_node_or_process(
             &self.entity,
@@ -1237,7 +1296,7 @@ impl VariableId {
             &model.input_data.processes,
         )
     }
-    async fn identifier(&self, context: &HerttaContext) -> Result<Option<BaseNode>, FieldError> {
+    async fn identifier(&self, context: &HerttaContext) -> FieldResult<Option<BaseNode>> {
         let model = context.model().lock().await;
         if let Some(ref node_name) = self.identifier {
             return Ok(Some(find_node(
@@ -1426,7 +1485,7 @@ mod tests {
         };
         let inflow_block = base_inflow_block.expand_to_time_series(&time_line, &scenarios);
         let base_con_factor = BaseConFactor {
-            var_type: ConversionFactorType::State,
+            var_type: ConstraintFactorType::State,
             var_tuple: VariableId {
                 entity: "interior_air".to_string(),
                 identifier: None,
@@ -1732,7 +1791,7 @@ mod tests {
         let scenarios =
             vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
         let base_con_factor = BaseConFactor {
-            var_type: ConversionFactorType::State,
+            var_type: ConstraintFactorType::State,
             var_tuple: VariableId {
                 entity: "interior_air".to_string(),
                 identifier: None,
@@ -1792,7 +1851,7 @@ mod tests {
     #[test]
     fn expanding_con_factor_works() {
         let base = BaseConFactor {
-            var_type: ConversionFactorType::State,
+            var_type: ConstraintFactorType::State,
             var_tuple: VariableId {
                 entity: "interior_air".to_string(),
                 identifier: None,

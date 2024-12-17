@@ -1,4 +1,5 @@
-use super::{ValidationError, ValidationErrors};
+use super::delete;
+use super::{MaybeError, ValidationError, ValidationErrors};
 use crate::input_data_base::{BaseGenConstraint, ConstraintType};
 use juniper::GraphQLInputObject;
 
@@ -55,4 +56,8 @@ fn validate_gen_contraint_creation(
         ));
     }
     errors
+}
+
+pub fn delete_gen_constraint(name: &str, constraints: &mut Vec<BaseGenConstraint>) -> MaybeError {
+    delete::delete_named(name, constraints)
 }

@@ -1,5 +1,9 @@
-use super::{ValidationError, ValidationErrors};
-use crate::input_data_base::{BaseNode, BaseProcess, Conversion};
+use super::delete;
+use super::{MaybeError, ValidationError, ValidationErrors};
+use crate::input_data_base::{
+    BaseConFactor, BaseGenConstraint, BaseNode, BaseProcess, ConstraintFactorType, Conversion,
+    ProcessGroup,
+};
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
@@ -108,4 +112,34 @@ fn validate_process_creation(
         ));
     }
     errors
+}
+
+pub fn delete_process(
+    name: &str,
+    processes: &mut Vec<BaseProcess>,
+    groups: &mut Vec<ProcessGroup>,
+    constraints: &mut Vec<BaseGenConstraint>,
+) -> MaybeError {
+    let maybe_error = delete::delete_named(name, processes);
+    if maybe_error.is_error() {
+        return maybe_error;
+    }
+    for group in groups {
+        if let Some(process_position) = group.members.iter().position(|m| m == name) {
+            group.members.swap_remove(process_position);
+        }
+    }
+    for constraint in constraints {
+        constraint.factors.retain(|c| !process_con_factor(c, name));
+    }
+    MaybeError::new_ok()
+}
+
+pub fn process_con_factor(con_factor: &BaseConFactor, process_name: &str) -> bool {
+    match con_factor.var_type {
+        ConstraintFactorType::Flow | ConstraintFactorType::Online => {
+            con_factor.var_tuple.entity == process_name
+        }
+        ConstraintFactorType::State => false,
+    }
 }

@@ -1,4 +1,4 @@
-use super::{ValidationError, ValidationErrors};
+use super::{MaybeError, ValidationError, ValidationErrors};
 use crate::input_data_base::{BaseNode, BaseNodeDiffusion};
 
 fn to_node_diffusion(from_node: String, to_node: String, coefficient: f64) -> BaseNodeDiffusion {
@@ -54,4 +54,20 @@ fn validate_node_diffusion_creation(
         ));
     }
     errors
+}
+
+pub fn delete_node_diffusion(
+    from_node: &str,
+    to_node: &str,
+    diffusions: &mut Vec<BaseNodeDiffusion>,
+) -> MaybeError {
+    if let Some(position) = diffusions
+        .iter()
+        .position(|d| d.from_node == from_node && d.to_node == to_node)
+    {
+        diffusions.swap_remove(position);
+        return MaybeError::new_ok();
+    } else {
+        return "no such node diffusion".into();
+    }
 }

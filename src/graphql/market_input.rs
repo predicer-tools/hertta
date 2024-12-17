@@ -1,4 +1,5 @@
-use super::{ValidationError, ValidationErrors};
+use super::delete;
+use super::{MaybeError, ValidationError, ValidationErrors};
 use crate::input_data_base::{BaseMarket, BaseNode, MarketDirection, MarketType, ProcessGroup};
 use juniper::GraphQLInputObject;
 
@@ -91,4 +92,8 @@ fn validate_market_creation(
         errors.push(ValidationError::new("min_bid", "greater than max_bid"));
     }
     errors
+}
+
+pub fn delete_market(name: &str, markets: &mut Vec<BaseMarket>) -> MaybeError {
+    delete::delete_named(name, markets)
 }
