@@ -1,4 +1,5 @@
-use super::{ValidationError, ValidationErrors};
+use super::delete;
+use super::{MaybeError, ValidationError, ValidationErrors};
 use crate::input_data_base::Risk;
 use juniper::GraphQLInputObject;
 
@@ -32,4 +33,8 @@ fn validate_risk_creation(risk: &NewRisk) -> Vec<ValidationError> {
         errors.push(ValidationError::new("parameter", "parameter is empty"));
     }
     errors
+}
+
+pub fn delete_risk(parameter: &str, risks: &mut Vec<Risk>) -> MaybeError {
+    delete::delete_named(parameter, risks)
 }

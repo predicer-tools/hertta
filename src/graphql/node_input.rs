@@ -1,5 +1,9 @@
-use super::{ValidationError, ValidationErrors};
-use crate::input_data_base::{BaseNode, BaseProcess};
+use super::delete;
+use super::{MaybeError, ValidationError, ValidationErrors};
+use crate::input_data_base::{
+    BaseGenConstraint, BaseInflowBlock, BaseMarket, BaseNode, BaseNodeDiffusion, BaseNodeHistory,
+    BaseProcess, ConstraintFactorType, Delay, NodeGroup,
+};
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
@@ -74,4 +78,47 @@ fn validate_node_creation(
         ));
     }
     errors
+}
+
+pub fn delete_node(
+    name: &str,
+    nodes: &mut Vec<BaseNode>,
+    groups: &mut Vec<NodeGroup>,
+    processes: &mut Vec<BaseProcess>,
+    diffusions: &mut Vec<BaseNodeDiffusion>,
+    delays: &mut Vec<Delay>,
+    histories: &mut Vec<BaseNodeHistory>,
+    markets: &mut Vec<BaseMarket>,
+    inflow_blocks: &mut Vec<BaseInflowBlock>,
+    constraints: &mut Vec<BaseGenConstraint>,
+) -> MaybeError {
+    let maybe_error = delete::delete_named(name, nodes);
+    if maybe_error.is_error() {
+        return maybe_error;
+    }
+    for group in groups {
+        if let Some(position) = group.members.iter().position(|m| m == name) {
+            group.members.swap_remove(position);
+        }
+    }
+    for process in processes {
+        process.topos.retain(|t| t.source != name && t.sink != name);
+    }
+    diffusions.retain(|d| d.from_node != name && d.to_node != name);
+    delays.retain(|d| d.from_node != name && d.to_node != name);
+    if let Some(position) = histories.iter().position(|h| h.node == name) {
+        histories.swap_remove(position);
+    }
+    markets.retain(|m| m.node != name);
+    inflow_blocks.retain(|i| i.node != name);
+    for constraint in constraints {
+        constraint.factors.retain(|f| match f.var_type {
+            ConstraintFactorType::Flow => {
+                f.var_tuple.identifier.as_ref().is_some_and(|n| n != name)
+            }
+            ConstraintFactorType::Online => true,
+            ConstraintFactorType::State => f.var_tuple.entity == name,
+        });
+    }
+    MaybeError::new_ok()
 }

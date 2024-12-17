@@ -11,6 +11,10 @@ use juniper::{graphql_object, FieldResult, GraphQLEnum, GraphQLObject, GraphQLUn
 use serde::{self, Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub trait TypeName {
+    fn type_name() -> &'static str;
+}
+
 pub trait ExpandToTimeSeries {
     type Expanded;
     fn expand_to_time_series(
@@ -38,7 +42,6 @@ fn expand_and_use_name_as_key<T: ExpandToTimeSeries + Name>(
 pub trait GroupMember {
     fn groups(&self) -> &Vec<String>;
     fn groups_mut(&mut self) -> &mut Vec<String>;
-    fn group_type() -> GroupType;
 }
 
 #[derive(Clone, Debug, Default, Deserialize, GraphQLObject, Serialize)]
@@ -122,6 +125,18 @@ impl ReserveType {
 pub struct Risk {
     pub parameter: String,
     pub value: f64,
+}
+
+impl Name for Risk {
+    fn name(&self) -> &String {
+        &self.parameter
+    }
+}
+
+impl TypeName for Risk {
+    fn type_name() -> &'static str {
+        "risk"
+    }
 }
 
 impl Risk {
@@ -346,14 +361,17 @@ pub struct BaseProcess {
 }
 
 impl GroupMember for BaseProcess {
-    fn group_type() -> GroupType {
-        GroupType::Process
-    }
     fn groups(&self) -> &Vec<String> {
         &self.groups
     }
     fn groups_mut(&mut self) -> &mut Vec<String> {
         &mut self.groups
+    }
+}
+
+impl TypeName for BaseProcess {
+    fn type_name() -> &'static str {
+        "process"
     }
 }
 
@@ -526,6 +544,12 @@ pub struct BaseNode {
     pub inflow: Option<f64>,
 }
 
+impl TypeName for BaseNode {
+    fn type_name() -> &'static str {
+        "node"
+    }
+}
+
 impl ExpandToTimeSeries for BaseNode {
     type Expanded = Node;
     fn expand_to_time_series(
@@ -549,9 +573,6 @@ impl ExpandToTimeSeries for BaseNode {
 }
 
 impl GroupMember for BaseNode {
-    fn group_type() -> GroupType {
-        GroupType::Node
-    }
     fn groups(&self) -> &Vec<String> {
         &self.groups
     }
@@ -755,6 +776,12 @@ pub struct BaseMarket {
     pub fixed: Vec<MarketFix>,
 }
 
+impl TypeName for BaseMarket {
+    fn type_name() -> &'static str {
+        "market"
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
 pub struct MarketFix {
     pub name: String,
@@ -899,6 +926,12 @@ pub struct NodeGroup {
     pub members: Vec<String>,
 }
 
+impl TypeName for NodeGroup {
+    fn type_name() -> &'static str {
+        "node group"
+    }
+}
+
 impl NamedGroup for NodeGroup {
     fn new(name: String) -> Self {
         NodeGroup {
@@ -930,7 +963,7 @@ impl From<&NodeGroup> for Group {
     fn from(value: &NodeGroup) -> Self {
         Group {
             name: value.name.clone(),
-            g_type: BaseNode::group_type(),
+            g_type: GroupType::Node,
             members: value.members.clone(),
         }
     }
@@ -940,6 +973,12 @@ impl From<&NodeGroup> for Group {
 pub struct ProcessGroup {
     pub name: String,
     pub members: Vec<String>,
+}
+
+impl TypeName for ProcessGroup {
+    fn type_name() -> &'static str {
+        "process group"
+    }
 }
 
 impl NamedGroup for ProcessGroup {
@@ -973,7 +1012,7 @@ impl From<&ProcessGroup> for Group {
     fn from(value: &ProcessGroup) -> Self {
         Group {
             name: value.name.clone(),
-            g_type: BaseProcess::group_type(),
+            g_type: GroupType::Process,
             members: value.members.clone(),
         }
     }
@@ -1044,6 +1083,12 @@ pub struct BaseGenConstraint {
     pub penalty: f64,
     pub factors: Vec<BaseConFactor>,
     pub constant: Option<f64>,
+}
+
+impl TypeName for BaseGenConstraint {
+    fn type_name() -> &'static str {
+        "generic constraint"
+    }
 }
 
 impl ExpandToTimeSeries for BaseGenConstraint {
@@ -1165,18 +1210,18 @@ fn find_node_or_process(
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, GraphQLEnum, PartialEq, Serialize)]
-pub enum ConversionFactorType {
+pub enum ConstraintFactorType {
     Flow,
     State,
     Online,
 }
 
-impl ConversionFactorType {
+impl ConstraintFactorType {
     fn to_input(&self) -> String {
         match self {
-            ConversionFactorType::Flow => "flow",
-            ConversionFactorType::State => "state",
-            ConversionFactorType::Online => "online",
+            ConstraintFactorType::Flow => "flow",
+            ConstraintFactorType::State => "state",
+            ConstraintFactorType::Online => "online",
         }
         .into()
     }
@@ -1185,7 +1230,7 @@ impl ConversionFactorType {
 #[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
 #[graphql(name = "ConFactor", context = HerttaContext)]
 pub struct BaseConFactor {
-    pub var_type: ConversionFactorType,
+    pub var_type: ConstraintFactorType,
     pub var_tuple: VariableId,
     pub data: f64,
 }
@@ -1214,6 +1259,27 @@ impl ExpandToTimeSeries for BaseConFactor {
                     .into(),
             ),
             data: to_time_series(self.data, time_line, scenarios),
+        }
+    }
+}
+
+impl BaseConFactor {
+    pub fn is_flow(&self) -> bool {
+        match self.var_type {
+            ConstraintFactorType::Flow => true,
+            _ => false,
+        }
+    }
+    pub fn is_state(&self) -> bool {
+        match self.var_type {
+            ConstraintFactorType::State => true,
+            _ => false,
+        }
+    }
+    pub fn is_online(&self) -> bool {
+        match self.var_type {
+            ConstraintFactorType::Online => true,
+            _ => false,
         }
     }
 }
@@ -1419,7 +1485,7 @@ mod tests {
         };
         let inflow_block = base_inflow_block.expand_to_time_series(&time_line, &scenarios);
         let base_con_factor = BaseConFactor {
-            var_type: ConversionFactorType::State,
+            var_type: ConstraintFactorType::State,
             var_tuple: VariableId {
                 entity: "interior_air".to_string(),
                 identifier: None,
@@ -1725,7 +1791,7 @@ mod tests {
         let scenarios =
             vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
         let base_con_factor = BaseConFactor {
-            var_type: ConversionFactorType::State,
+            var_type: ConstraintFactorType::State,
             var_tuple: VariableId {
                 entity: "interior_air".to_string(),
                 identifier: None,
@@ -1785,7 +1851,7 @@ mod tests {
     #[test]
     fn expanding_con_factor_works() {
         let base = BaseConFactor {
-            var_type: ConversionFactorType::State,
+            var_type: ConstraintFactorType::State,
             var_tuple: VariableId {
                 entity: "interior_air".to_string(),
                 identifier: None,

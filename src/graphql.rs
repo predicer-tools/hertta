@@ -1,4 +1,5 @@
 mod con_factor_input;
+mod delete;
 mod gen_constraint_input;
 mod group_input;
 mod input_data_setup_input;
@@ -18,8 +19,8 @@ use crate::event_loop::job_store::JobStore;
 use crate::event_loop::jobs::{self, Job, JobOutcome, JobStatus, NewJob};
 use crate::input_data::Name;
 use crate::input_data_base::{
-    BaseGenConstraint, BaseInputData, BaseMarket, BaseNode, BaseNodeDiffusion, BaseProcess,
-    GroupMember, Members, NodeGroup, ProcessGroup,
+    BaseConFactor, BaseGenConstraint, BaseInputData, BaseMarket, BaseNode, BaseNodeDiffusion,
+    BaseProcess, GroupMember, Members, NodeGroup, ProcessGroup, TypeName,
 };
 use crate::model::{self, Model};
 use crate::scenarios::Scenario;
@@ -97,33 +98,52 @@ enum SettingsResult {
 }
 
 #[derive(GraphQLObject)]
-struct StartOptimizationError {
+struct Error {
     message: String,
+}
+
+impl From<&str> for Error {
+    fn from(value: &str) -> Self {
+        Error {
+            message: String::from(value),
+        }
+    }
+}
+
+impl From<String> for Error {
+    fn from(value: String) -> Self {
+        Error { message: value }
+    }
 }
 
 #[derive(GraphQLObject)]
 struct MaybeError {
     #[graphql(description = "Error message; if null, the operation succeeded.")]
-    error: Option<String>,
+    message: Option<String>,
 }
 
 impl From<&str> for MaybeError {
     fn from(value: &str) -> Self {
         MaybeError {
-            error: Some(String::from(value)),
+            message: Some(String::from(value)),
         }
     }
 }
 
 impl From<String> for MaybeError {
     fn from(value: String) -> Self {
-        MaybeError { error: Some(value) }
+        MaybeError {
+            message: Some(value),
+        }
     }
 }
 
 impl MaybeError {
     pub fn new_ok() -> Self {
-        MaybeError { error: None }
+        MaybeError { message: None }
+    }
+    pub fn is_error(&self) -> bool {
+        self.message.is_some()
     }
 }
 
@@ -293,6 +313,25 @@ impl Query {
             .map(|p| p.clone())
             .ok_or_else(|| "no such process".into())
     }
+
+    async fn con_factors_for_process(
+        name: String,
+        context: &HerttaContext,
+    ) -> FieldResult<Vec<BaseConFactor>> {
+        let model = context.model.lock().await;
+        let mut factors = Vec::new();
+        for constraint in &model.input_data.gen_constraints {
+            factors.extend(
+                constraint
+                    .factors
+                    .iter()
+                    .filter(|&f| process_input::process_con_factor(f, &name))
+                    .cloned(),
+            );
+        }
+        Ok(factors)
+    }
+
     async fn scenario(name: String, context: &HerttaContext) -> FieldResult<Scenario> {
         let model = context.model.lock().await;
         model
@@ -334,7 +373,7 @@ impl Query {
     }
 }
 
-fn group_members<G: Members + Name, M: Clone + GroupMember + Name>(
+fn group_members<G: Members + Name, M: Clone + GroupMember + Name + TypeName>(
     groups: &Vec<G>,
     group_name: &str,
     candidates: &Vec<M>,
@@ -350,7 +389,7 @@ fn group_members<G: Members + Name, M: Clone + GroupMember + Name>(
         } else {
             return Err(format!(
                 "member {} '{}' does not exist",
-                M::group_type().to_string(),
+                M::type_name().to_string(),
                 member_name
             )
             .into());
@@ -359,7 +398,7 @@ fn group_members<G: Members + Name, M: Clone + GroupMember + Name>(
     Ok(members)
 }
 
-fn member_groups<M: GroupMember + Name, G: Clone + Name>(
+fn member_groups<M: GroupMember + Name + TypeName, G: Clone + Name>(
     items: &Vec<M>,
     member_name: &str,
     groups: &Vec<G>,
@@ -367,7 +406,7 @@ fn member_groups<M: GroupMember + Name, G: Clone + Name>(
     let member = items
         .iter()
         .find(|i| i.name() == member_name)
-        .ok_or_else(|| format!("no such {}", M::group_type()))?;
+        .ok_or_else(|| format!("no such {}", M::type_name()))?;
     let mut groups_of_member = Vec::with_capacity(member.groups().len());
     for group_name in member.groups() {
         if let Some(group) = groups.iter().find(|&g| *g.name() == *group_name) {
@@ -375,7 +414,7 @@ fn member_groups<M: GroupMember + Name, G: Clone + Name>(
         } else {
             return Err(format!(
                 "{} group '{}' does not exist",
-                M::group_type(),
+                M::type_name(),
                 group_name
             ));
         }
@@ -432,12 +471,17 @@ impl Mutation {
         scenario_input::create_scenario(name, weight, &mut model.input_data.scenarios)
     }
 
+    async fn delete_scenario(name: String, context: &HerttaContext) -> MaybeError {
+        let mut model = context.model.lock().await;
+        scenario_input::delete_scenario(&name, &mut model.input_data.scenarios)
+    }
+
     #[graphql(description = "Save the model on disk.")]
     async fn save_model(context: &HerttaContext) -> MaybeError {
         let file_path = model::make_model_file_path();
         let model = context.model.lock().await;
         let result = model::write_model_to_file(&model, &file_path).err();
-        MaybeError { error: result }
+        MaybeError { message: result }
     }
 
     #[graphql(description = "Clear input data from model.")]
@@ -461,16 +505,33 @@ impl Mutation {
     async fn create_node_group(name: String, context: &HerttaContext) -> MaybeError {
         let mut model_ref = context.model.lock().await;
         let model = model_ref.deref_mut();
-        group_input::create_node_group(name, &mut model.input_data.node_groups)
+        group_input::create_node_group(
+            name,
+            &mut model.input_data.node_groups,
+            &model.input_data.process_groups,
+        )
     }
 
     #[graphql(description = "Create new process group.")]
     async fn create_process_group(name: String, context: &HerttaContext) -> MaybeError {
         let mut model_ref = context.model.lock().await;
         let model = model_ref.deref_mut();
-        group_input::create_process_group(name, &mut model.input_data.process_groups)
+        group_input::create_process_group(
+            name,
+            &mut model.input_data.process_groups,
+            &model.input_data.node_groups,
+        )
     }
 
+    async fn delete_group(name: String, context: &HerttaContext) -> MaybeError {
+        let mut model_ref = context.model.lock().await;
+        let model = model_ref.deref_mut();
+        group_input::delete_group(
+            &name,
+            &mut model.input_data.node_groups,
+            &mut model.input_data.process_groups,
+        )
+    }
     #[graphql(description = "Create new process.")]
     async fn create_process(process: NewProcess, context: &HerttaContext) -> ValidationErrors {
         let mut model_ref = context.model.lock().await;
@@ -498,6 +559,18 @@ impl Mutation {
         )
     }
 
+    #[graphql(description = "Delete a process and all items that depend on that process.")]
+    async fn delete_process(name: String, context: &HerttaContext) -> MaybeError {
+        let mut model_ref = context.model.lock().await;
+        let model = model_ref.deref_mut();
+        process_input::delete_process(
+            &name,
+            &mut model.input_data.processes,
+            &mut model.input_data.process_groups,
+            &mut model.input_data.gen_constraints,
+        )
+    }
+
     #[graphql(description = "Create new topology and add it to process.")]
     async fn create_topology(
         topology: NewTopology,
@@ -515,6 +588,21 @@ impl Mutation {
             topology,
             &mut model.input_data.processes,
             &mut model.input_data.nodes,
+        )
+    }
+
+    async fn delete_topology(
+        source_node_name: Option<String>,
+        process_name: String,
+        sink_node_name: Option<String>,
+        context: &HerttaContext,
+    ) -> MaybeError {
+        let mut model = context.model.lock().await;
+        topology_input::delete_topology(
+            &process_name,
+            &source_node_name,
+            &sink_node_name,
+            &mut model.input_data.processes,
         )
     }
 
@@ -567,6 +655,23 @@ impl Mutation {
         state_input::update_state_in_node(state, node_name, &mut model.input_data.nodes)
     }
 
+    #[graphql(description = "Delete a node and all items that depend on that node.")]
+    async fn delete_node(name: String, context: &HerttaContext) -> MaybeError {
+        let mut model_ref = context.model.lock().await;
+        let model = model_ref.deref_mut();
+        node_input::delete_node(
+            &name,
+            &mut model.input_data.nodes,
+            &mut model.input_data.node_groups,
+            &mut model.input_data.processes,
+            &mut model.input_data.node_diffusion,
+            &mut model.input_data.node_delay,
+            &mut model.input_data.node_histories,
+            &mut model.input_data.markets,
+            &mut model.input_data.inflow_blocks,
+            &mut model.input_data.gen_constraints,
+        )
+    }
     #[graphql(description = "Create new diffusion between nodes.")]
     async fn create_node_diffusion(
         from_node: String,
@@ -585,6 +690,20 @@ impl Mutation {
         )
     }
 
+    async fn delete_node_diffusion(
+        from_node: String,
+        to_node: String,
+        context: &HerttaContext,
+    ) -> MaybeError {
+        let mut model_ref = context.model.lock().await;
+        let model = model_ref.deref_mut();
+        node_diffusion_input::delete_node_diffusion(
+            &from_node,
+            &to_node,
+            &mut model.input_data.node_diffusion,
+        )
+    }
+
     #[graphql(description = "Create new market.")]
     async fn create_market(market: NewMarket, context: &HerttaContext) -> ValidationErrors {
         let mut model_ref = context.model.lock().await;
@@ -597,10 +716,20 @@ impl Mutation {
         )
     }
 
+    async fn delete_market(name: String, context: &HerttaContext) -> MaybeError {
+        let mut model = context.model.lock().await;
+        market_input::delete_market(&name, &mut model.input_data.markets)
+    }
+
     #[graphql(description = "Create new risk.")]
     async fn create_risk(risk: NewRisk, context: &HerttaContext) -> ValidationErrors {
         let mut model = context.model.lock().await;
         risk_input::create_risk(risk, &mut model.input_data.risk)
+    }
+
+    async fn delete_risk(parameter: String, context: &HerttaContext) -> MaybeError {
+        let mut model = context.model.lock().await;
+        risk_input::delete_risk(&parameter, &mut model.input_data.risk)
     }
 
     #[graphql(description = "Create new generic constraint.")]
@@ -613,6 +742,11 @@ impl Mutation {
             constraint,
             &mut model.input_data.gen_constraints,
         )
+    }
+
+    async fn delete_gen_constraint(name: String, context: &HerttaContext) -> MaybeError {
+        let mut model = context.model.lock().await;
+        gen_constraint_input::delete_gen_constraint(&name, &mut model.input_data.gen_constraints)
     }
 
     #[graphql(description = "Create new flow constraint factor and add it to generic constraint.")]
@@ -635,6 +769,21 @@ impl Mutation {
         )
     }
 
+    async fn delete_flow_con_factor(
+        constraint_name: String,
+        process_name: String,
+        source_or_sink_node_name: String,
+        context: &HerttaContext,
+    ) -> MaybeError {
+        let mut model = context.model.lock().await;
+        con_factor_input::delete_flow_con_factor(
+            &constraint_name,
+            &process_name,
+            &source_or_sink_node_name,
+            &mut model.input_data.gen_constraints,
+        )
+    }
+
     #[graphql(description = "Create new state constraint factor and add it to generic constraint.")]
     async fn create_state_con_factor(
         factor: f64,
@@ -650,6 +799,19 @@ impl Mutation {
             node_name,
             &mut model.input_data.gen_constraints,
             &model.input_data.nodes,
+        )
+    }
+
+    async fn delete_state_con_factor(
+        constraint_name: String,
+        node_name: String,
+        context: &HerttaContext,
+    ) -> MaybeError {
+        let mut model = context.model.lock().await;
+        con_factor_input::delete_state_con_factor(
+            &constraint_name,
+            &node_name,
+            &mut model.input_data.gen_constraints,
         )
     }
 
@@ -670,6 +832,19 @@ impl Mutation {
             process_name,
             &mut model.input_data.gen_constraints,
             &model.input_data.processes,
+        )
+    }
+
+    async fn delete_online_con_factor(
+        constraint_name: String,
+        process_name: String,
+        context: &HerttaContext,
+    ) -> MaybeError {
+        let mut model = context.model.lock().await;
+        con_factor_input::delete_online_con_factor(
+            &constraint_name,
+            &process_name,
+            &mut model.input_data.gen_constraints,
         )
     }
 

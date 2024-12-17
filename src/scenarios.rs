@@ -1,4 +1,5 @@
 use crate::input_data::Name;
+use crate::input_data_base::TypeName;
 use hertta_derive::Name;
 use juniper::GraphQLObject;
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,12 @@ impl Default for Scenario {
             name: "S1".to_string(),
             weight: 1.0,
         }
+    }
+}
+
+impl TypeName for Scenario {
+    fn type_name() -> &'static str {
+        "scenario"
     }
 }
 
