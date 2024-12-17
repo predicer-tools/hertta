@@ -5,6 +5,7 @@ mod group_input;
 mod input_data_setup_input;
 mod job_status;
 mod market_input;
+mod node_delay_input;
 mod node_diffusion_input;
 mod node_input;
 mod process_input;
@@ -32,6 +33,7 @@ use juniper::{
     GraphQLUnion, Nullable, RootNode,
 };
 use market_input::NewMarket;
+use node_delay_input::NewNodeDelay;
 use node_input::NewNode;
 use process_input::NewProcess;
 use risk_input::NewRisk;
@@ -701,6 +703,16 @@ impl Mutation {
             &from_node,
             &to_node,
             &mut model.input_data.node_diffusion,
+        )
+    }
+
+    async fn create_node_delay(delay: NewNodeDelay, context: &HerttaContext) -> ValidationErrors {
+        let mut model_ref = context.model.lock().await;
+        let model = model_ref.deref_mut();
+        node_delay_input::create_node_delay(
+            delay,
+            &mut model.input_data.node_delay,
+            &model.input_data.nodes,
         )
     }
 
