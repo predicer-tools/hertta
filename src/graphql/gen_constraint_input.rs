@@ -45,11 +45,7 @@ fn validate_gen_contraint_creation(
     if constraint.name.is_empty() {
         errors.push(ValidationError::new("name", "name is empty"));
     }
-    if constraints
-        .iter()
-        .find(|c| c.name == constraint.name)
-        .is_some()
-    {
+    if constraints.iter().any(|c| c.name == constraint.name) {
         errors.push(ValidationError::new(
             "name",
             "a constraint with the same name exists",
