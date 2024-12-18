@@ -5,6 +5,7 @@ use crate::input_data::{
     Topology,
 };
 use crate::scenarios::Scenario;
+use crate::time_line_settings::Duration;
 use crate::{TimeLine, TimeStamp};
 use hertta_derive::{Members, Name};
 use juniper::{graphql_object, FieldResult, GraphQLEnum, GraphQLObject, GraphQLUnion};
@@ -61,6 +62,54 @@ pub struct BaseInputData {
     pub risk: Vec<Risk>,
     pub inflow_blocks: Vec<BaseInflowBlock>,
     pub gen_constraints: Vec<BaseGenConstraint>,
+}
+
+#[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
+pub struct Series {
+    pub scenario: String,
+    pub durations: Vec<Duration>,
+    pub values: Vec<f64>,
+}
+
+impl Series {
+    fn to_time_series(&self, time_line: &TimeLine) -> TimeSeries {
+        if self.values.is_empty() || time_line.is_empty() {
+            return TimeSeries {
+                scenario: self.scenario.clone(),
+                series: BTreeMap::new(),
+            };
+        }
+        let mut time_series: BTreeMap<TimeStamp, f64> = BTreeMap::new();
+        let mut time_line_iter = time_line.iter();
+        let mut epoch_start = time_line_iter.next().unwrap().clone();
+        let mut value_iter = self.values.iter();
+        let mut epoch_value = *value_iter.next().unwrap();
+        time_series.insert(epoch_start.clone(), epoch_value);
+        let mut duration_iter = self.durations.iter();
+        let mut epoch_end = epoch_start + duration_iter.next().unwrap().to_time_delta();
+        'collect_loop: for stamp in time_line_iter {
+            while *stamp >= epoch_end {
+                epoch_start = epoch_end;
+                epoch_value = match value_iter.next() {
+                    Some(value) => *value,
+                    None => break 'collect_loop,
+                };
+                epoch_end = epoch_start + duration_iter.next().unwrap().to_time_delta();
+            }
+            time_series.insert(stamp.clone(), epoch_value);
+        }
+        TimeSeries {
+            scenario: self.scenario.clone(),
+            series: time_series,
+        }
+    }
+    fn to_time_series_data(serieses: &Vec<Series>, time_line: &TimeLine) -> TimeSeriesData {
+        let data = serieses
+            .iter()
+            .map(|s| s.to_time_series(time_line))
+            .collect();
+        TimeSeriesData { ts_data: data }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -411,7 +460,7 @@ impl ExpandToTimeSeries for BaseProcess {
                 .iter()
                 .map(|topology| topology.expand_to_time_series(time_line, scenarios))
                 .collect(),
-            cf: to_time_series(self.cf, time_line, scenarios),
+            cf: to_time_series_data(self.cf, time_line, scenarios),
             eff_ts: expand_optional_time_series(self.eff_ts, time_line, scenarios),
             eff_ops: self.eff_ops.clone(),
             eff_fun: self
@@ -645,7 +694,7 @@ impl ExpandToTimeSeries for BaseNodeDiffusion {
         NodeDiffusion {
             node1: self.from_node.clone(),
             node2: self.to_node.clone(),
-            coefficient: to_time_series(self.coefficient, &time_line, scenarios),
+            coefficient: to_time_series_data(self.coefficient, &time_line, scenarios),
         }
     }
 }
@@ -676,7 +725,7 @@ fn find_node(node_name: &String, node_type: &str, nodes: &Vec<BaseNode>) -> Fiel
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct BaseNodeHistory {
     pub node: String,
-    pub steps: f64,
+    pub steps: Vec<Series>,
 }
 
 impl Name for BaseNodeHistory {
@@ -692,8 +741,8 @@ impl BaseNodeHistory {
         let model = context.model().lock().await;
         find_node(&self.node, "node", &model.input_data.nodes)
     }
-    fn steps(&self) -> f64 {
-        self.steps
+    fn steps(&self) -> &Vec<Series> {
+        &self.steps
     }
 }
 
@@ -702,11 +751,20 @@ impl ExpandToTimeSeries for BaseNodeHistory {
     fn expand_to_time_series(
         &self,
         time_line: &TimeLine,
-        scenarios: &Vec<Scenario>,
+        _scenarios: &Vec<Scenario>,
     ) -> Self::Expanded {
         NodeHistory {
             node: self.node.clone(),
-            steps: to_time_series(self.steps, time_line, scenarios),
+            steps: Series::to_time_series_data(&self.steps, time_line),
+        }
+    }
+}
+
+impl BaseNodeHistory {
+    pub fn new(node_name: String) -> Self {
+        BaseNodeHistory {
+            node: node_name,
+            steps: Vec::new(),
         }
     }
 }
@@ -1026,7 +1084,7 @@ impl ExpandToTimeSeries for BaseInflowBlock {
             name: self.name.clone(),
             node: self.node.clone(),
             start_time: time_line[0].clone(),
-            data: to_time_series(self.data, time_line, scenarios),
+            data: to_time_series_data(self.data, time_line, scenarios),
         }
     }
 }
@@ -1248,7 +1306,7 @@ impl ExpandToTimeSeries for BaseConFactor {
                     .map_or("", |s| s.as_str())
                     .into(),
             ),
-            data: to_time_series(self.data, time_line, scenarios),
+            data: to_time_series_data(self.data, time_line, scenarios),
         }
     }
 }
@@ -1313,7 +1371,7 @@ pub fn find_input_node_names<'a>(nodes: impl Iterator<Item = &'a BaseNode>) -> V
         .collect()
 }
 
-fn to_time_series(y: f64, time_line: &TimeLine, scenarios: &Vec<Scenario>) -> TimeSeriesData {
+fn to_time_series_data(y: f64, time_line: &TimeLine, scenarios: &Vec<Scenario>) -> TimeSeriesData {
     let single_series: BTreeMap<TimeStamp, f64> = time_line
         .iter()
         .map(|time_stamp| (time_stamp.clone(), y))
@@ -1343,7 +1401,7 @@ fn expand_optional_time_series(
     scenarios: &Vec<Scenario>,
 ) -> TimeSeriesData {
     match optional {
-        Some(constant) => to_time_series(constant, time_line, scenarios),
+        Some(constant) => to_time_series_data(constant, time_line, scenarios),
         None => TimeSeriesData::default(),
     }
 }
@@ -1430,7 +1488,13 @@ mod tests {
         }];
         let base_node_history = BaseNodeHistory {
             node: "South".to_string(),
-            steps: 1.1,
+            steps: vec![Series {
+                scenario: "S1".into(),
+                durations: vec![
+                    Duration::try_new(1, 0, 0).expect("constructing duration should succeed")
+                ],
+                values: vec![1.1],
+            }],
         };
         let node_history = base_node_history.expand_to_time_series(&time_line, &scenarios);
         let base_market = BaseMarket {
@@ -1618,8 +1682,11 @@ mod tests {
         assert!(process.initial_state);
         assert!(!process.is_scenario_independent);
         assert_eq!(process.topos, vec![topology]);
-        assert_eq!(process.cf, to_time_series(2.0, &time_line, &scenarios));
-        assert_eq!(process.eff_ts, to_time_series(2.1, &time_line, &scenarios));
+        assert_eq!(process.cf, to_time_series_data(2.0, &time_line, &scenarios));
+        assert_eq!(
+            process.eff_ts,
+            to_time_series_data(2.1, &time_line, &scenarios)
+        );
         assert_eq!(process.eff_ops, vec!["oops!".to_string()]);
         assert_eq!(process.eff_fun, vec![(2.2, 2.3)]);
     }
@@ -1650,7 +1717,10 @@ mod tests {
         assert!(!node.is_res);
         assert!(node.is_inflow);
         assert!(node.state.is_none());
-        assert_eq!(node.inflow, to_time_series(1.2, &time_line, &scenarios));
+        assert_eq!(
+            node.inflow,
+            to_time_series_data(1.2, &time_line, &scenarios)
+        );
     }
     #[test]
     fn expanding_node_diffusion_works() {
@@ -1670,7 +1740,7 @@ mod tests {
         assert_eq!(node_diffusion.node2, "Node 2");
         assert_eq!(
             node_diffusion.coefficient,
-            to_time_series(-2.3, &time_line, &scenarios)
+            to_time_series_data(-2.3, &time_line, &scenarios)
         );
     }
     #[test]
@@ -1683,13 +1753,26 @@ mod tests {
             vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
         let base = BaseNodeHistory {
             node: "South".to_string(),
-            steps: 1.1,
+            steps: vec![Series {
+                scenario: "S1".into(),
+                durations: vec![
+                    Duration::try_new(1, 0, 0).expect("constructing duration should succeed")
+                ],
+                values: vec![1.1],
+            }],
         };
         let node_history = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(node_history.node, "South");
         assert_eq!(
             node_history.steps,
-            to_time_series(1.1, &time_line, &scenarios)
+            TimeSeriesData {
+                ts_data: vec![TimeSeries {
+                    scenario: "S1".into(),
+                    series: [(Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap(), 1.1)]
+                        .into_iter()
+                        .collect()
+                }],
+            }
         );
     }
     #[test]
@@ -1730,7 +1813,7 @@ mod tests {
         assert_eq!(market.direction, "none");
         assert_eq!(
             market.realisation,
-            to_time_series(1.1, &time_line, &scenarios)
+            to_time_series_data(1.1, &time_line, &scenarios)
         );
         assert_eq!(market.reserve_type, "not none");
         assert!(market.is_bid);
@@ -1738,15 +1821,21 @@ mod tests {
         assert_eq!(market.min_bid, 1.2);
         assert_eq!(market.max_bid, 1.3);
         assert_eq!(market.fee, 1.4);
-        assert_eq!(market.price, to_time_series(1.5, &time_line, &scenarios));
-        assert_eq!(market.up_price, to_time_series(1.6, &time_line, &scenarios));
+        assert_eq!(
+            market.price,
+            to_time_series_data(1.5, &time_line, &scenarios)
+        );
+        assert_eq!(
+            market.up_price,
+            to_time_series_data(1.6, &time_line, &scenarios)
+        );
         assert_eq!(
             market.down_price,
-            to_time_series(1.7, &time_line, &scenarios)
+            to_time_series_data(1.7, &time_line, &scenarios)
         );
         assert_eq!(
             market.reserve_activation_price,
-            to_time_series(1.8, &time_line, &scenarios)
+            to_time_series_data(1.8, &time_line, &scenarios)
         );
         assert_eq!(market.fixed, vec![("Fix".to_string(), 1.9)])
     }
@@ -1769,7 +1858,7 @@ mod tests {
         assert_eq!(inflow_block.start_time, time_line[0]);
         assert_eq!(
             inflow_block.data,
-            to_time_series(2.3, &time_line, &scenarios)
+            to_time_series_data(2.3, &time_line, &scenarios)
         );
     }
     #[test]
@@ -1805,7 +1894,7 @@ mod tests {
         assert_eq!(gen_constraint.factors, vec![con_factor]);
         assert_eq!(
             gen_constraint.constant,
-            to_time_series(1.2, &time_line, &scenarios)
+            to_time_series_data(1.2, &time_line, &scenarios)
         );
     }
     #[test]
@@ -1836,7 +1925,10 @@ mod tests {
         assert_eq!(topology.ramp_down, 1.4);
         assert_eq!(topology.initial_load, 1.5);
         assert_eq!(topology.initial_flow, 1.6);
-        assert_eq!(topology.cap_ts, to_time_series(1.7, &time_line, &scenarios));
+        assert_eq!(
+            topology.cap_ts,
+            to_time_series_data(1.7, &time_line, &scenarios)
+        );
     }
     #[test]
     fn expanding_con_factor_works() {
@@ -1862,7 +1954,7 @@ mod tests {
         );
         assert_eq!(
             con_factor.data,
-            to_time_series(base.data, &time_line, &scenarios)
+            to_time_series_data(base.data, &time_line, &scenarios)
         );
     }
     mod find_input_node_names {
@@ -1919,12 +2011,91 @@ mod tests {
         ];
         let scenarios =
             vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
-        let time_series = to_time_series(2.3, &time_line, &scenarios);
+        let time_series = to_time_series_data(2.3, &time_line, &scenarios);
         assert_eq!(time_series.ts_data.len(), 1);
         assert_eq!(time_series.ts_data[0].scenario, "S1");
         let mut expected_series = BTreeMap::new();
         expected_series.insert(Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap(), 2.3);
         expected_series.insert(Utc.with_ymd_and_hms(2024, 11, 19, 14, 0, 0).unwrap(), 2.3);
         assert_eq!(time_series.ts_data[0].series, expected_series);
+    }
+    mod series {
+        use super::*;
+        #[test]
+        fn to_time_series_with_empty_series() {
+            let series = Series {
+                scenario: "S1".into(),
+                durations: Vec::new(),
+                values: Vec::new(),
+            };
+            let time_line = vec![
+                Utc.with_ymd_and_hms(2024, 12, 18, 13, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2024, 12, 18, 14, 0, 0).unwrap(),
+            ];
+            let time_series = series.to_time_series(&time_line);
+            assert_eq!(time_series.scenario, "S1");
+            assert!(time_series.series.is_empty());
+        }
+        #[test]
+        fn to_time_series_with_timeline_within_duration() {
+            let series = Series {
+                scenario: "S1".into(),
+                durations: vec![Duration::try_new(24, 0, 0).unwrap()],
+                values: vec![2.3],
+            };
+            let time_line = vec![
+                Utc.with_ymd_and_hms(2024, 12, 18, 13, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2024, 12, 18, 14, 0, 0).unwrap(),
+            ];
+            let time_series = series.to_time_series(&time_line);
+            assert_eq!(time_series.scenario, "S1");
+            assert_eq!(time_series.series.len(), time_line.len());
+            let mut expected_series = BTreeMap::new();
+            for stamp in time_line {
+                expected_series.insert(stamp, 2.3);
+            }
+            assert_eq!(time_series.series, expected_series)
+        }
+        #[test]
+        fn to_time_series_with_timeline_longer_than_duration() {
+            let series = Series {
+                scenario: "S1".into(),
+                durations: vec![Duration::try_new(1, 0, 0).unwrap()],
+                values: vec![2.3],
+            };
+            let time_line = vec![
+                Utc.with_ymd_and_hms(2024, 12, 18, 13, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2024, 12, 18, 14, 0, 0).unwrap(),
+            ];
+            let time_series = series.to_time_series(&time_line);
+            assert_eq!(time_series.scenario, "S1");
+            assert_eq!(time_series.series.len(), 1);
+            let mut expected_series = BTreeMap::new();
+            expected_series.insert(time_line[0], 2.3);
+            assert_eq!(time_series.series, expected_series)
+        }
+        #[test]
+        fn to_time_series_with_time_stamps_that_extend_over_multiple_durations() {
+            let series = Series {
+                scenario: "S1".into(),
+                durations: vec![
+                    Duration::try_new(0, 15, 0).unwrap(),
+                    Duration::try_new(0, 30, 0).unwrap(),
+                    Duration::try_new(0, 30, 0).unwrap(),
+                ],
+                values: vec![2.3, 3.2, 23.0],
+            };
+            let time_line = vec![
+                Utc.with_ymd_and_hms(2024, 12, 18, 13, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2024, 12, 18, 14, 0, 0).unwrap(),
+            ];
+            let time_series = series.to_time_series(&time_line);
+            assert_eq!(time_series.scenario, "S1");
+            assert_eq!(time_series.series.len(), 2);
+            let mut expected_series = BTreeMap::new();
+            expected_series.insert(time_line[0], 2.3);
+            expected_series.insert(time_line[1], 23.0);
+            assert_eq!(time_series.series, expected_series)
+        }
     }
 }

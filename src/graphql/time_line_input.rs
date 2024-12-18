@@ -3,10 +3,16 @@ use crate::time_line_settings::{Duration, TimeLineSettings};
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
-struct DurationInput {
+pub struct DurationInput {
     hours: i32,
     minutes: i32,
     seconds: i32,
+}
+
+impl DurationInput {
+    pub fn to_duration(self) -> Result<Duration, String> {
+        Ok(Duration::try_new(self.hours, self.minutes, self.seconds)?)
+    }
 }
 
 #[derive(GraphQLInputObject)]
@@ -20,7 +26,7 @@ pub fn update_time_line(
     time_line: &mut TimeLineSettings,
 ) -> ValidationErrors {
     let mut errors = Vec::new();
-    if let Some(ref duration_input) = input.duration {
+    if let Some(duration_input) = input.duration {
         duration_from_input(
             duration_input,
             |d| time_line.set_duration(d),
@@ -28,21 +34,21 @@ pub fn update_time_line(
             &mut errors,
         );
     }
-    if let Some(ref step_input) = input.step {
+    if let Some(step_input) = input.step {
         duration_from_input(step_input, |d| time_line.set_step(d), "step", &mut errors);
     }
     ValidationErrors::from(errors)
 }
 
 fn duration_from_input<F>(
-    input: &DurationInput,
+    input: DurationInput,
     set_duration: F,
     field: &str,
     errors: &mut Vec<ValidationError>,
 ) where
     F: FnOnce(Duration) -> Result<(), String>,
 {
-    match Duration::try_new(input.hours, input.minutes, input.seconds) {
+    match input.to_duration() {
         Ok(duration) => match set_duration(duration) {
             Ok(..) => (),
             Err(error) => errors.push(ValidationError::new(field, &error)),

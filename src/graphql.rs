@@ -7,6 +7,7 @@ mod job_status;
 mod market_input;
 mod node_delay_input;
 mod node_diffusion_input;
+mod node_history_input;
 mod node_input;
 mod process_input;
 mod risk_input;
@@ -34,6 +35,7 @@ use juniper::{
 };
 use market_input::NewMarket;
 use node_delay_input::NewNodeDelay;
+use node_history_input::NewSeries;
 use node_input::NewNode;
 use process_input::NewProcess;
 use risk_input::NewRisk;
@@ -473,9 +475,15 @@ impl Mutation {
         scenario_input::create_scenario(name, weight, &mut model.input_data.scenarios)
     }
 
+    #[graphql(description = "Delete a scenario and all items that depend on that scenario.")]
     async fn delete_scenario(name: String, context: &HerttaContext) -> MaybeError {
-        let mut model = context.model.lock().await;
-        scenario_input::delete_scenario(&name, &mut model.input_data.scenarios)
+        let mut model_ref = context.model.lock().await;
+        let model = model_ref.deref_mut();
+        scenario_input::delete_scenario(
+            &name,
+            &mut model.input_data.scenarios,
+            &mut model.input_data.node_histories,
+        )
     }
 
     #[graphql(description = "Save the model on disk.")]
@@ -713,6 +721,31 @@ impl Mutation {
             delay,
             &mut model.input_data.node_delay,
             &model.input_data.nodes,
+        )
+    }
+
+    async fn create_node_history(node_name: String, context: &HerttaContext) -> MaybeError {
+        let mut model_ref = context.model.lock().await;
+        let model = model_ref.deref_mut();
+        node_history_input::create_node_history(
+            node_name,
+            &mut model.input_data.node_histories,
+            &model.input_data.nodes,
+        )
+    }
+
+    async fn add_step_to_node_history(
+        node_name: String,
+        step: NewSeries,
+        context: &HerttaContext,
+    ) -> ValidationErrors {
+        let mut model_ref = context.model.lock().await;
+        let model = model_ref.deref_mut();
+        node_history_input::add_step_to_node_history(
+            node_name,
+            step,
+            &mut model.input_data.node_histories,
+            &model.input_data.scenarios,
         )
     }
 
