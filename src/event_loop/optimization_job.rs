@@ -622,7 +622,7 @@ async fn generate_model_task(
         let weather_data = optimization_data.weather_data.take().ok_or(
             "update_model_data_task: weather data missing in optimization data".to_string(),
         )?;
-        if let Err(e) = update_outside_node_inflow(&mut input_data, weather_data) {
+        if let Err(e) = update_outside_node(&mut input_data, weather_data) {
             return Err(format!(
                 "update_model_data_task: failed to update outside node inflow: {}",
                 e
@@ -671,7 +671,7 @@ fn update_npe_market_prices(
     }
 }
 
-fn update_outside_node_inflow(
+fn update_outside_node(
     input_data: &mut InputData,
     weather_data: WeatherData,
 ) -> Result<(), String> {
@@ -683,6 +683,30 @@ fn update_outside_node_inflow(
     if !outside_node.is_inflow {
         return Err("outside node is not marked for inflow".to_string());
     }
+    let state = match &mut outside_node.state {
+        Some(state) => state,
+        None => return Err("outside node has no state".to_string()),
+    };
+    if !state.is_temp {
+        return Err("outside node state is not marked as temperature".to_string());
+    }
+    if state.state_min > state.state_max {
+        return Err("outside node state has state_min greater than state_max".to_string());
+    }
+    let initial_temperature = weather_data
+        .first()
+        .expect("weather data should have at least one time series")
+        .series
+        .values()
+        .next()
+        .expect("weather data should have at least one data point");
+    if state.state_min > *initial_temperature {
+        return Err("forecast temperature is below outside node state_min".to_string());
+    }
+    if state.state_max < *initial_temperature {
+        return Err("forecast temperature is above outside node state_max".to_string());
+    }
+    state.initial_state = *initial_temperature;
     outside_node.inflow.ts_data = weather_data;
     Ok(())
 }
