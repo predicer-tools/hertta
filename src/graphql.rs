@@ -724,7 +724,16 @@ impl Mutation {
         )
     }
 
-    async fn create_node_history(node_name: String, context: &HerttaContext) -> MaybeError {
+    async fn delete_node_delay(
+        from_node: String,
+        to_node: String,
+        context: &HerttaContext,
+    ) -> MaybeError {
+        let mut model = context.model.lock().await;
+        node_delay_input::delete_node_delay(&from_node, &to_node, &mut model.input_data.node_delay)
+    }
+
+    async fn create_node_history(node_name: String, context: &HerttaContext) -> ValidationErrors {
         let mut model_ref = context.model.lock().await;
         let model = model_ref.deref_mut();
         node_history_input::create_node_history(
@@ -732,6 +741,11 @@ impl Mutation {
             &mut model.input_data.node_histories,
             &model.input_data.nodes,
         )
+    }
+
+    async fn delete_node_history(node_name: String, context: &HerttaContext) -> MaybeError {
+        let mut model = context.model.lock().await;
+        node_history_input::delete_node_history(&node_name, &mut model.input_data.node_histories)
     }
 
     async fn add_step_to_node_history(
@@ -746,6 +760,14 @@ impl Mutation {
             step,
             &mut model.input_data.node_histories,
             &model.input_data.scenarios,
+        )
+    }
+
+    async fn clear_node_history_steps(node_name: String, context: &HerttaContext) -> MaybeError {
+        let mut model = context.model.lock().await;
+        node_history_input::clear_node_history_steps(
+            &node_name,
+            &mut model.input_data.node_histories,
         )
     }
 
