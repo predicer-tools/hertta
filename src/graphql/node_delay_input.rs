@@ -1,4 +1,4 @@
-use super::{ValidationError, ValidationErrors};
+use super::{MaybeError, ValidationError, ValidationErrors};
 use crate::input_data_base::{BaseNode, Delay};
 use juniper::GraphQLInputObject;
 
@@ -73,4 +73,16 @@ fn validate_node_creation(
         ))
     }
     errors
+}
+
+pub fn delete_node_delay(from_node: &str, to_node: &str, delays: &mut Vec<Delay>) -> MaybeError {
+    let position = match delays
+        .iter()
+        .position(|d| d.from_node == from_node && d.to_node == to_node)
+    {
+        Some(position) => position,
+        None => return "no such node delay".into(),
+    };
+    delays.swap_remove(position);
+    MaybeError::new_ok()
 }

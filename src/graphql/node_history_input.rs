@@ -8,11 +8,23 @@ pub fn create_node_history(
     node_name: String,
     histories: &mut Vec<BaseNodeHistory>,
     nodes: &Vec<BaseNode>,
-) -> MaybeError {
+) -> ValidationErrors {
     if !nodes.iter().any(|n| n.name == node_name) {
-        return "no such node".into();
+        return ValidationError::new("node_name", "no such node").into();
+    }
+    if histories.iter().any(|h| h.node == node_name) {
+        return ValidationError::new("node_name", "a history for the node exists").into();
     }
     histories.push(BaseNodeHistory::new(node_name));
+    ValidationErrors::default()
+}
+
+pub fn delete_node_history(node_name: &str, histories: &mut Vec<BaseNodeHistory>) -> MaybeError {
+    let position = match histories.iter().position(|h| h.node == node_name) {
+        Some(position) => position,
+        None => return "no such node history".into(),
+    };
+    histories.swap_remove(position);
     MaybeError::new_ok()
 }
 
@@ -81,4 +93,16 @@ fn validate_step_addition(
         ));
     }
     errors
+}
+
+pub fn clear_node_history_steps(
+    node_name: &str,
+    histories: &mut Vec<BaseNodeHistory>,
+) -> MaybeError {
+    let history = match histories.iter_mut().find(|h| h.node == node_name) {
+        Some(history) => history,
+        None => return "no such node history".into(),
+    };
+    history.steps.clear();
+    MaybeError::new_ok()
 }
