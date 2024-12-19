@@ -1,7 +1,7 @@
 mod arrow_errors;
 
 use crate::input_data;
-use crate::input_data::{InputData, Market};
+use crate::input_data::{Inflow, InputData, Market};
 use crate::{TimeLine, TimeStamp};
 use arrow::array::{
     Array, ArrayRef, BooleanArray, Float64Array, Int32Array, Int64Array, StringArray,
@@ -1735,66 +1735,59 @@ fn market_balance_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, 
 fn nodes_inflow_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let temporals_t = &input_data.temporals.t;
     let nodes = &input_data.nodes;
-
-    // Ensure temporals_t is not empty
     if temporals_t.is_empty() {
         return Err(ArrowError::InvalidArgumentError(
-            "Temporals timestamps are empty".to_string(),
+            "temporals timestamps are empty".to_string(),
         ));
     }
-
     let mut fields = vec![Field::new(
         "t",
         DataType::Timestamp(TimeUnit::Millisecond, None),
         false,
     )];
     let mut columns: Vec<ArrayRef> = Vec::new();
-
-    // Determine the common length using the timestamps of the temporals
     let timestamps = temporals_t.clone();
     let common_length = timestamps.len();
     let timestamp_array = times_stamp_array_from_temporal_stamps(&timestamps) as ArrayRef;
     columns.push(timestamp_array);
-
-    // Collect inflow data for each node and scenario
     for (node_name, node) in nodes {
-        if node.inflow.ts_data.is_empty()
-            || node.inflow.ts_data.iter().all(|ts| ts.series.is_empty())
-        {
+        let inflow = match node.inflow {
+            Inflow::TimeSeriesData(ref ts_data) => ts_data,
+            Inflow::TemperatureForecast(..) => {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "temperature forecast inflow has not been replaced by time series data"
+                )))
+            }
+        };
+        if inflow.ts_data.is_empty() || inflow.ts_data.iter().all(|ts| ts.series.is_empty()) {
             continue;
         }
-        for ts in &node.inflow.ts_data {
+        for ts in &inflow.ts_data {
             if ts.series.is_empty() {
                 continue;
             }
             check_timestamps_match(temporals_t, ts)?;
             let column_name = format!("{},{}", node_name, ts.scenario);
             fields.push(Field::new(&column_name, DataType::Float64, true));
-
-            // Prepare values and ensure they have the same length as the timestamps
             let values: Vec<Option<f64>> = timestamps
                 .iter()
                 .map(|t| ts.series.get(t).copied())
                 .collect();
-
             if values.len() != common_length {
                 return Err(ArrowError::InvalidArgumentError(format!(
-                    "Inconsistent data length for node '{}', scenario '{}': expected {}, got {}",
+                    "inconsistent data length for node '{}', scenario '{}': expected {}, got {}",
                     node_name,
                     ts.scenario,
                     common_length,
                     values.len()
                 )));
             }
-
             let value_array = Arc::new(Float64Array::from(values)) as ArrayRef;
             columns.push(value_array);
         }
     }
-
     let schema = Arc::new(Schema::new(fields));
     let record_batch = RecordBatch::try_new(schema, columns)?;
-
     Ok(record_batch)
 }
 

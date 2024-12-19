@@ -1,8 +1,8 @@
 use crate::graphql::HerttaContext;
 use crate::input_data::{
-    ConFactor, GenConstraint, Group, GroupType, InflowBlock, InputData, InputDataSetup, Market,
-    Name, Node, NodeDiffusion, NodeHistory, Process, State, Temporals, TimeSeries, TimeSeriesData,
-    Topology,
+    ConFactor, GenConstraint, Group, GroupType, Inflow, InflowBlock, InputData, InputDataSetup,
+    Market, Name, Node, NodeDiffusion, NodeHistory, Process, State, TemperatureForecast, Temporals,
+    TimeSeries, TimeSeriesData, Topology,
 };
 use crate::scenarios::Scenario;
 use crate::time_line_settings::Duration;
@@ -576,6 +576,29 @@ impl BaseProcess {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
+pub struct Constant {
+    value: f64,
+}
+
+impl From<f64> for Constant {
+    fn from(value: f64) -> Self {
+        Constant { value }
+    }
+}
+
+impl From<&f64> for Constant {
+    fn from(value: &f64) -> Self {
+        Constant { value: *value }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, GraphQLUnion, Serialize)]
+pub enum BaseInflow {
+    Constant(Constant),
+    TemperatureForecast(TemperatureForecast),
+}
+
 #[derive(Clone, Debug, Deserialize, Name, Serialize)]
 pub struct BaseNode {
     pub name: String,
@@ -585,7 +608,7 @@ pub struct BaseNode {
     pub is_res: bool,
     pub state: Option<State>,
     pub cost: Option<f64>,
-    pub inflow: Option<f64>,
+    pub inflow: Option<BaseInflow>,
 }
 
 impl TypeName for BaseNode {
@@ -611,7 +634,19 @@ impl ExpandToTimeSeries for BaseNode {
             is_inflow: self.inflow.is_some(),
             state: self.state.clone(),
             cost: expand_optional_time_series(self.cost, time_line, scenarios),
-            inflow: expand_optional_time_series(self.inflow, time_line, scenarios),
+            inflow: match self.inflow {
+                Some(ref inflow) => match inflow {
+                    BaseInflow::Constant(inflow) => Inflow::TimeSeriesData(
+                        expand_optional_time_series(Some(inflow.value), time_line, scenarios),
+                    ),
+                    BaseInflow::TemperatureForecast(forecast) => {
+                        Inflow::TemperatureForecast(forecast.clone())
+                    }
+                },
+                None => {
+                    Inflow::TimeSeriesData(expand_optional_time_series(None, time_line, scenarios))
+                }
+            },
         }
     }
 }
@@ -656,8 +691,8 @@ impl BaseNode {
     fn cost(&self) -> Option<f64> {
         self.cost
     }
-    fn inflow(&self) -> Option<f64> {
-        self.inflow
+    fn inflow(&self) -> &Option<BaseInflow> {
+        &self.inflow
     }
 }
 
@@ -1470,7 +1505,7 @@ mod tests {
             is_res: false,
             state: None,
             cost: Some(1.1),
-            inflow: Some(1.2),
+            inflow: Some(BaseInflow::Constant(1.2.into())),
         };
         let node = base_node.expand_to_time_series(&time_line, &scenarios);
         let base_node_diffusion = BaseNodeDiffusion {
@@ -1706,7 +1741,7 @@ mod tests {
             is_res: false,
             state: None,
             cost: Some(1.1),
-            inflow: Some(1.2),
+            inflow: Some(BaseInflow::Constant(1.2.into())),
         };
         let node = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(node.name, "East");
@@ -1717,10 +1752,13 @@ mod tests {
         assert!(!node.is_res);
         assert!(node.is_inflow);
         assert!(node.state.is_none());
-        assert_eq!(
-            node.inflow,
-            to_time_series_data(1.2, &time_line, &scenarios)
-        );
+        match node.inflow {
+            Inflow::TemperatureForecast(_) => panic!("inflow should not be temperature forecast"),
+            Inflow::TimeSeriesData(time_series_data) => assert_eq!(
+                time_series_data,
+                to_time_series_data(1.2, &time_line, &scenarios)
+            ),
+        };
     }
     #[test]
     fn expanding_node_diffusion_works() {
@@ -1979,7 +2017,7 @@ mod tests {
             res_nodes[0].is_res = true;
             assert!(find_input_node_names(res_nodes.iter()).is_empty());
             let mut inflow_nodes = vec![BaseNode::new("inflow".to_string())];
-            inflow_nodes[0].inflow = Some(2.3);
+            inflow_nodes[0].inflow = Some(BaseInflow::Constant(2.3.into()));
             assert!(find_input_node_names(inflow_nodes.iter()).is_empty());
         }
         #[test]
