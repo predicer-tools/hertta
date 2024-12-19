@@ -23,7 +23,7 @@ use warp::Filter;
 struct CommandLineArgs {
     #[arg(long, help = "write settings file and exit")]
     write_settings: bool,
-    #[arg(long, help = "print GraphQL schema in JSON and exit")]
+    #[arg(long, help = "print GraphQL schema and exit")]
     print_schema: bool,
 }
 
