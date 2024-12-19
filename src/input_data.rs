@@ -68,9 +68,19 @@ impl InputData {
             for ts_data in &node.cost.ts_data {
                 check_series(&ts_data, temporals_t, node_name)?;
             }
-            for ts_data in &node.inflow.ts_data {
-                check_series(&ts_data, temporals_t, node_name)?;
-            }
+            match node.inflow {
+                Inflow::TimeSeriesData(ref inflow) => {
+                    for ts_data in &inflow.ts_data {
+                        check_series(&ts_data, temporals_t, node_name)?;
+                    }
+                }
+                Inflow::TemperatureForecast(_) => {
+                    return Err(format!(
+                        "temperature forecast has not been written to {}",
+                        node_name
+                    ))
+                }
+            };
         }
         for node_diffusion in &self.node_diffusion {
             for ts_data in &node_diffusion.coefficient.ts_data {
@@ -158,7 +168,24 @@ pub struct Process {
     pub eff_fun: Vec<(f64, f64)>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Name)]
+#[derive(Clone, Debug, Deserialize, GraphQLObject, Name, PartialEq, Serialize)]
+pub struct TemperatureForecast {
+    name: String,
+}
+
+impl TemperatureForecast {
+    pub fn new(name: String) -> Self {
+        TemperatureForecast { name }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub enum Inflow {
+    TemperatureForecast(TemperatureForecast),
+    TimeSeriesData(TimeSeriesData),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Name)]
 pub struct Node {
     pub name: String,
     pub groups: Vec<String>,
@@ -169,7 +196,7 @@ pub struct Node {
     pub is_inflow: bool,
     pub state: Option<State>,
     pub cost: TimeSeriesData,
-    pub inflow: TimeSeriesData,
+    pub inflow: Inflow,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
@@ -395,6 +422,12 @@ pub struct State {
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct TimeSeriesData {
     pub ts_data: Vec<TimeSeries>,
+}
+
+impl From<Vec<TimeSeries>> for TimeSeriesData {
+    fn from(value: Vec<TimeSeries>) -> Self {
+        TimeSeriesData { ts_data: value }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]

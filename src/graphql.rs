@@ -665,6 +665,19 @@ impl Mutation {
         state_input::update_state_in_node(state, node_name, &mut model.input_data.nodes)
     }
 
+    async fn connect_node_inflow_to_temperature_forecast(
+        node_name: String,
+        forecast_name: String,
+        context: &HerttaContext,
+    ) -> MaybeError {
+        let mut model = context.model.lock().await;
+        node_input::connect_node_inflow_to_temperature_forecast(
+            &node_name,
+            forecast_name,
+            &mut model.input_data.nodes,
+        )
+    }
+
     #[graphql(description = "Delete a node and all items that depend on that node.")]
     async fn delete_node(name: String, context: &HerttaContext) -> MaybeError {
         let mut model_ref = context.model.lock().await;

@@ -6,7 +6,7 @@ use super::time_series;
 use super::utilities;
 use super::weather_forecast_job;
 use super::{ElectricityPriceData, OptimizationData, WeatherData};
-use crate::input_data::{InputData, Market, TimeSeries, TimeSeriesData};
+use crate::input_data::{Inflow, InputData, Market, TimeSeries, TimeSeriesData};
 use crate::input_data_base::{self, BaseInputData, BaseProcess};
 use crate::model::Model;
 use crate::scenarios::Scenario;
@@ -622,7 +622,7 @@ async fn generate_model_task(
         let weather_data = optimization_data.weather_data.take().ok_or(
             "update_model_data_task: weather data missing in optimization data".to_string(),
         )?;
-        if let Err(e) = update_outside_node_inflow(&mut input_data, weather_data) {
+        if let Err(e) = update_outside_node(&mut input_data, weather_data) {
             return Err(format!(
                 "update_model_data_task: failed to update outside node inflow: {}",
                 e
@@ -671,20 +671,76 @@ fn update_npe_market_prices(
     }
 }
 
-fn update_outside_node_inflow(
+fn update_outside_node(
     input_data: &mut InputData,
     weather_data: WeatherData,
 ) -> Result<(), String> {
-    let outside_node_name = "outside";
     let nodes = &mut input_data.nodes;
-    let outside_node = nodes
-        .get_mut(outside_node_name)
-        .ok_or("outside node not found in nodes".to_string())?;
-    if !outside_node.is_inflow {
-        return Err("outside node is not marked for inflow".to_string());
+    for (node_name, node) in nodes {
+        if let Inflow::TemperatureForecast(_) = node.inflow {
+            if !node.is_inflow {
+                return Err(format!("{} node is not marked for inflow", node_name));
+            }
+            let state = match &mut node.state {
+                Some(state) => state,
+                None => return Err(format!("{} node has no state", node_name)),
+            };
+            if !state.is_temp {
+                return Err(format!(
+                    "{} node state is not marked as temperature",
+                    node_name
+                ));
+            }
+            if state.state_min > state.state_max {
+                return Err(format!(
+                    "{} node state has state_min greater than state_max",
+                    node_name
+                ));
+            }
+            let initial_temperature = weather_data
+                .first()
+                .expect("weather data should have at least one time series")
+                .series
+                .values()
+                .next()
+                .expect("weather data should have at least one data point");
+            if state.state_min > *initial_temperature {
+                return Err("forecast temperature is below outside node state_min".to_string());
+            }
+            if state.state_max < *initial_temperature {
+                return Err("forecast temperature is above outside node state_max".to_string());
+            }
+            state.initial_state = *initial_temperature;
+            node.inflow = Inflow::TimeSeriesData(
+                weather_data
+                    .iter()
+                    .map(|d| time_series_diffs(*initial_temperature, d))
+                    .collect::<Vec<TimeSeries>>()
+                    .into(),
+            );
+        }
     }
-    outside_node.inflow.ts_data = weather_data;
     Ok(())
+}
+
+fn time_series_diffs(initial_value: f64, time_series: &TimeSeries) -> TimeSeries {
+    let diff_values = diffs(initial_value, &time_series.series);
+    TimeSeries {
+        scenario: time_series.scenario.clone(),
+        series: diff_values,
+    }
+}
+
+fn diffs(
+    mut initial_value: f64,
+    time_series: &BTreeMap<TimeStamp, f64>,
+) -> BTreeMap<TimeStamp, f64> {
+    let mut diff_values = BTreeMap::new();
+    for (time_stamp, value) in time_series {
+        diff_values.insert(time_stamp.clone(), value - initial_value);
+        initial_value = *value;
+    }
+    diff_values
 }
 
 // Function to create TimeSeriesData from weather values and update the weather_data field in optimization_data

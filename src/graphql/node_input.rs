@@ -1,8 +1,9 @@
 use super::delete;
 use super::{MaybeError, ValidationError, ValidationErrors};
+use crate::input_data::TemperatureForecast;
 use crate::input_data_base::{
-    BaseGenConstraint, BaseInflowBlock, BaseMarket, BaseNode, BaseNodeDiffusion, BaseNodeHistory,
-    BaseProcess, ConstraintFactorType, Delay, NodeGroup,
+    BaseGenConstraint, BaseInflow, BaseInflowBlock, BaseMarket, BaseNode, BaseNodeDiffusion,
+    BaseNodeHistory, BaseProcess, ConstraintFactorType, Delay, NodeGroup,
 };
 use juniper::GraphQLInputObject;
 
@@ -26,7 +27,7 @@ impl NewNode {
             is_res: self.is_res,
             state: None,
             cost: self.cost,
-            inflow: self.inflow,
+            inflow: self.inflow.map(|value| BaseInflow::Constant(value.into())),
         }
     }
 }
@@ -78,6 +79,21 @@ fn validate_node_creation(
         ));
     }
     errors
+}
+
+pub fn connect_node_inflow_to_temperature_forecast(
+    node_name: &str,
+    forecast_name: String,
+    nodes: &mut Vec<BaseNode>,
+) -> MaybeError {
+    let node = match nodes.iter_mut().find(|n| n.name == node_name) {
+        Some(node) => node,
+        None => return "no such node".into(),
+    };
+    node.inflow = Some(BaseInflow::TemperatureForecast(TemperatureForecast::new(
+        forecast_name,
+    )));
+    MaybeError::new_ok()
 }
 
 pub fn delete_node(
