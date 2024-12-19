@@ -11,7 +11,7 @@ pub trait Name {
     fn name(&self) -> &String;
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InputData {
     pub temporals: Temporals,
     pub setup: InputDataSetup,
@@ -28,6 +28,27 @@ pub struct InputData {
     pub inflow_blocks: BTreeMap<String, InflowBlock>,
     pub bid_slots: BTreeMap<String, BidSlot>,
     pub gen_constraints: BTreeMap<String, GenConstraint>,
+}
+
+fn check_forecastable_series(
+    forecastable: &Forecastable,
+    temporals_t: &[TimeStamp],
+    context: &str,
+) -> Result<(), String> {
+    match forecastable {
+        Forecastable::TimeSeriesData(ref series) => {
+            for ts_data in &series.ts_data {
+                check_series(&ts_data, temporals_t, context)?;
+            }
+        }
+        Forecastable::Forecast(_) => {
+            return Err(format!(
+                "{} data has not been replaced forecasted time series",
+                context
+            ))
+        }
+    };
+    Ok(())
 }
 
 fn check_series(
@@ -68,19 +89,7 @@ impl InputData {
             for ts_data in &node.cost.ts_data {
                 check_series(&ts_data, temporals_t, node_name)?;
             }
-            match node.inflow {
-                Inflow::TimeSeriesData(ref inflow) => {
-                    for ts_data in &inflow.ts_data {
-                        check_series(&ts_data, temporals_t, node_name)?;
-                    }
-                }
-                Inflow::TemperatureForecast(_) => {
-                    return Err(format!(
-                        "temperature forecast has not been written to {}",
-                        node_name
-                    ))
-                }
-            };
+            check_forecastable_series(&node.inflow, temporals_t, node_name)?;
         }
         for node_diffusion in &self.node_diffusion {
             for ts_data in &node_diffusion.coefficient.ts_data {
@@ -98,15 +107,9 @@ impl InputData {
             for ts_data in &market.realisation.ts_data {
                 check_series(&ts_data, temporals_t, market_name)?;
             }
-            for ts_data in &market.price.ts_data {
-                check_series(&ts_data, temporals_t, market_name)?;
-            }
-            for ts_data in &market.up_price.ts_data {
-                check_series(&ts_data, temporals_t, market_name)?;
-            }
-            for ts_data in &market.down_price.ts_data {
-                check_series(&ts_data, temporals_t, market_name)?;
-            }
+            check_forecastable_series(&market.price, temporals_t, market_name)?;
+            check_forecastable_series(&market.up_price, temporals_t, market_name)?;
+            check_forecastable_series(&market.down_price, temporals_t, market_name)?;
             for ts_data in &market.reserve_activation_price.ts_data {
                 check_series(&ts_data, temporals_t, market_name)?;
             }
@@ -115,14 +118,14 @@ impl InputData {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Temporals {
     pub t: TimeLine,
     pub dtf: f64,
     pub variable_dt: Option<Vec<(String, f64)>>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct InputDataSetup {
     pub contains_reserves: bool,
     pub contains_online: bool,
@@ -142,7 +145,7 @@ pub struct InputDataSetup {
     pub ramp_dummy_variable_cost: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Name)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Name)]
 pub struct Process {
     pub name: String,
     pub groups: Vec<String>,
@@ -169,19 +172,19 @@ pub struct Process {
 }
 
 #[derive(Clone, Debug, Deserialize, GraphQLObject, Name, PartialEq, Serialize)]
-pub struct TemperatureForecast {
+pub struct Forecast {
     name: String,
 }
 
-impl TemperatureForecast {
+impl Forecast {
     pub fn new(name: String) -> Self {
-        TemperatureForecast { name }
+        Forecast { name }
     }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub enum Inflow {
-    TemperatureForecast(TemperatureForecast),
+pub enum Forecastable {
+    Forecast(Forecast),
     TimeSeriesData(TimeSeriesData),
 }
 
@@ -196,17 +199,17 @@ pub struct Node {
     pub is_inflow: bool,
     pub state: Option<State>,
     pub cost: TimeSeriesData,
-    pub inflow: Inflow,
+    pub inflow: Forecastable,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct NodeDiffusion {
     pub node1: String,
     pub node2: String,
     pub coefficient: TimeSeriesData,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct NodeHistory {
     pub node: String,
     pub steps: TimeSeriesData,
@@ -218,7 +221,7 @@ impl Name for NodeHistory {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Name)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Name)]
 pub struct Market {
     pub name: String,
     pub m_type: String,
@@ -232,9 +235,9 @@ pub struct Market {
     pub min_bid: f64,
     pub max_bid: f64,
     pub fee: f64,
-    pub price: TimeSeriesData,
-    pub up_price: TimeSeriesData,
-    pub down_price: TimeSeriesData,
+    pub price: Forecastable,
+    pub up_price: Forecastable,
+    pub down_price: Forecastable,
     pub reserve_activation_price: TimeSeriesData,
     pub fixed: Vec<(String, f64)>,
 }
@@ -271,7 +274,7 @@ impl Group {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Name)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Name)]
 pub struct InflowBlock {
     pub name: String,
     pub node: String,
@@ -279,7 +282,7 @@ pub struct InflowBlock {
     pub data: TimeSeriesData,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct BidSlot {
     pub market: String,
     pub time_steps: TimeLine,

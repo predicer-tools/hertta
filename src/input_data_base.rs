@@ -1,7 +1,7 @@
 use crate::graphql::HerttaContext;
 use crate::input_data::{
-    ConFactor, GenConstraint, Group, GroupType, Inflow, InflowBlock, InputData, InputDataSetup,
-    Market, Name, Node, NodeDiffusion, NodeHistory, Process, State, TemperatureForecast, Temporals,
+    ConFactor, Forecast, Forecastable, GenConstraint, Group, GroupType, InflowBlock, InputData,
+    InputDataSetup, Market, Name, Node, NodeDiffusion, NodeHistory, Process, State, Temporals,
     TimeSeries, TimeSeriesData, Topology,
 };
 use crate::scenarios::Scenario;
@@ -594,9 +594,10 @@ impl From<&f64> for Constant {
 }
 
 #[derive(Clone, Debug, Deserialize, GraphQLUnion, Serialize)]
-pub enum BaseInflow {
+#[graphql(name = "Forecastable")]
+pub enum BaseForecastable {
     Constant(Constant),
-    TemperatureForecast(TemperatureForecast),
+    Forecast(Forecast),
 }
 
 #[derive(Clone, Debug, Deserialize, Name, Serialize)]
@@ -608,7 +609,7 @@ pub struct BaseNode {
     pub is_res: bool,
     pub state: Option<State>,
     pub cost: Option<f64>,
-    pub inflow: Option<BaseInflow>,
+    pub inflow: Option<BaseForecastable>,
 }
 
 impl TypeName for BaseNode {
@@ -634,19 +635,7 @@ impl ExpandToTimeSeries for BaseNode {
             is_inflow: self.inflow.is_some(),
             state: self.state.clone(),
             cost: expand_optional_time_series(self.cost, time_line, scenarios),
-            inflow: match self.inflow {
-                Some(ref inflow) => match inflow {
-                    BaseInflow::Constant(inflow) => Inflow::TimeSeriesData(
-                        expand_optional_time_series(Some(inflow.value), time_line, scenarios),
-                    ),
-                    BaseInflow::TemperatureForecast(forecast) => {
-                        Inflow::TemperatureForecast(forecast.clone())
-                    }
-                },
-                None => {
-                    Inflow::TimeSeriesData(expand_optional_time_series(None, time_line, scenarios))
-                }
-            },
+            inflow: expand_forecastable_to_time_series(&self.inflow, time_line, scenarios),
         }
     }
 }
@@ -691,7 +680,7 @@ impl BaseNode {
     fn cost(&self) -> Option<f64> {
         self.cost
     }
-    fn inflow(&self) -> &Option<BaseInflow> {
+    fn inflow(&self) -> &Option<BaseForecastable> {
         &self.inflow
     }
 }
@@ -838,6 +827,24 @@ impl MarketDirection {
     }
 }
 
+fn expand_forecastable_to_time_series(
+    forecastable: &Option<BaseForecastable>,
+    time_line: &TimeLine,
+    scenarios: &Vec<Scenario>,
+) -> Forecastable {
+    match forecastable {
+        Some(ref constant_or_forecast) => match constant_or_forecast {
+            BaseForecastable::Constant(ref constant) => Forecastable::TimeSeriesData(
+                expand_optional_time_series(Some(constant.value), time_line, scenarios),
+            ),
+            BaseForecastable::Forecast(ref forecast) => Forecastable::Forecast(forecast.clone()),
+        },
+        None => {
+            Forecastable::TimeSeriesData(expand_optional_time_series(None, time_line, scenarios))
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Name, Serialize)]
 pub struct BaseMarket {
     pub name: String,
@@ -852,9 +859,9 @@ pub struct BaseMarket {
     pub min_bid: f64,
     pub max_bid: f64,
     pub fee: f64,
-    pub price: Option<f64>,
-    pub up_price: Option<f64>,
-    pub down_price: Option<f64>,
+    pub price: Option<BaseForecastable>,
+    pub up_price: Option<BaseForecastable>,
+    pub down_price: Option<BaseForecastable>,
     pub reserve_activation_price: Option<f64>,
     pub fixed: Vec<MarketFix>,
 }
@@ -897,9 +904,9 @@ impl ExpandToTimeSeries for BaseMarket {
             min_bid: self.min_bid,
             max_bid: self.max_bid,
             fee: self.fee,
-            price: expand_optional_time_series(self.price, time_line, scenarios),
-            up_price: expand_optional_time_series(self.up_price, time_line, scenarios),
-            down_price: expand_optional_time_series(self.down_price, time_line, scenarios),
+            price: expand_forecastable_to_time_series(&self.price, time_line, scenarios),
+            up_price: expand_forecastable_to_time_series(&self.up_price, time_line, scenarios),
+            down_price: expand_forecastable_to_time_series(&self.down_price, time_line, scenarios),
             reserve_activation_price: expand_optional_time_series(
                 self.reserve_activation_price,
                 time_line,
@@ -977,14 +984,14 @@ impl BaseMarket {
     fn fee(&self) -> f64 {
         self.fee
     }
-    fn price(&self) -> Option<f64> {
-        self.price
+    fn price(&self) -> &Option<BaseForecastable> {
+        &self.price
     }
-    fn up_price(&self) -> Option<f64> {
-        self.up_price
+    fn up_price(&self) -> &Option<BaseForecastable> {
+        &self.up_price
     }
-    fn down_price(&self) -> Option<f64> {
-        self.down_price
+    fn down_price(&self) -> &Option<BaseForecastable> {
+        &self.down_price
     }
     fn reserve_activation_price(&self) -> Option<f64> {
         self.reserve_activation_price
@@ -1505,7 +1512,7 @@ mod tests {
             is_res: false,
             state: None,
             cost: Some(1.1),
-            inflow: Some(BaseInflow::Constant(1.2.into())),
+            inflow: Some(BaseForecastable::Constant(1.2.into())),
         };
         let node = base_node.expand_to_time_series(&time_line, &scenarios);
         let base_node_diffusion = BaseNodeDiffusion {
@@ -1545,9 +1552,9 @@ mod tests {
             min_bid: 1.2,
             max_bid: 1.3,
             fee: 1.4,
-            price: Some(1.5),
-            up_price: Some(1.6),
-            down_price: Some(1.7),
+            price: Some(BaseForecastable::Constant(1.5.into())),
+            up_price: Some(BaseForecastable::Constant(1.6.into())),
+            down_price: Some(BaseForecastable::Constant(1.7.into())),
             reserve_activation_price: Some(1.8),
             fixed: vec![MarketFix {
                 name: "Fix".to_string(),
@@ -1741,7 +1748,7 @@ mod tests {
             is_res: false,
             state: None,
             cost: Some(1.1),
-            inflow: Some(BaseInflow::Constant(1.2.into())),
+            inflow: Some(BaseForecastable::Constant(1.2.into())),
         };
         let node = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(node.name, "East");
@@ -1753,8 +1760,8 @@ mod tests {
         assert!(node.is_inflow);
         assert!(node.state.is_none());
         match node.inflow {
-            Inflow::TemperatureForecast(_) => panic!("inflow should not be temperature forecast"),
-            Inflow::TimeSeriesData(time_series_data) => assert_eq!(
+            Forecastable::Forecast(_) => panic!("inflow should not be temperature forecast"),
+            Forecastable::TimeSeriesData(time_series_data) => assert_eq!(
                 time_series_data,
                 to_time_series_data(1.2, &time_line, &scenarios)
             ),
@@ -1834,9 +1841,9 @@ mod tests {
             min_bid: 1.2,
             max_bid: 1.3,
             fee: 1.4,
-            price: Some(1.5),
-            up_price: Some(1.6),
-            down_price: Some(1.7),
+            price: Some(BaseForecastable::Constant(1.5.into())),
+            up_price: Some(BaseForecastable::Constant(1.6.into())),
+            down_price: Some(BaseForecastable::Constant(1.7.into())),
             reserve_activation_price: Some(1.8),
             fixed: vec![MarketFix {
                 name: "Fix".to_string(),
@@ -1861,15 +1868,15 @@ mod tests {
         assert_eq!(market.fee, 1.4);
         assert_eq!(
             market.price,
-            to_time_series_data(1.5, &time_line, &scenarios)
+            Forecastable::TimeSeriesData(to_time_series_data(1.5, &time_line, &scenarios))
         );
         assert_eq!(
             market.up_price,
-            to_time_series_data(1.6, &time_line, &scenarios)
+            Forecastable::TimeSeriesData(to_time_series_data(1.6, &time_line, &scenarios))
         );
         assert_eq!(
             market.down_price,
-            to_time_series_data(1.7, &time_line, &scenarios)
+            Forecastable::TimeSeriesData(to_time_series_data(1.7, &time_line, &scenarios))
         );
         assert_eq!(
             market.reserve_activation_price,
@@ -2017,7 +2024,7 @@ mod tests {
             res_nodes[0].is_res = true;
             assert!(find_input_node_names(res_nodes.iter()).is_empty());
             let mut inflow_nodes = vec![BaseNode::new("inflow".to_string())];
-            inflow_nodes[0].inflow = Some(BaseInflow::Constant(2.3.into()));
+            inflow_nodes[0].inflow = Some(BaseForecastable::Constant(2.3.into()));
             assert!(find_input_node_names(inflow_nodes.iter()).is_empty());
         }
         #[test]
