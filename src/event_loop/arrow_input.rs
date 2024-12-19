@@ -1,7 +1,7 @@
 mod arrow_errors;
 
 use crate::input_data;
-use crate::input_data::{Inflow, InputData, Market};
+use crate::input_data::{Forecastable, InputData, Market, TimeSeriesData};
 use crate::{TimeLine, TimeStamp};
 use arrow::array::{
     Array, ArrayRef, BooleanArray, Float64Array, Int32Array, Int64Array, StringArray,
@@ -320,7 +320,6 @@ fn nodes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
 }
 
 fn processes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("processes");
     let processes = &input_data.processes;
     let contains_delay = input_data.setup.contains_delay;
 
@@ -467,7 +466,6 @@ fn groups_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
 }
 
 fn process_topos_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("processes_topos");
     let process_topologys = &input_data.processes;
 
     let schema = Schema::new(vec![
@@ -1102,7 +1100,6 @@ fn market_reserve_activation_price_to_arrow(
 }
 
 fn scenarios_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("scenarios");
     let scenarios = &input_data.scenarios;
 
     // Define the schema for the Arrow RecordBatch
@@ -1143,7 +1140,6 @@ fn scenarios_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError>
 }
 
 fn processes_eff_fun_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("eff fun");
     let processes = &input_data.processes;
 
     // Determine the maximum length of eff_fun across all processes that actually have data
@@ -1221,7 +1217,6 @@ fn reserve_type_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowErr
 }
 
 fn risk_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("risk");
     // Extract risk data from input_data
     let risk = &input_data.risk;
 
@@ -1529,7 +1524,6 @@ fn processes_cf_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowErr
 }
 
 fn market_fixed_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("fixed");
     let markets = &input_data.markets;
 
     // Gather all timestamps and sort them
@@ -1585,6 +1579,13 @@ fn market_fixed_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowErr
     RecordBatch::try_new(schema, columns)
 }
 
+fn try_forecastable_to_time_series_data(forecastable: &Forecastable) -> Option<&TimeSeriesData> {
+    match forecastable {
+        Forecastable::TimeSeriesData(ref ts_data) => Some(ts_data),
+        _ => None,
+    }
+}
+
 fn market_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let temporals_t = &input_data.temporals.t;
     if temporals_t.is_empty() {
@@ -1594,7 +1595,13 @@ fn market_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowErr
     }
     let mut unique_timestamps: BTreeSet<TimeStamp> = BTreeSet::new();
     for market in input_data.markets.values() {
-        for time_series in &market.price.ts_data {
+        let price = try_forecastable_to_time_series_data(&market.price).ok_or_else(|| {
+            ArrowError::InvalidArgumentError(format!(
+                "{} market price has not been replaced by forecasted time series",
+                market.name
+            ))
+        })?;
+        for time_series in &price.ts_data {
             check_timestamps_match(temporals_t, &time_series)?;
             for timestamp in time_series.series.keys() {
                 unique_timestamps.insert(timestamp.clone());
@@ -1619,10 +1626,16 @@ fn market_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowErr
     // Initialize column data
     let mut columns: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     for market in input_data.markets.values() {
-        for data in &market.price.ts_data {
+        let price = try_forecastable_to_time_series_data(&market.price).ok_or_else(|| {
+            ArrowError::InvalidArgumentError(format!(
+                "{} market price has not been replaced by forecasted time series",
+                market.name
+            ))
+        })?;
+        for data in &price.ts_data {
             let scenario = &data.scenario;
-            let column_name = format!("{},{}", market.name, scenario); // Column name format
-            let mut column_data = vec![f64::NAN; sorted_timestamps.len()]; // Fill with NaN for missing data
+            let column_name = format!("{},{}", market.name, scenario);
+            let mut column_data = vec![f64::NAN; sorted_timestamps.len()];
 
             for (timestamp, value) in &data.series {
                 if let Some(pos) = sorted_timestamps.iter().position(|t| t == timestamp) {
@@ -1660,29 +1673,14 @@ fn market_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowErr
 }
 
 fn market_balance_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("market balance");
     let temporals_t = &input_data.temporals.t;
-
-    // Ensure temporals_t is not empty
     if temporals_t.is_empty() {
         return Err(ArrowError::InvalidArgumentError(
             "Temporals timestamps are empty".to_string(),
         ));
     }
-
-    // Check if the timestamps in market price data match temporals_t
-    for market in input_data.markets.values().filter(|m| m.m_type == "energy") {
-        for time_series in &market.up_price.ts_data {
-            check_timestamps_match(temporals_t, time_series)?;
-        }
-        for time_series in &market.down_price.ts_data {
-            check_timestamps_match(temporals_t, time_series)?;
-        }
-    }
-
     // Collect all timestamps and initialize columns using BTreeMap to ensure order
     let mut columns: BTreeMap<String, Vec<f64>> = BTreeMap::new();
-    // If there are no unique timestamps, return an empty RecordBatch
     if temporals_t.is_empty() {
         let schema = Arc::new(Schema::new(vec![Field::new(
             "t",
@@ -1696,8 +1694,18 @@ fn market_balance_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, 
 
     // Initialize column data for up and down prices
     for market in input_data.markets.values().filter(|m| m.m_type == "energy") {
-        for (label, price_data) in [("up", &market.up_price), ("dw", &market.down_price)].iter() {
+        for (label, forecastable_price) in
+            [("up", &market.up_price), ("dw", &market.down_price)].iter()
+        {
+            let price_data =
+                try_forecastable_to_time_series_data(&forecastable_price).ok_or_else(|| {
+                    ArrowError::InvalidArgumentError(format!(
+                        "{} market {} price has not been replaced by forecasted time series",
+                        market.name, label
+                    ))
+                })?;
             for data in &price_data.ts_data {
+                check_timestamps_match(temporals_t, data)?;
                 let column_name = format!("{},{},{}", market.name, label, data.scenario);
                 let mut column_data = vec![f64::NAN; temporals_t.len()];
 
@@ -1751,14 +1759,12 @@ fn nodes_inflow_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowErr
     let timestamp_array = times_stamp_array_from_temporal_stamps(&timestamps) as ArrayRef;
     columns.push(timestamp_array);
     for (node_name, node) in nodes {
-        let inflow = match node.inflow {
-            Inflow::TimeSeriesData(ref ts_data) => ts_data,
-            Inflow::TemperatureForecast(..) => {
-                return Err(ArrowError::InvalidArgumentError(format!(
-                    "temperature forecast inflow has not been replaced by time series data"
-                )))
-            }
-        };
+        let inflow = try_forecastable_to_time_series_data(&node.inflow).ok_or_else(|| {
+            ArrowError::InvalidArgumentError(format!(
+                "{} inflow has not been replaced by forecasted temperature",
+                node_name
+            ))
+        })?;
         if inflow.ts_data.is_empty() || inflow.ts_data.iter().all(|ts| ts.series.is_empty()) {
             continue;
         }
@@ -1792,7 +1798,6 @@ fn nodes_inflow_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowErr
 }
 
 fn nodes_commodity_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
-    //println!("nodes commodity");
     let temporals_t = &input_data.temporals.t;
     let nodes = &input_data.nodes;
 

@@ -6,7 +6,7 @@ use super::time_series;
 use super::utilities;
 use super::weather_forecast_job;
 use super::{ElectricityPriceData, OptimizationData, WeatherData};
-use crate::input_data::{Inflow, InputData, Market, TimeSeries, TimeSeriesData};
+use crate::input_data::{Forecastable, InputData, Market, TimeSeries, TimeSeriesData};
 use crate::input_data_base::{self, BaseInputData, BaseProcess};
 use crate::model::Model;
 use crate::scenarios::Scenario;
@@ -651,24 +651,26 @@ fn update_npe_market_prices(
     markets: &mut BTreeMap<String, Market>,
     electricity_price_data: ElectricityPriceData,
 ) -> Result<(), String> {
-    let electricity_market_name = "npe";
-    if let Some(npe_market) = markets.get_mut(electricity_market_name) {
-        if let Some(price_data) = &electricity_price_data.price_data {
-            npe_market.price.ts_data = price_data.ts_data.clone();
+    for market in markets.values_mut() {
+        if let Forecastable::Forecast(_) = market.price {
+            if let Some(price_data) = &electricity_price_data.price_data {
+                market.price = Forecastable::TimeSeriesData(price_data.ts_data.clone().into());
+            }
         }
-        if let Some(up_price_data) = &electricity_price_data.up_price_data {
-            npe_market.up_price.ts_data = up_price_data.ts_data.clone();
+        if let Forecastable::Forecast(_) = market.up_price {
+            if let Some(up_price_data) = &electricity_price_data.up_price_data {
+                market.up_price =
+                    Forecastable::TimeSeriesData(up_price_data.ts_data.clone().into());
+            }
         }
-        if let Some(down_price_data) = &electricity_price_data.down_price_data {
-            npe_market.down_price.ts_data = down_price_data.ts_data.clone();
+        if let Forecastable::Forecast(_) = market.down_price {
+            if let Some(down_price_data) = &electricity_price_data.down_price_data {
+                market.down_price =
+                    Forecastable::TimeSeriesData(down_price_data.ts_data.clone().into());
+            }
         }
-        return Ok(());
-    } else {
-        return Err(format!(
-            "electricity market '{}' not found in markets",
-            electricity_market_name
-        ));
     }
+    Ok(())
 }
 
 fn update_outside_node(
@@ -677,7 +679,7 @@ fn update_outside_node(
 ) -> Result<(), String> {
     let nodes = &mut input_data.nodes;
     for (node_name, node) in nodes {
-        if let Inflow::TemperatureForecast(_) = node.inflow {
+        if let Forecastable::Forecast(_) = node.inflow {
             if !node.is_inflow {
                 return Err(format!("{} node is not marked for inflow", node_name));
             }
@@ -711,7 +713,7 @@ fn update_outside_node(
                 return Err("forecast temperature is above outside node state_max".to_string());
             }
             state.initial_state = *initial_temperature;
-            node.inflow = Inflow::TimeSeriesData(
+            node.inflow = Forecastable::TimeSeriesData(
                 weather_data
                     .iter()
                     .map(|d| time_series_diffs(*initial_temperature, d))

@@ -1,5 +1,6 @@
 mod con_factor_input;
 mod delete;
+mod forecastable;
 mod gen_constraint_input;
 mod group_input;
 mod input_data_setup_input;
@@ -793,6 +794,22 @@ impl Mutation {
             &mut model.input_data.markets,
             &model.input_data.nodes,
             &model.input_data.process_groups,
+        )
+    }
+
+    #[graphql(
+        description = "Connects market's normal, up and down prices to electricity price forecast."
+    )]
+    async fn connect_market_prices_to_forecast(
+        market_name: String,
+        forecast_name: String,
+        context: &HerttaContext,
+    ) -> MaybeError {
+        let mut model = context.model.lock().await;
+        market_input::connect_market_prices_to_forecast(
+            &market_name,
+            forecast_name,
+            &mut model.input_data.markets,
         )
     }
 

@@ -1,6 +1,10 @@
 use super::delete;
+use super::forecastable;
 use super::{MaybeError, ValidationError, ValidationErrors};
-use crate::input_data_base::{BaseMarket, BaseNode, MarketDirection, MarketType, ProcessGroup};
+use crate::input_data::Forecast;
+use crate::input_data_base::{
+    BaseForecastable, BaseMarket, BaseNode, MarketDirection, MarketType, ProcessGroup,
+};
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
@@ -38,9 +42,9 @@ impl NewMarket {
             min_bid: self.min_bid,
             max_bid: self.max_bid,
             fee: self.fee,
-            price: self.price,
-            up_price: self.up_price,
-            down_price: self.down_price,
+            price: forecastable::to_forecastable(self.price),
+            up_price: forecastable::to_forecastable(self.up_price),
+            down_price: forecastable::to_forecastable(self.down_price),
             reserve_activation_price: self.reserve_activation_price,
             fixed: Vec::new(),
         }
@@ -88,6 +92,25 @@ fn validate_market_creation(
         errors.push(ValidationError::new("min_bid", "greater than max_bid"));
     }
     errors
+}
+
+pub fn connect_market_prices_to_forecast(
+    market_name: &str,
+    forecast_name: String,
+    markets: &mut Vec<BaseMarket>,
+) -> MaybeError {
+    let market = match markets.iter_mut().find(|m| m.name == market_name) {
+        Some(market) => market,
+        None => return "no such market".into(),
+    };
+    market.price = Some(BaseForecastable::Forecast(Forecast::new(
+        forecast_name.clone(),
+    )));
+    market.up_price = Some(BaseForecastable::Forecast(Forecast::new(
+        forecast_name.clone(),
+    )));
+    market.down_price = Some(BaseForecastable::Forecast(Forecast::new(forecast_name)));
+    MaybeError::new_ok()
 }
 
 pub fn delete_market(name: &str, markets: &mut Vec<BaseMarket>) -> MaybeError {
