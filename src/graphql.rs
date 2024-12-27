@@ -186,9 +186,6 @@ pub struct Query;
 #[graphql_object]
 #[graphql(context = HerttaContext)]
 impl Query {
-    fn api_version() -> &'static str {
-        "0.10.0"
-    }
     async fn settings(context: &HerttaContext) -> FieldResult<Settings> {
         let settings = context.settings.lock().await;
         Ok(settings.clone())
