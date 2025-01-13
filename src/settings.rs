@@ -105,11 +105,15 @@ pub fn map_from_environment_variables() -> HashMap<String, String> {
     map
 }
 
-pub fn make_settings_file_path() -> PathBuf {
+pub fn config_path() -> PathBuf {
     directories::ProjectDirs::from("", "", "hertta")
         .expect("system should have a home directory")
-        .preference_dir()
-        .join("settings.toml")
+        .config_local_dir()
+        .to_path_buf()
+}
+
+pub fn make_settings_file_path() -> PathBuf {
+    config_path().join("settings.toml")
 }
 
 fn make_config_builder(

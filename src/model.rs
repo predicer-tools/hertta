@@ -1,7 +1,7 @@
 use crate::graphql::HerttaContext;
 use crate::input_data_base::BaseInputData;
+use crate::settings;
 use crate::time_line_settings::TimeLineSettings;
-use directories::ProjectDirs;
 use juniper::GraphQLObject;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
@@ -16,10 +16,7 @@ pub struct Model {
 }
 
 pub fn make_model_file_path() -> PathBuf {
-    ProjectDirs::from("", "", "hertta")
-        .expect("system should have a home directory")
-        .config_local_dir()
-        .join("model.json")
+    settings::config_path().join("model.json")
 }
 
 pub fn read_model_from_file(file_path: &PathBuf) -> Result<Model, String> {
