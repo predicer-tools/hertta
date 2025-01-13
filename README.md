@@ -24,9 +24,9 @@ In the project root, run:
 ```
 cargo build --release
 ```
-The application reads configuration primarily from environment variables. Additionally, the application can use a settings.toml file (or another path) that is created by an internal make_settings_file_path function.
+The application reads configuration primarily from environment variables. Additionally, the application can use a settings.toml file.
 
-## 4. Generating the settings file
+## 4. Generate the settings file
 
 The application can automatically generate a default settings file for you:
 ```
@@ -35,10 +35,14 @@ cargo run -- --write-settings
 This command:
 - Creates any missing directories for the settings file path.
 - Writes default settings in .toml format.
-- Saves the settings file to the path determined by make_settings_file_path().
 - After running the command, check the console output to see where the file was created. You can then edit the file as needed.
 
-## 5. Running the Server
+## 5. Create Python environment
+
+The application needs a Python environment to fetch weather forecasts.
+The required Python packages are listed at the top of [this file](https://github.com/predicer-tools/hertta/blob/a9ca8e5f584aba733fbb496b26943c805d065492/forecasts/weather_forecast.py#L2).
+
+## 6. Run the Server
 
 Without any additional options the application runs as a normal server:
 ```
@@ -49,7 +53,7 @@ Once started, the server exposes a GraphQL endpoint at http://127.0.0.1:3030/gra
 All GraphQL queries and mutations should be sent as POST requests to this endpoint.
 Because the CORS policy allows any origin, you can safely query the API from your local or remote front-end application.
 
-## 6. Using the GraphQL API
+## 7. Use the GraphQL API
 
 To view the GraphQL schema (in SDL format) to see what queries and mutations are available, use:
 ```
