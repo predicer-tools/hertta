@@ -1,6 +1,7 @@
-use chrono::TimeDelta;
-use juniper::GraphQLObject;
+use chrono::{TimeDelta, Utc, DurationRound};
+use juniper::{GraphQLObject, GraphQLUnion};
 use serde::{Deserialize, Serialize};
+use crate::TimeStamp;
 
 #[derive(Clone, Debug, Deserialize, GraphQLObject, PartialEq, Serialize)]
 #[graphql(description = "Optimization time line settings.")]
@@ -9,6 +10,53 @@ pub struct TimeLineSettings {
     duration: Duration,
     #[graphql(description = "Time step length.")]
     step: Duration,
+}
+
+// Represents predefined start time presets.
+#[derive(Clone, Debug, Deserialize, Serialize, GraphQLUnion, PartialEq)]
+pub enum StartTimePreset {
+    CurrentHour(CurrentHour),
+    Now(Now),
+    NextHour(NextHour),
+}
+
+impl StartTimePreset {
+    pub fn calculate_variant(variant: &str) -> Option<Self> {
+        match variant {
+            "CurrentHour" => {
+                let truncation_duration = TimeDelta::hours(1);
+                let now = Utc::now();
+                let truncated = now.duration_trunc(truncation_duration).ok()?;
+                Some(Self::CurrentHour(CurrentHour { timestamp: truncated }))
+            }
+            "Now" => {
+                Some(Self::Now(Now { timestamp: Utc::now() }))
+            }
+            "NextHour" => {
+                let truncation_duration = TimeDelta::hours(1);
+                let now = Utc::now();
+                let truncated = now.duration_trunc(truncation_duration).ok()?;
+                let next_hour = truncated + TimeDelta::hours(1);
+                Some(Self::NextHour(NextHour { timestamp: next_hour }))
+            }
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, GraphQLObject, PartialEq, Default)]
+pub struct CurrentHour {
+    pub timestamp: TimeStamp,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, GraphQLObject, PartialEq, Default)]
+pub struct Now {
+    pub timestamp: TimeStamp,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, GraphQLObject, PartialEq, Default)]
+pub struct NextHour {
+    pub timestamp: TimeStamp,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, GraphQLObject, PartialEq, Serialize)]
@@ -109,6 +157,50 @@ impl TimeLineSettings {
 mod tests {
     use super::*;
     use std::error::Error;
+    use chrono::Utc;
+
+    #[test]
+    fn test_current_hour() {
+        let preset = StartTimePreset::calculate_variant("CurrentHour").unwrap();
+        if let StartTimePreset::CurrentHour(current_hour) = preset {
+            let now = Utc::now();
+            let expected = now.duration_trunc(TimeDelta::hours(1)).unwrap();
+            assert_eq!(current_hour.timestamp, expected);
+        } else {
+            panic!("Expected CurrentHour variant.");
+        }
+    }
+
+    #[test]
+    fn test_now() {
+        let preset = StartTimePreset::calculate_variant("Now").unwrap();
+        if let StartTimePreset::Now(now) = preset {
+            let current = Utc::now();
+            assert!((now.timestamp - current).num_seconds().abs() < 1);
+        } else {
+            panic!("Expected Now variant.");
+        }
+    }
+
+    #[test]
+    fn test_next_hour() {
+        let preset = StartTimePreset::calculate_variant("NextHour").unwrap();
+        if let StartTimePreset::NextHour(next_hour) = preset {
+            let now = Utc::now();
+            let truncated = now.duration_trunc(TimeDelta::hours(1)).unwrap();
+            let expected = truncated + TimeDelta::hours(1);
+            assert_eq!(next_hour.timestamp, expected);
+        } else {
+            panic!("Expected NextHour variant.");
+        }
+    }
+
+    #[test]
+    fn test_invalid_variant() {
+        let preset = StartTimePreset::calculate_variant("Invalid"); // Passes an invalid input.
+        assert!(preset.is_none()); // Asserts that the result is `None`.
+    }
+    
     #[test]
     fn constructs_time_line_correctly() {
         let duration = Duration::try_new(13, 0, 0).expect("constructing duration should succeed");
