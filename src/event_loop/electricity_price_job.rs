@@ -1,9 +1,9 @@
 use super::job_store::JobStore;
 use super::jobs::{ElectricityPriceOutcome, JobOutcome, JobStatus};
 use crate::settings::Settings;
-use crate::time_line_settings::TimeLineSettings;
+use crate::time_line_settings::{TimeLineSettings, compute_timeline_start};
 use crate::TimeStamp;
-use chrono::{DateTime, DurationRound, TimeDelta, Utc};
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -38,7 +38,7 @@ pub async fn start(
             return;
         }
     };
-    let start_time: TimeStamp = Utc::now().duration_trunc(TimeDelta::hours(1)).unwrap();
+    let start_time = compute_timeline_start(&time_line_settings);
     let end_time = start_time + time_line_settings.duration().to_time_delta();
     match fetch_electricity_prices(&country, &start_time, &end_time).await {
         Ok(forecast) => {

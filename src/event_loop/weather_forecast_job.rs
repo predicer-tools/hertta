@@ -1,9 +1,9 @@
 use super::job_store::JobStore;
 use super::jobs::{JobOutcome, JobStatus, WeatherForecastOutcome};
 use crate::settings::Settings;
-use crate::time_line_settings::TimeLineSettings;
+use crate::time_line_settings::{TimeLineSettings, compute_timeline_start};
 use crate::TimeStamp;
-use chrono::{DurationRound, NaiveDateTime, TimeDelta, Utc};
+use chrono::{NaiveDateTime, TimeDelta};
 use serde_json::Value;
 use std::process::Command;
 use std::sync::Arc;
@@ -37,7 +37,7 @@ pub async fn start(
             return;
         }
     };
-    let start_time: TimeStamp = Utc::now().duration_trunc(TimeDelta::hours(1)).unwrap();
+    let start_time = compute_timeline_start(&time_line_settings);
     let end_time = start_time + time_line_settings.duration().to_time_delta();
     match fetch_weather_data(
         &place,
@@ -157,6 +157,7 @@ mod tests {
     mod parse_weather_fetcher_output {
         use super::*;
         use chrono::TimeZone;
+        use chrono::Utc;
         #[test]
         fn parses_data_correctly() {
             let fetcher_output = r#"

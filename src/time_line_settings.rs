@@ -1,5 +1,5 @@
 use chrono::{TimeDelta, Utc, DurationRound};
-use juniper::{GraphQLObject, GraphQLUnion};
+use juniper::{GraphQLObject, GraphQLUnion, GraphQLEnum};
 use serde::{Deserialize, Serialize};
 use crate::TimeStamp;
 
@@ -10,53 +10,46 @@ pub struct TimeLineSettings {
     duration: Duration,
     #[graphql(description = "Time step length.")]
     step: Duration,
+    #[graphql(description = "Start of the time line.")]
+    start: TimeLineStart,
 }
 
-// Represents predefined start time presets.
 #[derive(Clone, Debug, Deserialize, Serialize, GraphQLUnion, PartialEq)]
-pub enum StartTimePreset {
-    CurrentHour(CurrentHour),
-    Now(Now),
-    NextHour(NextHour),
+#[graphql(description = "Defines the start of the time line.")]
+pub enum TimeLineStart {
+    ClockChoice(ClockChoice),
+    CustomStartTime(CustomStartTime),
 }
 
-impl StartTimePreset {
-    pub fn calculate_variant(variant: &str) -> Option<Self> {
-        match variant {
-            "CurrentHour" => {
-                let truncation_duration = TimeDelta::hours(1);
-                let now = Utc::now();
-                let truncated = now.duration_trunc(truncation_duration).ok()?;
-                Some(Self::CurrentHour(CurrentHour { timestamp: truncated }))
-            }
-            "Now" => {
-                Some(Self::Now(Now { timestamp: Utc::now() }))
-            }
-            "NextHour" => {
-                let truncation_duration = TimeDelta::hours(1);
-                let now = Utc::now();
-                let truncated = now.duration_trunc(truncation_duration).ok()?;
-                let next_hour = truncated + TimeDelta::hours(1);
-                Some(Self::NextHour(NextHour { timestamp: next_hour }))
-            }
-            _ => None,
+#[derive(Clone, Debug, Deserialize, Serialize, GraphQLObject, PartialEq)]
+#[graphql(description = "Defines a clock-based start time.")]
+pub struct ClockChoice {
+    #[graphql(description = "Predefined clock option.")]
+    pub choice: Clock,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, GraphQLEnum, PartialEq)]
+#[graphql(description = "Represents predefined clock options.")]
+pub enum Clock {
+    /// Use the current hour truncated to the nearest hour.
+    CurrentHour,
+}
+
+impl Clock {
+    pub fn calculate_start_time(&self) -> TimeStamp {
+        match self {
+            Clock::CurrentHour => Utc::now()
+                .duration_trunc(chrono::Duration::hours(1))
+                .expect("Truncation to nearest hour should succeed"),
         }
     }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, GraphQLObject, PartialEq, Default)]
-pub struct CurrentHour {
-    pub timestamp: TimeStamp,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, GraphQLObject, PartialEq, Default)]
-pub struct Now {
-    pub timestamp: TimeStamp,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, GraphQLObject, PartialEq, Default)]
-pub struct NextHour {
-    pub timestamp: TimeStamp,
+#[graphql(description = "Represents a user-defined start time.")]
+pub struct CustomStartTime {
+    #[graphql(description = "User-provided start time (ISO 8601).")]
+    pub start_time: TimeStamp,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, GraphQLObject, PartialEq, Serialize)]
@@ -109,14 +102,17 @@ impl Default for TimeLineSettings {
                 .expect("constructing default duration should always succeed"),
             step: Duration::try_new(0, 15, 0)
                 .expect("constructing default step should always succeed"),
+            start: TimeLineStart::ClockChoice(ClockChoice {
+                choice: Clock::CurrentHour,
+            }),
         }
     }
 }
 
 impl TimeLineSettings {
-    pub fn try_new(duration: Duration, step: Duration) -> Result<Self, String> {
-        let time_line = TimeLineSettings { duration, step };
-        time_line.validate()?;
+    pub fn try_new(duration: Duration, step: Duration, start: TimeLineStart) -> Result<Self, String> {
+        let time_line = TimeLineSettings { duration, step, start };
+        time_line.validate()?; // Validate all parameters
         Ok(time_line)
     }
     fn validate(&self) -> Result<(), String> {
@@ -128,7 +124,15 @@ impl TimeLineSettings {
         if step > duration {
             return Err("time line step should not exceed duration".to_string());
         }
+        if let TimeLineStart::CustomStartTime(ref custom_start) = self.start {
+            if custom_start.start_time < Utc::now() {
+                return Err("custom start time cannot be in the past.".to_string());
+            }
+        }
         Ok(())
+    }
+    pub fn start(&self) -> &TimeLineStart {
+        &self.start
     }
     pub fn duration(&self) -> &Duration {
         &self.duration
@@ -153,63 +157,56 @@ impl TimeLineSettings {
     }
 }
 
+pub fn compute_timeline_start(time_line_settings: &TimeLineSettings) -> TimeStamp {
+    match time_line_settings.start() {
+        TimeLineStart::ClockChoice(clock_choice) => {
+            clock_choice.choice.calculate_start_time()
+        }
+        TimeLineStart::CustomStartTime(custom_start) => {
+            custom_start.start_time
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::error::Error;
-    use chrono::Utc;
-
-    #[test]
-    fn test_current_hour() {
-        let preset = StartTimePreset::calculate_variant("CurrentHour").unwrap();
-        if let StartTimePreset::CurrentHour(current_hour) = preset {
-            let now = Utc::now();
-            let expected = now.duration_trunc(TimeDelta::hours(1)).unwrap();
-            assert_eq!(current_hour.timestamp, expected);
-        } else {
-            panic!("Expected CurrentHour variant.");
-        }
-    }
-
-    #[test]
-    fn test_now() {
-        let preset = StartTimePreset::calculate_variant("Now").unwrap();
-        if let StartTimePreset::Now(now) = preset {
-            let current = Utc::now();
-            assert!((now.timestamp - current).num_seconds().abs() < 1);
-        } else {
-            panic!("Expected Now variant.");
-        }
-    }
-
-    #[test]
-    fn test_next_hour() {
-        let preset = StartTimePreset::calculate_variant("NextHour").unwrap();
-        if let StartTimePreset::NextHour(next_hour) = preset {
-            let now = Utc::now();
-            let truncated = now.duration_trunc(TimeDelta::hours(1)).unwrap();
-            let expected = truncated + TimeDelta::hours(1);
-            assert_eq!(next_hour.timestamp, expected);
-        } else {
-            panic!("Expected NextHour variant.");
-        }
-    }
-
-    #[test]
-    fn test_invalid_variant() {
-        let preset = StartTimePreset::calculate_variant("Invalid"); // Passes an invalid input.
-        assert!(preset.is_none()); // Asserts that the result is `None`.
-    }
+    use chrono::{Utc, TimeZone};
     
     #[test]
-    fn constructs_time_line_correctly() {
+    fn constructs_time_line_correctly_with_current_hour() {
         let duration = Duration::try_new(13, 0, 0).expect("constructing duration should succeed");
         let step = Duration::try_new(0, 15, 0).expect("constructing step should succeed");
-        let time_line = TimeLineSettings::try_new(duration, step)
+        let start = TimeLineStart::ClockChoice(ClockChoice {
+            choice: Clock::CurrentHour,
+        });
+        let time_line = TimeLineSettings::try_new(duration, step, start)
             .expect("time line construction should succeed");
         assert_eq!(time_line.duration().to_time_delta(), TimeDelta::hours(13));
         assert_eq!(time_line.step().to_time_delta(), TimeDelta::minutes(15));
+        if let TimeLineStart::ClockChoice(clock_choice) = time_line.start() {
+            assert_eq!(clock_choice.choice, Clock::CurrentHour);
+        } else {
+            panic!("Expected ClockChoice for start.");
+        }
     }
+
+    #[test]
+    fn rejects_past_custom_start_time() {
+        let duration = Duration::try_new(4, 0, 0).expect("constructing duration should succeed");
+        let step = Duration::try_new(0, 15, 0).expect("constructing step should succeed");
+        let custom_start_time = CustomStartTime {
+            start_time: Utc.with_ymd_and_hms(2020, 1, 1, 12, 0, 0).unwrap(),
+        };
+        let start = TimeLineStart::CustomStartTime(custom_start_time);
+        if let Err(message) = TimeLineSettings::try_new(duration, step, start) {
+            assert_eq!(message, "custom start time cannot be in the past.");
+        } else {
+            panic!("Validation should have failed for past custom start time.");
+        }
+    }
+
     #[test]
     fn cannot_construct_non_positive_durations() {
         match Duration::try_new(-1, 0, 0) {
@@ -229,7 +226,10 @@ mod tests {
     fn rejects_too_long_durations() -> Result<(), Box<dyn Error>> {
         let duration = Duration::try_new(25, 0, 0).expect("constructing duration should succeed");
         let step = Duration::try_new(0, 15, 0).expect("constructing step should succeed");
-        if let Err(message) = TimeLineSettings::try_new(duration, step) {
+        let start = TimeLineStart::ClockChoice(ClockChoice {
+            choice: Clock::CurrentHour,
+        });
+        if let Err(message) = TimeLineSettings::try_new(duration, step, start) {
             assert_eq!(message, "time line duration should not exceed 24 hours");
         } else {
             return Err("validation should have failed".into());
@@ -240,7 +240,10 @@ mod tests {
     fn rejects_steps_that_are_longer_than_duration() -> Result<(), Box<dyn Error>> {
         let duration = Duration::try_new(4, 0, 0).expect("constructing duration should succeed");
         let step = Duration::try_new(5, 0, 0).expect("constructing step should succeed");
-        if let Err(message) = TimeLineSettings::try_new(duration, step) {
+        let start = TimeLineStart::ClockChoice(ClockChoice {
+            choice: Clock::CurrentHour,
+        });
+        if let Err(message) = TimeLineSettings::try_new(duration, step, start) {
             assert_eq!(message, "time line step should not exceed duration");
         } else {
             return Err("validation should have failed".into());

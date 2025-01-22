@@ -440,6 +440,12 @@ pub struct TimeSeries {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+pub struct ScenarioSeries {
+    pub scenario: String,
+    pub series: BTreeMap<TimeStamp, f64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct ConFactor {
     pub var_type: String,
     pub var_tuple: (String, String),

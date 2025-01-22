@@ -11,7 +11,7 @@ use crate::input_data_base::{self, BaseInputData, BaseProcess};
 use crate::model::Model;
 use crate::scenarios::Scenario;
 use crate::settings::{LocationSettings, Settings};
-use crate::time_line_settings::TimeLineSettings;
+use crate::time_line_settings::{TimeLineSettings, compute_timeline_start};
 use crate::{TimeLine, TimeStamp};
 use arrow::array::timezone::Tz;
 use arrow::array::{self, Array};
@@ -56,7 +56,7 @@ pub async fn start(
     let settings_snapshot = settings.lock().await.clone();
     let model_snapshot = model.lock().await.clone();
     let optimization_data = OptimizationData::with_input_data(model_snapshot.input_data);
-    let start_time: TimeStamp = Utc::now().duration_trunc(TimeDelta::hours(1)).unwrap();
+    let start_time = compute_timeline_start(&model_snapshot.time_line);
     let control_processes = match expected_control_processes(&optimization_data.input_data) {
         Ok(names) => names,
         Err(error) => {
