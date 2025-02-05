@@ -4,7 +4,7 @@ use super::{MaybeError, ValidationError, ValidationErrors};
 use crate::input_data::Forecast;
 use crate::input_data_base::{
     BaseForecastable, BaseGenConstraint, BaseInflowBlock, BaseMarket, BaseNode, BaseNodeDiffusion,
-    BaseNodeHistory, BaseProcess, ConstraintFactorType, Delay, NodeGroup,
+    BaseNodeHistory, BaseProcess, ConstraintFactorType, Delay, NodeGroup, ValueInput, Value,
 };
 use juniper::GraphQLInputObject;
 
@@ -14,7 +14,7 @@ pub struct NewNode {
     is_commodity: bool,
     is_market: bool,
     is_res: bool,
-    cost: Option<f64>,
+    cost: Vec<ValueInput>,
     inflow: Option<f64>,
 }
 
@@ -27,7 +27,12 @@ impl NewNode {
             is_market: self.is_market,
             is_res: self.is_res,
             state: None,
-            cost: self.cost,
+            cost: self
+            .cost
+            .into_iter()
+            .map(Value::try_from)
+            .collect::<Result<Vec<Value>, _>>()
+            .expect("Could not parse cost values"),
             inflow: forecastable::to_forecastable(self.inflow),
         }
     }

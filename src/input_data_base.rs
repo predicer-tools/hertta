@@ -8,12 +8,196 @@ use crate::scenarios::Scenario;
 use crate::time_line_settings::Duration;
 use crate::{TimeLine, TimeStamp};
 use hertta_derive::{Members, Name};
-use juniper::{graphql_object, FieldResult, GraphQLEnum, GraphQLObject, GraphQLUnion};
+use juniper::{graphql_object, FieldResult, GraphQLEnum, GraphQLObject, GraphQLUnion, GraphQLInputObject};
 use serde::{self, Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+use std::convert::TryFrom;
 
 pub trait TypeName {
     fn type_name() -> &'static str;
+}
+
+#[derive(GraphQLInputObject, Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ValueInput {
+    pub scenario: Option<String>, 
+    pub constant: Option<f64>,  
+    pub series: Option<Vec<f64>>, 
+}
+
+#[derive(GraphQLObject, Clone, Debug, Deserialize, Serialize)]
+pub struct Value {
+    pub scenario: Option<String>, 
+    pub value: SeriesValue,
+}
+
+impl TryFrom<ValueInput> for Value {
+    type Error = String;
+
+    fn try_from(input: ValueInput) -> Result<Self, Self::Error> {
+        let scenario = input.scenario;
+
+        let value = match (input.constant, input.series) {
+            (Some(constant), None) => SeriesValue::Constant(Constant { value: constant }),
+            (None, Some(series)) => SeriesValue::FloatList(FloatList { values: series }),
+            (Some(_), Some(_)) => {
+                // Explicitly handle this case and return an error
+                return Err(
+                    "ValueInput cannot have both `constant` and `series` populated simultaneously."
+                        .to_string(),
+                );
+            }
+            // If both are None, default to a constant with a value of 0.0
+            (None, None) => SeriesValue::Constant(Constant { value: 0.0 }),
+        };
+
+        Ok(Value { scenario, value })
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
+pub struct Constant {
+    value: f64,
+}
+
+impl From<f64> for Constant {
+    fn from(value: f64) -> Self {
+        Constant { value }
+    }
+}
+
+impl From<&f64> for Constant {
+    fn from(value: &f64) -> Self {
+        Constant { value: *value }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
+pub struct FloatList {
+    values: Vec<f64>,
+}
+
+#[derive(Clone, Debug, GraphQLUnion, Deserialize, Serialize)]
+pub enum SeriesValue {
+    Constant(Constant),
+    FloatList(FloatList),
+}
+
+fn convert_value_to_series(value: &Value, timeline: &TimeLine) -> Result<BTreeMap<TimeStamp, f64>, String> {
+    match &value.value {
+        SeriesValue::Constant(constant) => {
+            let series: BTreeMap<TimeStamp, f64> = timeline
+                .iter()
+                .cloned()
+                .map(|ts| (ts, constant.value))
+                .collect();
+            Ok(series)
+        },
+        SeriesValue::FloatList(float_list) => {
+            if float_list.values.len() != timeline.len() {
+                return Err(format!(
+                    "time series mismatch in FloatList, expected length {}, found {}",
+                    timeline.len(),
+                    float_list.values.len()
+                ));
+            }
+            let series: BTreeMap<TimeStamp, f64> = timeline
+                .iter()
+                .cloned()
+                .zip(float_list.values.iter().cloned())
+                .collect();
+            Ok(series)
+        },
+    }
+}
+
+fn values_to_time_series_data(
+    values: Vec<Value>, 
+    scenarios: Vec<Scenario>, 
+    timeline: TimeLine
+) -> Result<TimeSeriesData, String> {
+    // Step 1: Identify Default Values (scenario = None)
+    let default_values: Vec<&Value> = values.iter()
+        .filter(|v| v.scenario.is_none())
+        .collect();
+    
+    if default_values.len() > 1 {
+        return Err("Multiple default values found (scenario = None)".to_string());
+    }
+    
+    // Convert Default Value to TimeSeries (if it exists)
+    let default_series_option = if let Some(default_value) = default_values.first() {
+        let default_series = convert_value_to_series(default_value, &timeline)?;
+        Some(default_series)
+    } else {
+        None
+    };
+    
+    // Step 2: Convert Scenario-Specific Values to TimeSeries
+    let mut ts_vec: Vec<TimeSeries> = Vec::new();
+    
+    // Track scenarios that have associated Values
+    let mut scenarios_with_values: HashSet<String> = HashSet::new();
+    
+    for value in &values {
+        if value.scenario.is_none() {
+            // Convert to "Default" TimeSeries
+            let default_ts = TimeSeries {
+                scenario: "Default".to_string(),
+                series: convert_value_to_series(value, &timeline)?,
+            };
+            ts_vec.push(default_ts);
+        } else {
+            let scenario_name = value.scenario.as_ref().unwrap();
+            // Verify the scenario exists
+            let scenario_exists = scenarios.iter()
+                .any(|s| s.name() == scenario_name);
+            if !scenario_exists {
+                return Err(format!(
+                    "Scenario '{}' specified in Value does not exist in provided scenarios",
+                    scenario_name
+                ));
+            }
+            scenarios_with_values.insert(scenario_name.clone());
+            // Convert Value to TimeSeries
+            let series = convert_value_to_series(value, &timeline)?;
+            let ts = TimeSeries {
+                scenario: scenario_name.clone(),
+                series,
+            };
+            ts_vec.push(ts);
+        }
+    }
+    
+    // Step 3: Handle Missing Scenarios by Using Default Series
+    if let Some(default_series) = default_series_option {
+        for scenario in &scenarios {
+            if !scenarios_with_values.contains(scenario.name().as_str()) {
+                let ts = TimeSeries {
+                    scenario: scenario.name().clone(),
+                    series: default_series.clone(),
+                };
+                ts_vec.push(ts);
+            }
+        }
+    } else {
+        // If there are scenarios without Values and no default series, return an error
+        let scenarios_without_values: Vec<&Scenario> = scenarios.iter()
+            .filter(|s| !scenarios_with_values.contains(s.name().as_str()))
+            .collect();
+        if !scenarios_without_values.is_empty() {
+            let missing_scenarios: Vec<String> = scenarios_without_values.iter()
+                .map(|s| s.name().clone())
+                .collect();
+            return Err(format!(
+                "Missing default values for scenarios: {:?}",
+                missing_scenarios
+            ));
+        }
+    }
+    
+    // Step 4: Assemble TimeSeriesData
+    let ts_data = TimeSeriesData::from(ts_vec);
+    Ok(ts_data)
 }
 
 pub trait ExpandToTimeSeries {
@@ -576,23 +760,6 @@ impl BaseProcess {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
-pub struct Constant {
-    value: f64,
-}
-
-impl From<f64> for Constant {
-    fn from(value: f64) -> Self {
-        Constant { value }
-    }
-}
-
-impl From<&f64> for Constant {
-    fn from(value: &f64) -> Self {
-        Constant { value: *value }
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, GraphQLUnion, Serialize)]
 #[graphql(name = "Forecastable")]
 pub enum BaseForecastable {
@@ -608,7 +775,7 @@ pub struct BaseNode {
     pub is_market: bool,
     pub is_res: bool,
     pub state: Option<State>,
-    pub cost: Option<f64>,
+    pub cost: Vec<Value>,
     pub inflow: Option<BaseForecastable>,
 }
 
@@ -620,6 +787,7 @@ impl TypeName for BaseNode {
 
 impl ExpandToTimeSeries for BaseNode {
     type Expanded = Node;
+    
     fn expand_to_time_series(
         &self,
         time_line: &TimeLine,
@@ -634,7 +802,13 @@ impl ExpandToTimeSeries for BaseNode {
             is_res: self.is_res,
             is_inflow: self.inflow.is_some(),
             state: self.state.clone(),
-            cost: expand_optional_time_series(self.cost, time_line, scenarios),
+            cost: values_to_time_series_data(self.cost.clone(), scenarios.clone(), time_line.clone())
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "Failed to convert 'cost' to TimeSeriesData for node '{}': {}",
+                        self.name, err
+                    )
+                }),
             inflow: expand_forecastable_to_time_series(&self.inflow, time_line, scenarios),
         }
     }
@@ -677,8 +851,8 @@ impl BaseNode {
     fn state(&self) -> &Option<State> {
         &self.state
     }
-    fn cost(&self) -> Option<f64> {
-        self.cost
+    fn cost(&self) -> &Vec<Value> {
+        &self.cost
     }
     fn inflow(&self) -> &Option<BaseForecastable> {
         &self.inflow
@@ -694,7 +868,7 @@ impl BaseNode {
             is_market: false,
             is_res: false,
             state: None,
-            cost: None,
+            cost: Vec::new(),
             inflow: None,
         }
     }
@@ -1511,7 +1685,10 @@ mod tests {
             is_market: false,
             is_res: false,
             state: None,
-            cost: Some(1.1),
+            cost: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.1 }),
+            }],
             inflow: Some(BaseForecastable::Constant(1.2.into())),
         };
         let node = base_node.expand_to_time_series(&time_line, &scenarios);
@@ -1747,7 +1924,10 @@ mod tests {
             is_market: false,
             is_res: false,
             state: None,
-            cost: Some(1.1),
+            cost: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.1 }),
+            }],
             inflow: Some(BaseForecastable::Constant(1.2.into())),
         };
         let node = base.expand_to_time_series(&time_line, &scenarios);
@@ -2142,5 +2322,277 @@ mod tests {
             expected_series.insert(time_line[1], 23.0);
             assert_eq!(time_series.series, expected_series)
         }
+    }
+
+    #[test]
+    fn try_from_value_input_with_constant_only() {
+        let input = ValueInput {
+            scenario: Some("test_scenario".to_string()),
+            constant: Some(42.0),
+            series: None,
+        };
+
+        let value = Value::try_from(input).unwrap();
+        assert_eq!(value.scenario, Some("test_scenario".to_string()));
+        match value.value {
+            SeriesValue::Constant(constant) => assert_eq!(constant.value, 42.0),
+            _ => panic!("Expected SeriesValue::Constant"),
+        }
+    }
+    #[test]
+    fn try_from_value_input_with_series_only() {
+        let input = ValueInput {
+            scenario: Some("test_scenario".to_string()),
+            constant: None,
+            series: Some(vec![1.0, 2.0, 3.0]),
+        };
+
+        let value = Value::try_from(input).unwrap();
+        assert_eq!(value.scenario, Some("test_scenario".to_string()));
+        match value.value {
+            SeriesValue::FloatList(float_list) => assert_eq!(float_list.values, vec![1.0, 2.0, 3.0]),
+            _ => panic!("Expected SeriesValue::FloatList"),
+        }
+    }
+
+    #[test]
+    fn try_from_value_input_with_both_constant_and_series() {
+        let input = ValueInput {
+            scenario: Some("invalid_scenario".to_string()),
+            constant: Some(42.0),
+            series: Some(vec![1.0, 2.0, 3.0]),
+        };
+
+        let result = Value::try_from(input);
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap(),
+            "ValueInput cannot have both `constant` and `series` populated simultaneously."
+        );
+    }
+
+    #[test]
+    fn try_from_value_input_with_none_for_constant_and_series() {
+        let input = ValueInput {
+            scenario: None,
+            constant: None,
+            series: None,
+        };
+
+        let value = Value::try_from(input).unwrap();
+        assert_eq!(value.scenario, None);
+        match value.value {
+            SeriesValue::Constant(constant) => assert_eq!(constant.value, 0.0),
+            _ => panic!("Expected SeriesValue::Constant with default value 0.0"),
+        }
+    }
+    type TimeLine = Vec<TimeStamp>;
+    fn make_timeline(times: &[(i32, u32, u32, u32, u32, u32)]) -> TimeLine {
+        times
+            .iter()
+            .map(|&(y, m, d, h, min, s)| Utc.with_ymd_and_hms(y, m, d, h, min, s).unwrap().into())
+            .collect()
+    }
+    // Test A single default (scenario = None) constant value is applied to all scenarios.
+    #[test]
+    fn test_values_to_time_series_data_default_constant() {
+        let timeline = make_timeline(&[
+            (2025, 1, 1, 0, 0, 0),
+            (2025, 1, 1, 1, 0, 0),
+            (2025, 1, 1, 2, 0, 0),
+        ]);
+        let scenarios = vec![
+            Scenario::new("S1", 1.0).expect("failed to create scenario"),
+            Scenario::new("S2", 1.0).expect("failed to create scenario"),
+        ];
+        let value = Value {
+            scenario: None,
+            value: SeriesValue::Constant(Constant { value: 42.0 }),
+        };
+        let values = vec![value];
+
+        let result = values_to_time_series_data(values, scenarios.clone(), timeline.clone());
+        assert!(result.is_ok(), "Expected Ok result, got error: {:?}", result.err());
+        let ts_data = result.unwrap();
+
+        assert_eq!(
+            ts_data.ts_data.len(),
+            1 + scenarios.len(),
+            "Expected default + one entry per scenario"
+        );
+
+        for ts in ts_data.ts_data {
+            assert_eq!(ts.series.len(), timeline.len());
+            for (&_ts, &v) in ts.series.iter() {
+                assert_eq!(v, 42.0);
+            }
+            assert!(
+                ts.scenario == "Default"
+                    || scenarios.iter().any(|s| s.name() == &ts.scenario),
+                "Unexpected scenario name: {}",
+                ts.scenario
+            );
+        }
+    }
+    // Test: Two values provided with scenario-specific constant values.
+    #[test]
+    fn test_values_to_time_series_data_scenario_specific() {
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let scenarios = vec![
+            Scenario::new("S1", 1.0).expect("failed to create scenario"),
+            Scenario::new("S2", 1.0).expect("failed to create scenario"),
+        ];
+
+        let value1 = Value {
+            scenario: Some("S1".to_string()),
+            value: SeriesValue::Constant(Constant { value: 10.0 }),
+        };
+        let value2 = Value {
+            scenario: Some("S2".to_string()),
+            value: SeriesValue::Constant(Constant { value: 20.0 }),
+        };
+        let values = vec![value1, value2];
+
+        let result = values_to_time_series_data(values, scenarios.clone(), timeline.clone());
+        assert!(result.is_ok());
+        let ts_data = result.unwrap();
+        assert_eq!(ts_data.ts_data.len(), 2);
+
+        for ts in ts_data.ts_data {
+            assert_eq!(ts.series.len(), timeline.len());
+            match ts.scenario.as_str() {
+                "S1" => {
+                    for &v in ts.series.values() {
+                        assert_eq!(v, 10.0);
+                    }
+                }
+                "S2" => {
+                    for &v in ts.series.values() {
+                        assert_eq!(v, 20.0);
+                    }
+                }
+                other => panic!("Unexpected scenario name: {}", other),
+            }
+        }
+    }
+
+    // Test: When more than one default value is provided, an error is returned.
+    #[test]
+    fn test_values_to_time_series_data_multiple_defaults_error() {
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let scenarios = vec![Scenario::new("S1", 1.0).expect("failed to create scenario")];
+
+        let value1 = Value {
+            scenario: None,
+            value: SeriesValue::Constant(Constant { value: 5.0 }),
+        };
+        let value2 = Value {
+            scenario: None,
+            value: SeriesValue::Constant(Constant { value: 10.0 }),
+        };
+        let values = vec![value1, value2];
+
+        let result = values_to_time_series_data(values, scenarios, timeline);
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap(),
+            "Multiple default values found (scenario = None)".to_string()
+        );
+    }
+
+    // Test: When a scenario-specific value refers to a scenario not in the provided list.
+    #[test]
+    fn test_values_to_time_series_data_nonexistent_scenario_error() {
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let scenarios = vec![Scenario::new("S1", 1.0).expect("failed to create scenario")];
+
+        let value = Value {
+            scenario: Some("S2".to_string()),
+            value: SeriesValue::Constant(Constant { value: 15.0 }),
+        };
+        let values = vec![value];
+
+        let result = values_to_time_series_data(values, scenarios, timeline);
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap(),
+            "Scenario 'S2' specified in Value does not exist in provided scenarios".to_string()
+        );
+    }
+
+    // Test: When a scenario-specific value is given for one scenario but not all scenarios are covered
+    // and no default value is provided, an error is returned.
+    #[test]
+    fn test_values_to_time_series_data_missing_default_error() {
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let scenarios = vec![
+            Scenario::new("S1", 1.0).expect("failed to create scenario"),
+            Scenario::new("S2", 1.0).expect("failed to create scenario"),
+        ];
+
+        let value = Value {
+            scenario: Some("S1".to_string()),
+            value: SeriesValue::Constant(Constant { value: 100.0 }),
+        };
+        let values = vec![value];
+
+        let result = values_to_time_series_data(values, scenarios, timeline);
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap(),
+            "Missing default values for scenarios: [\"S2\"]".to_string()
+        );
+    }
+
+    // Test: A value with a FloatList that matches the timeline length is converted correctly.
+    #[test]
+    fn test_values_to_time_series_data_float_list() {
+        let timeline = make_timeline(&[
+            (2025, 1, 1, 0, 0, 0),
+            (2025, 1, 1, 1, 0, 0),
+            (2025, 1, 1, 2, 0, 0),
+        ]);
+        let scenarios = vec![Scenario::new("S1", 1.0).expect("failed to create scenario")];
+
+        let value = Value {
+            scenario: Some("S1".to_string()),
+            value: SeriesValue::FloatList(FloatList {
+                values: vec![1.1, 2.2, 3.3],
+            }),
+        };
+        let values = vec![value];
+
+        let result = values_to_time_series_data(values, scenarios, timeline.clone());
+        assert!(result.is_ok());
+        let ts_data = result.unwrap();
+        assert_eq!(ts_data.ts_data.len(), 1);
+        let ts = &ts_data.ts_data[0];
+        assert_eq!(ts.scenario, "S1");
+        for (i, ts_stamp) in timeline.iter().enumerate() {
+            assert_eq!(
+                *ts.series.get(ts_stamp).expect("timestamp missing"),
+                vec![1.1, 2.2, 3.3][i]
+            );
+        }
+    }
+
+    // Test: A FloatList value with a length mismatch relative to the timeline returns an error.
+    #[test]
+    fn test_values_to_time_series_data_float_list_length_mismatch() {
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let scenarios = vec![Scenario::new("S1", 1.0).expect("failed to create scenario")];
+        let value = Value {
+            scenario: Some("S1".to_string()),
+            value: SeriesValue::FloatList(FloatList { values: vec![1.0] }),
+        };
+        let values = vec![value];
+
+        let result = values_to_time_series_data(values, scenarios, timeline);
+        assert!(result.is_err());
+        let expected_err = format!(
+            "time series mismatch in FloatList, expected length {}, found {}",
+            2, 1
+        );
+        assert_eq!(result.err().unwrap(), expected_err);
     }
 }
