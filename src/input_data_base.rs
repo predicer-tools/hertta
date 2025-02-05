@@ -587,8 +587,8 @@ pub struct BaseProcess {
     pub initial_state: bool,
     pub is_scenario_independent: bool,
     pub topos: Vec<BaseTopology>,
-    pub cf: f64,
-    pub eff_ts: Option<f64>,
+    pub cf: Vec<Value>,
+    pub eff_ts: Vec<Value>,
     pub eff_ops: Vec<String>,
     pub eff_fun: Vec<Point>,
 }
@@ -644,8 +644,20 @@ impl ExpandToTimeSeries for BaseProcess {
                 .iter()
                 .map(|topology| topology.expand_to_time_series(time_line, scenarios))
                 .collect(),
-            cf: to_time_series_data(self.cf, time_line, scenarios),
-            eff_ts: expand_optional_time_series(self.eff_ts, time_line, scenarios),
+            cf: values_to_time_series_data(self.cf.clone(), scenarios.clone(), time_line.clone())
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to convert 'cf' to TimeSeriesData for node '{}': {}",
+                    self.name, err
+                )
+            }),
+            eff_ts: values_to_time_series_data(self.eff_ts.clone(), scenarios.clone(), time_line.clone())
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to convert 'eff_ts' to TimeSeriesData for node '{}': {}",
+                    self.name, err
+                )
+            }),
             eff_ops: self.eff_ops.clone(),
             eff_fun: self
                 .eff_fun
@@ -717,11 +729,11 @@ impl BaseProcess {
     fn topos(&self) -> &Vec<BaseTopology> {
         &self.topos
     }
-    fn cf(&self) -> f64 {
-        self.cf
+    fn cf(&self) -> &Vec<Value> {
+        &self.cf
     }
-    fn eff_ts(&self) -> Option<f64> {
-        self.eff_ts
+    fn eff_ts(&self) -> &Vec<Value> {
+        &self.eff_ts
     }
     fn eff_ops(&self) -> &Vec<String> {
         &self.eff_ops
@@ -752,8 +764,8 @@ impl BaseProcess {
             initial_state: false,
             is_scenario_independent: false,
             topos: Vec::new(),
-            cf: 0.0,
-            eff_ts: None,
+            cf: Vec::new(),
+            eff_ts: Vec::new(),
             eff_ops: Vec::new(),
             eff_fun: Vec::new(),
         }
@@ -1672,8 +1684,14 @@ mod tests {
             initial_state: true,
             is_scenario_independent: false,
             topos: vec![base_topology],
-            cf: 2.0,
-            eff_ts: Some(2.1),
+            cf: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 2.0 }),
+            }],
+            eff_ts: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 2.1 }),
+            }],
             eff_ops: vec!["oops!".to_string()],
             eff_fun: vec![Point { x: 2.2, y: 2.3 }],
         };
@@ -1877,8 +1895,14 @@ mod tests {
             initial_state: true,
             is_scenario_independent: false,
             topos: vec![base_topology],
-            cf: 2.0,
-            eff_ts: Some(2.1),
+            cf: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 2.0 }),
+            }],
+            eff_ts: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 2.1 }),
+            }],
             eff_ops: vec!["oops!".to_string()],
             eff_fun: vec![Point { x: 2.2, y: 2.3 }],
         };
