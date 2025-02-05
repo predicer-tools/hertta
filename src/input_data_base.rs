@@ -890,7 +890,7 @@ impl BaseNode {
 pub struct BaseNodeDiffusion {
     pub from_node: String,
     pub to_node: String,
-    pub coefficient: f64,
+    pub coefficient: Vec<Value>,
 }
 
 impl ExpandToTimeSeries for BaseNodeDiffusion {
@@ -904,7 +904,20 @@ impl ExpandToTimeSeries for BaseNodeDiffusion {
         NodeDiffusion {
             node1: self.from_node.clone(),
             node2: self.to_node.clone(),
-            coefficient: to_time_series_data(self.coefficient, &time_line, scenarios),
+            coefficient: if self.coefficient.is_empty() {
+                panic!(
+                    "No coefficient values provided for NodeDiffusion from '{}' to '{}'",
+                    self.from_node, self.to_node
+                );
+            } else {
+                values_to_time_series_data(self.coefficient.clone(), scenarios.clone(), time_line.clone())
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "Failed to convert 'coefficient' to TimeSeriesData for NodeDiffusion from '{}' to '{}': {}",
+                            self.from_node, self.to_node, err
+                        )
+                    })
+            },
         }
     }
 }
@@ -920,8 +933,8 @@ impl BaseNodeDiffusion {
         let model = context.model().lock().await;
         find_node(&self.to_node, "to_node", &model.input_data.nodes)
     }
-    fn coefficient(&self) -> f64 {
-        self.coefficient
+    fn coefficient(&self) -> &Vec<Value> {
+        &self.coefficient
     }
 }
 

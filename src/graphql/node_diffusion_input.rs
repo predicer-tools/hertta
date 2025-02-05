@@ -1,26 +1,38 @@
 use super::{MaybeError, ValidationError, ValidationErrors};
-use crate::input_data_base::{BaseNode, BaseNodeDiffusion};
+use crate::input_data_base::{BaseNode, BaseNodeDiffusion, Value, ValueInput};
+use juniper::GraphQLInputObject;
 
-fn to_node_diffusion(from_node: String, to_node: String, coefficient: f64) -> BaseNodeDiffusion {
-    BaseNodeDiffusion {
-        from_node,
-        to_node,
-        coefficient,
+#[derive(GraphQLInputObject)]
+pub struct NewNodeDiffusion {
+    pub from_node: String,
+    pub to_node: String,
+    pub coefficient: Vec<ValueInput>,
+}
+
+impl NewNodeDiffusion {
+    pub fn to_node_diffusion(self) -> BaseNodeDiffusion {
+        BaseNodeDiffusion {
+            from_node: self.from_node,
+            to_node: self.to_node,
+            coefficient: self.coefficient
+                .into_iter()
+                .map(|v| Value::try_from(v).expect("Could not parse diffusion coefficient"))
+                .collect(),
+        }
     }
 }
 
 pub fn create_node_diffusion(
-    from_node: String,
-    to_node: String,
-    coefficient: f64,
+    new_diffusion: NewNodeDiffusion,
     diffusions: &mut Vec<BaseNodeDiffusion>,
     nodes: &Vec<BaseNode>,
 ) -> ValidationErrors {
-    let errors = validate_node_diffusion_creation(&from_node, &to_node, diffusions, nodes);
+    // Validate that from_node and to_node exist and that no diffusion with the same endpoints exists.
+    let errors = validate_node_diffusion_creation(&new_diffusion.from_node, &new_diffusion.to_node, diffusions, nodes);
     if !errors.is_empty() {
         return ValidationErrors::from(errors);
     }
-    diffusions.push(to_node_diffusion(from_node, to_node, coefficient));
+    diffusions.push(new_diffusion.to_node_diffusion());
     ValidationErrors::default()
 }
 

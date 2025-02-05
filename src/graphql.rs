@@ -41,6 +41,7 @@ use node_input::NewNode;
 use process_input::NewProcess;
 use risk_input::NewRisk;
 use state_input::{StateInput, StateUpdate};
+use node_diffusion_input::NewNodeDiffusion;
 use std::ops::DerefMut;
 use std::sync::Arc;
 use time_line_input::TimeLineUpdate;
@@ -695,17 +696,13 @@ impl Mutation {
     }
     #[graphql(description = "Create new diffusion between nodes.")]
     async fn create_node_diffusion(
-        from_node: String,
-        to_node: String,
-        coefficient: f64,
+        new_diffusion: NewNodeDiffusion,
         context: &HerttaContext,
     ) -> ValidationErrors {
         let mut model_ref = context.model.lock().await;
         let model = model_ref.deref_mut();
         node_diffusion_input::create_node_diffusion(
-            from_node,
-            to_node,
-            coefficient,
+            new_diffusion,
             &mut model.input_data.node_diffusion,
             &model.input_data.nodes,
         )
