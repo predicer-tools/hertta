@@ -1314,7 +1314,7 @@ impl From<&ProcessGroup> for Group {
 pub struct BaseInflowBlock {
     pub name: String,
     pub node: String,
-    pub data: f64,
+    pub data: Vec<Value>,
 }
 
 impl ExpandToTimeSeries for BaseInflowBlock {
@@ -1328,7 +1328,17 @@ impl ExpandToTimeSeries for BaseInflowBlock {
             name: self.name.clone(),
             node: self.node.clone(),
             start_time: time_line[0].clone(),
-            data: to_time_series_data(self.data, time_line, scenarios),
+            data: values_to_time_series_data(
+                self.data.clone(),
+                scenarios.clone(),
+                time_line.clone(),
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to convert 'data' to TimeSeriesData for inflow block '{}': {}",
+                    self.name, err
+                )
+            }),
         }
     }
 }
@@ -1343,8 +1353,8 @@ impl BaseInflowBlock {
         let model = context.model().lock().await;
         find_node(&self.node, "node", &model.input_data.nodes)
     }
-    fn data(&self) -> f64 {
-        self.data
+    fn data(&self) -> &Vec<Value> {
+        &self.data
     }
 }
 
@@ -1794,7 +1804,10 @@ mod tests {
         let base_inflow_block = BaseInflowBlock {
             name: "Inflow".to_string(),
             node: "West".to_string(),
-            data: 2.3,
+            data: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 2.3 }),
+            }],
         };
         let inflow_block = base_inflow_block.expand_to_time_series(&time_line, &scenarios);
         let base_con_factor = BaseConFactor {
@@ -2127,7 +2140,10 @@ mod tests {
         let base = BaseInflowBlock {
             name: "Inflow".to_string(),
             node: "West".to_string(),
-            data: 2.3,
+            data: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 2.3 }),
+            }],
         };
         let inflow_block = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(inflow_block.name, "Inflow");
