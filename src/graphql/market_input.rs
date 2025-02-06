@@ -3,7 +3,7 @@ use super::forecastable;
 use super::{MaybeError, ValidationError, ValidationErrors};
 use crate::input_data::Forecast;
 use crate::input_data_base::{
-    BaseForecastable, BaseMarket, BaseNode, MarketDirection, MarketType, ProcessGroup,
+    BaseForecastable, BaseMarket, BaseNode, MarketDirection, MarketType, ProcessGroup, ValueInput, Value,
 };
 use juniper::GraphQLInputObject;
 
@@ -24,7 +24,7 @@ pub struct NewMarket {
     price: Option<f64>,
     up_price: Option<f64>,
     down_price: Option<f64>,
-    reserve_activation_price: Option<f64>,
+    reserve_activation_price: Vec<ValueInput>,
 }
 
 impl NewMarket {
@@ -45,7 +45,12 @@ impl NewMarket {
             price: forecastable::to_forecastable(self.price),
             up_price: forecastable::to_forecastable(self.up_price),
             down_price: forecastable::to_forecastable(self.down_price),
-            reserve_activation_price: self.reserve_activation_price,
+            reserve_activation_price: self
+            .reserve_activation_price
+            .into_iter()
+            .map(Value::try_from)
+            .collect::<Result<Vec<Value>, _>>()
+            .expect("Could not parse reserve activation price values"),
             fixed: Vec::new(),
         }
     }

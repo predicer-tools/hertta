@@ -1061,7 +1061,7 @@ pub struct BaseMarket {
     pub price: Option<BaseForecastable>,
     pub up_price: Option<BaseForecastable>,
     pub down_price: Option<BaseForecastable>,
-    pub reserve_activation_price: Option<f64>,
+    pub reserve_activation_price: Vec<Value>,
     pub fixed: Vec<MarketFix>,
 }
 
@@ -1106,19 +1106,22 @@ impl ExpandToTimeSeries for BaseMarket {
             price: expand_forecastable_to_time_series(&self.price, time_line, scenarios),
             up_price: expand_forecastable_to_time_series(&self.up_price, time_line, scenarios),
             down_price: expand_forecastable_to_time_series(&self.down_price, time_line, scenarios),
-            reserve_activation_price: expand_optional_time_series(
-                self.reserve_activation_price,
-                time_line,
-                scenarios,
-            ),
-            fixed: self
-                .fixed
-                .iter()
-                .map(|fix| (fix.name.clone(), fix.factor))
-                .collect(),
+            reserve_activation_price: values_to_time_series_data(
+                self.reserve_activation_price.clone(),
+                scenarios.clone(),
+                time_line.clone(),
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to convert 'reserve_activation_price' to TimeSeriesData for market '{}': {}",
+                    self.name, err
+                )
+            }),
+            fixed: self.fixed.iter().map(|fix| (fix.name.clone(), fix.factor)).collect(),
         }
     }
 }
+
 
 #[graphql_object]
 #[graphql(name = "Market", context = HerttaContext)]
@@ -1192,8 +1195,8 @@ impl BaseMarket {
     fn down_price(&self) -> &Option<BaseForecastable> {
         &self.down_price
     }
-    fn reserve_activation_price(&self) -> Option<f64> {
-        self.reserve_activation_price
+    fn reserve_activation_price(&self) -> &Vec<Value> {
+        &self.reserve_activation_price
     }
     fn fixed(&self) -> &Vec<MarketFix> {
         &self.fixed
@@ -1726,7 +1729,10 @@ mod tests {
         let base_node_diffusion = BaseNodeDiffusion {
             from_node: "Node 1".to_string(),
             to_node: "Node 2".to_string(),
-            coefficient: -2.3,
+            coefficient: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: -2.3 }),
+            }],
         };
         let node_diffusion = base_node_diffusion.expand_to_time_series(&time_line, &scenarios);
         let node_delay = vec![Delay {
@@ -1763,7 +1769,10 @@ mod tests {
             price: Some(BaseForecastable::Constant(1.5.into())),
             up_price: Some(BaseForecastable::Constant(1.6.into())),
             down_price: Some(BaseForecastable::Constant(1.7.into())),
-            reserve_activation_price: Some(1.8),
+            reserve_activation_price: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.8 }),
+            }],
             fixed: vec![MarketFix {
                 name: "Fix".to_string(),
                 factor: 1.9,
@@ -1989,7 +1998,10 @@ mod tests {
         let base = BaseNodeDiffusion {
             from_node: "Node 1".to_string(),
             to_node: "Node 2".to_string(),
-            coefficient: -2.3,
+            coefficient: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: -2.3 }),
+            }],
         };
         let time_line: TimeLine = vec![
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
@@ -2061,7 +2073,10 @@ mod tests {
             price: Some(BaseForecastable::Constant(1.5.into())),
             up_price: Some(BaseForecastable::Constant(1.6.into())),
             down_price: Some(BaseForecastable::Constant(1.7.into())),
-            reserve_activation_price: Some(1.8),
+            reserve_activation_price: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.8 }),
+            }],
             fixed: vec![MarketFix {
                 name: "Fix".to_string(),
                 factor: 1.9,
