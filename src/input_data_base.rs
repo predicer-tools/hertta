@@ -1384,7 +1384,7 @@ pub struct BaseGenConstraint {
     pub is_setpoint: bool,
     pub penalty: f64,
     pub factors: Vec<BaseConFactor>,
-    pub constant: Option<f64>,
+    pub constant: Vec<Value>,
 }
 
 impl TypeName for BaseGenConstraint {
@@ -1410,7 +1410,17 @@ impl ExpandToTimeSeries for BaseGenConstraint {
                 .iter()
                 .map(|factor| factor.expand_to_time_series(time_line, scenarios))
                 .collect(),
-            constant: expand_optional_time_series(self.constant, time_line, scenarios),
+            constant: values_to_time_series_data(
+                self.constant.clone(),
+                scenarios.clone(),
+                time_line.clone(),
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to convert 'constant' to TimeSeriesData for gen constraint '{}': {}",
+                    self.name, err
+                )
+            }),
         }
     }
 }
@@ -2177,7 +2187,10 @@ mod tests {
             is_setpoint: true,
             penalty: 1.1,
             factors: vec![base_con_factor],
-            constant: Some(1.2),
+            constant: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.2 }),
+            }],
         };
         let gen_constraint = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(gen_constraint.name, "Constraint");
