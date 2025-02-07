@@ -23,7 +23,7 @@ use crate::event_loop::jobs::{self, Job, JobOutcome, JobStatus, NewJob};
 use crate::input_data::Name;
 use crate::input_data_base::{
     BaseConFactor, BaseGenConstraint, BaseInputData, BaseMarket, BaseNode, BaseNodeDiffusion,
-    BaseProcess, GroupMember, Members, NodeGroup, ProcessGroup, TypeName,
+    BaseProcess, GroupMember, Members, NodeGroup, ProcessGroup, TypeName, ValueInput
 };
 use crate::model::{self, Model};
 use crate::scenarios::Scenario;
@@ -839,10 +839,9 @@ impl Mutation {
         let mut model = context.model.lock().await;
         gen_constraint_input::delete_gen_constraint(&name, &mut model.input_data.gen_constraints)
     }
-
     #[graphql(description = "Create new flow constraint factor and add it to generic constraint.")]
     async fn create_flow_con_factor(
-        factor: f64,
+        factor: Vec<ValueInput>,
         constraint_name: String,
         process_name: String,
         source_or_sink_node_name: String,
@@ -877,7 +876,7 @@ impl Mutation {
 
     #[graphql(description = "Create new state constraint factor and add it to generic constraint.")]
     async fn create_state_con_factor(
-        factor: f64,
+        factor: Vec<ValueInput>,
         constraint_name: String,
         node_name: String,
         context: &HerttaContext,
@@ -885,7 +884,7 @@ impl Mutation {
         let mut model_ref = context.model.lock().await;
         let model = model_ref.deref_mut();
         con_factor_input::create_state_con_factor(
-            factor,
+            factor, 
             constraint_name,
             node_name,
             &mut model.input_data.gen_constraints,
@@ -906,11 +905,9 @@ impl Mutation {
         )
     }
 
-    #[graphql(
-        description = "Create new online constraint factor and add it to generic constraint."
-    )]
+    #[graphql(description = "Create new online constraint factor and add it to generic constraint.")]
     async fn create_online_con_factor(
-        factor: f64,
+        factor: Vec<ValueInput>,
         constraint_name: String,
         process_name: String,
         context: &HerttaContext,
@@ -924,7 +921,7 @@ impl Mutation {
             &mut model.input_data.gen_constraints,
             &model.input_data.processes,
         )
-    }
+    }    
 
     async fn delete_online_con_factor(
         constraint_name: String,

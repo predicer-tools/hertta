@@ -1435,7 +1435,7 @@ pub struct BaseTopology {
     pub ramp_down: f64,
     pub initial_load: f64,
     pub initial_flow: f64,
-    pub cap_ts: Option<f64>,
+    pub cap_ts: Vec<Value>,
 }
 
 impl ExpandToTimeSeries for BaseTopology {
@@ -1454,7 +1454,17 @@ impl ExpandToTimeSeries for BaseTopology {
             ramp_down: self.ramp_down,
             initial_load: self.initial_load,
             initial_flow: self.initial_flow,
-            cap_ts: expand_optional_time_series(self.cap_ts, time_line, scenarios),
+            cap_ts: values_to_time_series_data(
+                self.cap_ts.clone(),
+                scenarios.clone(),
+                time_line.clone(),
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to convert 'cap_ts' to TimeSeriesData for topology ({} -> {}): {}",
+                    self.source, self.sink, err
+                )
+            }),
         }
     }
 }
@@ -1470,7 +1480,7 @@ impl BaseTopology {
             ramp_down: 0.0,
             initial_load: 0.0,
             initial_flow: 0.0,
-            cap_ts: None,
+            cap_ts: Vec::new(),
         }
     }
 }
@@ -1544,7 +1554,7 @@ impl ConstraintFactorType {
 pub struct BaseConFactor {
     pub var_type: ConstraintFactorType,
     pub var_tuple: VariableId,
-    pub data: f64,
+    pub data: Vec<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1567,10 +1577,15 @@ impl ExpandToTimeSeries for BaseConFactor {
                 self.var_tuple
                     .identifier
                     .as_ref()
-                    .map_or("", |s| s.as_str())
-                    .into(),
+                    .map_or("".into(), |s| s.clone()),
             ),
-            data: to_time_series_data(self.data, time_line, scenarios),
+            data: values_to_time_series_data(
+                self.data.clone(),
+                scenarios.clone(),
+                time_line.clone()
+            ).unwrap_or_else(|err| {
+                panic!("Failed to convert 'data' to TimeSeriesData for ConFactor '{}': {}", self.var_tuple.entity, err)
+            }),
         }
     }
 }
@@ -1699,7 +1714,10 @@ mod tests {
             ramp_down: 1.4,
             initial_load: 1.5,
             initial_flow: 1.6,
-            cap_ts: Some(1.7),
+            cap_ts: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.7 }),
+            }],
         };
         let base_process = BaseProcess {
             name: "Conversion".to_string(),
@@ -1826,7 +1844,10 @@ mod tests {
                 entity: "interior_air".to_string(),
                 identifier: None,
             },
-            data: 23.0,
+            data: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 23.0 }),
+            }],
         };
         let base_gen_constraint = BaseGenConstraint {
             name: "Constraint".to_string(),
@@ -1834,7 +1855,10 @@ mod tests {
             is_setpoint: true,
             penalty: 1.1,
             factors: vec![base_con_factor],
-            constant: Some(1.2),
+            constant: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.2 }),
+            }],
         };
         let gen_constraint = base_gen_constraint.expand_to_time_series(&time_line, &scenarios);
         let base = BaseInputData {
@@ -1918,7 +1942,10 @@ mod tests {
             ramp_down: 1.4,
             initial_load: 1.5,
             initial_flow: 1.6,
-            cap_ts: Some(1.7),
+            cap_ts: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.7 }),
+            }],
         };
         let topology = base_topology.expand_to_time_series(&time_line, &scenarios);
         let base = BaseProcess {
@@ -2178,7 +2205,10 @@ mod tests {
                 entity: "interior_air".to_string(),
                 identifier: None,
             },
-            data: 23.0,
+            data: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 23.0 }),
+            }],
         };
         let con_factor = base_con_factor.expand_to_time_series(&time_line, &scenarios);
         let base = BaseGenConstraint {
@@ -2214,7 +2244,10 @@ mod tests {
             ramp_down: 1.4,
             initial_load: 1.5,
             initial_flow: 1.6,
-            cap_ts: Some(1.7),
+            cap_ts: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.7 }),
+            }],
         };
         let time_line: TimeLine = vec![
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
@@ -2244,7 +2277,10 @@ mod tests {
                 entity: "interior_air".to_string(),
                 identifier: None,
             },
-            data: 23.0,
+            data: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 23.0 }),
+            }],
         };
         let time_line: TimeLine = vec![
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
@@ -2260,7 +2296,7 @@ mod tests {
         );
         assert_eq!(
             con_factor.data,
-            to_time_series_data(base.data, &time_line, &scenarios)
+            values_to_time_series_data(base.data.clone(), scenarios.clone(), time_line.clone()).unwrap()
         );
     }
     mod find_input_node_names {

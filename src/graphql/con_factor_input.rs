@@ -1,20 +1,30 @@
 use super::{MaybeError, ValidationError, ValidationErrors};
 use crate::input_data_base::{
-    BaseConFactor, BaseGenConstraint, BaseNode, BaseProcess, ConstraintFactorType, VariableId,
+    BaseConFactor, BaseGenConstraint, BaseNode, BaseProcess, ConstraintFactorType, VariableId, Value, ValueInput
 };
 
 pub fn create_flow_con_factor(
-    factor: f64,
+    factor_inputs: Vec<ValueInput>, 
     constraint_name: String,
     process_name: String,
     source_or_sink_node_name: String,
     constraints: &mut Vec<BaseGenConstraint>,
     processes: &Vec<BaseProcess>,
 ) -> ValidationErrors {
+
+    let factor: Vec<Value> = match factor_inputs
+        .into_iter()
+        .map(Value::try_from)
+        .collect::<Result<Vec<Value>, String>>() {
+        Ok(vec) => vec,
+        Err(err) => return ValidationErrors::from(ValidationError::new("factor", &err)),
+    };
+
     let constraint = match find_constraint(&constraint_name, constraints) {
         Ok(constraint) => constraint,
         Err(errors) => return errors,
     };
+
     let errors = validate_flow_con_factor_creation(
         &process_name,
         &source_or_sink_node_name,
@@ -24,6 +34,7 @@ pub fn create_flow_con_factor(
     if !errors.is_empty() {
         return ValidationErrors::from(errors);
     }
+
     let con_factor = BaseConFactor {
         var_type: ConstraintFactorType::Flow,
         var_tuple: VariableId {
@@ -35,6 +46,7 @@ pub fn create_flow_con_factor(
     constraint.factors.push(con_factor);
     ValidationErrors::default()
 }
+
 
 fn find_constraint<'a>(
     constraint_name: &str,
@@ -94,14 +106,20 @@ fn validate_flow_con_factor_creation(
     }
     errors
 }
-
 pub fn create_state_con_factor(
-    factor: f64,
+    factor_inputs: Vec<ValueInput>,
     constraint_name: String,
     node_name: String,
     constraints: &mut Vec<BaseGenConstraint>,
     nodes: &Vec<BaseNode>,
 ) -> ValidationErrors {
+    let factor: Vec<Value> = match factor_inputs
+        .into_iter()
+        .map(Value::try_from)
+        .collect::<Result<Vec<Value>, String>>() {
+        Ok(vec) => vec,
+        Err(err) => return ValidationErrors::from(ValidationError::new("factor", &err)),
+    };
     let constraint = match find_constraint(&constraint_name, constraints) {
         Ok(constraint) => constraint,
         Err(errors) => return errors,
@@ -146,14 +164,20 @@ fn validate_state_con_factor_creation(
     }
     errors
 }
-
 pub fn create_online_con_factor(
-    factor: f64,
+    factor_inputs: Vec<ValueInput>,
     constraint_name: String,
     process_name: String,
     constraints: &mut Vec<BaseGenConstraint>,
     processes: &Vec<BaseProcess>,
 ) -> ValidationErrors {
+    let factor: Vec<Value> = match factor_inputs
+        .into_iter()
+        .map(Value::try_from)
+        .collect::<Result<Vec<Value>, String>>() {
+        Ok(vec) => vec,
+        Err(err) => return ValidationErrors::from(ValidationError::new("factor", &err)),
+    };
     let constraint = match find_constraint(&constraint_name, constraints) {
         Ok(constraint) => constraint,
         Err(errors) => return errors,
