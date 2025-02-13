@@ -24,6 +24,45 @@ pub struct ValueInput {
     pub series: Option<Vec<f64>>, 
 }
 
+#[derive(GraphQLInputObject, Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ForecastValueInput {
+    pub scenario: Option<String>,
+    pub constant: Option<f64>,
+    pub series: Option<Vec<f64>>,
+    pub forecast: Option<String>,
+}
+
+#[derive(GraphQLObject, Clone, Debug, Deserialize, Serialize)]
+pub struct ForecastValue {
+    pub scenario: Option<String>,
+    pub value: BaseForecastable,
+}
+
+impl TryFrom<ForecastValueInput> for ForecastValue {
+    type Error = String;
+
+    fn try_from(input: ForecastValueInput) -> Result<Self, Self::Error> {
+        let scenario = input.scenario;
+
+        let value = if let Some(forecast) = input.forecast {
+            BaseForecastable::Forecast(Forecast::new(forecast))
+        } else {
+            match (input.constant, input.series) {
+                (Some(c), None) => BaseForecastable::Constant(Constant { value: c }),
+                (None, Some(series)) => BaseForecastable::FloatList(FloatList { values: series }),
+                (Some(_), Some(_)) => {
+                    return Err("ForecastValueInput cannot have both `constant` and `series` populated simultaneously.".to_string())
+                }
+                (None, None) => {
+                    return Err("ForecastValueInput requires one of `forecast`, `constant`, or `series` to be provided.".to_string())
+                }
+            }
+        };
+
+        Ok(ForecastValue { scenario, value })
+    }
+}
+
 #[derive(GraphQLObject, Clone, Debug, Deserialize, Serialize)]
 pub struct Value {
     pub scenario: Option<String>, 
@@ -57,6 +96,16 @@ impl TryFrom<ValueInput> for Value {
 #[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
 pub struct Constant {
     value: f64,
+}
+
+impl Constant {
+    pub fn new(value: f64) -> Self {
+        Constant { value }
+    }
+
+    pub fn value(&self) -> f64 {
+        self.value
+    }
 }
 
 impl From<f64> for Constant {
@@ -115,7 +164,6 @@ fn values_to_time_series_data(
     scenarios: Vec<Scenario>, 
     timeline: TimeLine
 ) -> Result<TimeSeriesData, String> {
-    // Step 1: Identify Default Values (scenario = None)
     let default_values: Vec<&Value> = values.iter()
         .filter(|v| v.scenario.is_none())
         .collect();
@@ -124,7 +172,6 @@ fn values_to_time_series_data(
         return Err("Multiple default values found (scenario = None)".to_string());
     }
     
-    // Convert Default Value to TimeSeries (if it exists)
     let default_series_option = if let Some(default_value) = default_values.first() {
         let default_series = convert_value_to_series(default_value, &timeline)?;
         Some(default_series)
@@ -132,15 +179,12 @@ fn values_to_time_series_data(
         None
     };
     
-    // Step 2: Convert Scenario-Specific Values to TimeSeries
     let mut ts_vec: Vec<TimeSeries> = Vec::new();
     
-    // Track scenarios that have associated Values
     let mut scenarios_with_values: HashSet<String> = HashSet::new();
     
     for value in &values {
         if value.scenario.is_none() {
-            // Convert to "Default" TimeSeries
             let default_ts = TimeSeries {
                 scenario: "Default".to_string(),
                 series: convert_value_to_series(value, &timeline)?,
@@ -148,7 +192,6 @@ fn values_to_time_series_data(
             ts_vec.push(default_ts);
         } else {
             let scenario_name = value.scenario.as_ref().unwrap();
-            // Verify the scenario exists
             let scenario_exists = scenarios.iter()
                 .any(|s| s.name() == scenario_name);
             if !scenario_exists {
@@ -158,7 +201,6 @@ fn values_to_time_series_data(
                 ));
             }
             scenarios_with_values.insert(scenario_name.clone());
-            // Convert Value to TimeSeries
             let series = convert_value_to_series(value, &timeline)?;
             let ts = TimeSeries {
                 scenario: scenario_name.clone(),
@@ -168,7 +210,6 @@ fn values_to_time_series_data(
         }
     }
     
-    // Step 3: Handle Missing Scenarios by Using Default Series
     if let Some(default_series) = default_series_option {
         for scenario in &scenarios {
             if !scenarios_with_values.contains(scenario.name().as_str()) {
@@ -180,7 +221,6 @@ fn values_to_time_series_data(
             }
         }
     } else {
-        // If there are scenarios without Values and no default series, return an error
         let scenarios_without_values: Vec<&Scenario> = scenarios.iter()
             .filter(|s| !scenarios_with_values.contains(s.name().as_str()))
             .collect();
@@ -195,9 +235,129 @@ fn values_to_time_series_data(
         }
     }
     
-    // Step 4: Assemble TimeSeriesData
     let ts_data = TimeSeriesData::from(ts_vec);
     Ok(ts_data)
+}
+
+fn convert_forecast_value_to_series(
+    fv: &ForecastValue,
+    timeline: &TimeLine,
+) -> Result<BTreeMap<TimeStamp, f64>, String> {
+    match &fv.value {
+        BaseForecastable::Constant(constant) => {
+            let series: BTreeMap<TimeStamp, f64> = timeline
+                .iter()
+                .cloned()
+                .map(|ts| (ts, constant.value))
+                .collect();
+            Ok(series)
+        },
+        BaseForecastable::FloatList(float_list) => {
+            if float_list.values.len() != timeline.len() {
+                return Err(format!(
+                    "time series mismatch in FloatList, expected length {}, found {}",
+                    timeline.len(),
+                    float_list.values.len()
+                ));
+            }
+            let series: BTreeMap<TimeStamp, f64> = timeline
+                .iter()
+                .cloned()
+                .zip(float_list.values.iter().cloned())
+                .collect();
+            Ok(series)
+        },
+        BaseForecastable::Forecast(_forecast) => {
+            Err("Cannot convert Forecast variant to time series".to_string())
+        }
+    }
+}
+
+pub fn forecast_values_to_time_series_data(
+    forecast_values: &Vec<ForecastValue>,
+    scenarios: &Vec<Scenario>,
+    timeline: &TimeLine,
+) -> Result<TimeSeriesData, String> {
+
+    let default_values: Vec<&ForecastValue> = forecast_values
+        .iter()
+        .filter(|fv| fv.scenario.is_none())
+        .collect();
+    if default_values.len() > 1 {
+        return Err("Multiple default forecast values found (scenario = None)".to_string());
+    }
+    let default_series_option: Option<BTreeMap<TimeStamp, f64>> =
+        if let Some(default_value) = default_values.first() {
+            Some(convert_forecast_value_to_series(default_value, timeline)?)
+        } else {
+            None
+        };
+
+    let mut ts_vec: Vec<TimeSeries> = Vec::new();
+    let mut scenarios_with_values: HashSet<String> = HashSet::new();
+
+    for fv in forecast_values.iter() {
+        if fv.scenario.is_none() {
+            let series = convert_forecast_value_to_series(fv, timeline)?;
+            ts_vec.push(TimeSeries {
+                scenario: "Default".to_string(),
+                series,
+            });
+        } else {
+            let scenario_name = fv.scenario.as_ref().unwrap();
+            if !scenarios.iter().any(|s| s.name() == scenario_name) {
+                return Err(format!(
+                    "Scenario '{}' specified in ForecastValue does not exist in provided scenarios",
+                    scenario_name
+                ));
+            }
+            scenarios_with_values.insert(scenario_name.clone());
+            let series = convert_forecast_value_to_series(fv, timeline)?;
+            ts_vec.push(TimeSeries {
+                scenario: scenario_name.clone(),
+                series,
+            });
+        }
+    }
+
+    if let Some(default_series) = default_series_option {
+        for scenario in scenarios.iter() {
+            if !scenarios_with_values.contains(scenario.name().as_str()) {
+                ts_vec.push(TimeSeries {
+                    scenario: scenario.name().clone(),
+                    series: default_series.clone(),
+                });
+            }
+        }
+    } else {
+        for scenario in scenarios.iter() {
+            if !scenarios_with_values.contains(scenario.name().as_str()) {
+                return Err(format!("Missing forecast value for scenario {}", scenario.name()));
+            }
+        }
+    }
+    Ok(TimeSeriesData::from(ts_vec))
+}
+
+pub fn forecast_values_to_forecastable(
+    forecast_values: &Vec<ForecastValue>,
+    scenarios: &Vec<Scenario>,
+    timeline: &TimeLine,
+) -> Forecastable {
+
+    if let Some(fv) = forecast_values.iter().find(|fv| {
+        matches!(fv.value, BaseForecastable::Forecast(_))
+    }) {
+        if let BaseForecastable::Forecast(ref forecast) = fv.value {
+            return Forecastable::Forecast(forecast.clone());
+        }
+    }
+
+    let ts_data = forecast_values_to_time_series_data(forecast_values, scenarios, timeline)
+        .unwrap_or_else(|err| {
+            panic!("Error converting forecast values to time series data: {}", err)
+        });
+    Forecastable::TimeSeriesData(ts_data)
 }
 
 pub trait ExpandToTimeSeries {
@@ -776,6 +936,7 @@ impl BaseProcess {
 #[graphql(name = "Forecastable")]
 pub enum BaseForecastable {
     Constant(Constant),
+    FloatList(FloatList),
     Forecast(Forecast),
 }
 
@@ -1036,11 +1197,30 @@ fn expand_forecastable_to_time_series(
             BaseForecastable::Constant(ref constant) => Forecastable::TimeSeriesData(
                 expand_optional_time_series(Some(constant.value), time_line, scenarios),
             ),
+            BaseForecastable::FloatList(ref float_list) => {
+                if float_list.values.len() != time_line.len() {
+                    panic!(
+                        "time series mismatch in FloatList, expected length {}, found {}",
+                        time_line.len(),
+                        float_list.values.len()
+                    );
+                }
+                let series: std::collections::BTreeMap<TimeStamp, f64> =
+                    time_line.iter().cloned().zip(float_list.values.iter().cloned()).collect();
+                let ts_data = TimeSeriesData {
+                    ts_data: scenarios
+                        .iter()
+                        .map(|scenario| TimeSeries {
+                            scenario: scenario.name().clone(),
+                            series: series.clone(),
+                        })
+                        .collect(),
+                };
+                Forecastable::TimeSeriesData(ts_data)
+            },
             BaseForecastable::Forecast(ref forecast) => Forecastable::Forecast(forecast.clone()),
         },
-        None => {
-            Forecastable::TimeSeriesData(expand_optional_time_series(None, time_line, scenarios))
-        }
+        None => Forecastable::TimeSeriesData(expand_optional_time_series(None, time_line, scenarios)),
     }
 }
 
@@ -1058,9 +1238,9 @@ pub struct BaseMarket {
     pub min_bid: f64,
     pub max_bid: f64,
     pub fee: f64,
-    pub price: Option<BaseForecastable>,
-    pub up_price: Option<BaseForecastable>,
-    pub down_price: Option<BaseForecastable>,
+    pub price: Vec<ForecastValue>,
+    pub up_price: Vec<ForecastValue>,
+    pub down_price: Vec<ForecastValue>,
     pub reserve_activation_price: Vec<Value>,
     pub fixed: Vec<MarketFix>,
 }
@@ -1103,9 +1283,9 @@ impl ExpandToTimeSeries for BaseMarket {
             min_bid: self.min_bid,
             max_bid: self.max_bid,
             fee: self.fee,
-            price: expand_forecastable_to_time_series(&self.price, time_line, scenarios),
-            up_price: expand_forecastable_to_time_series(&self.up_price, time_line, scenarios),
-            down_price: expand_forecastable_to_time_series(&self.down_price, time_line, scenarios),
+            price: forecast_values_to_forecastable(&self.price, scenarios, time_line),
+            up_price: forecast_values_to_forecastable(&self.price, scenarios, time_line),
+            down_price: forecast_values_to_forecastable(&self.price, scenarios, time_line),
             reserve_activation_price: values_to_time_series_data(
                 self.reserve_activation_price.clone(),
                 scenarios.clone(),
@@ -1186,13 +1366,13 @@ impl BaseMarket {
     fn fee(&self) -> f64 {
         self.fee
     }
-    fn price(&self) -> &Option<BaseForecastable> {
+    fn price(&self) -> &Vec<ForecastValue> {
         &self.price
     }
-    fn up_price(&self) -> &Option<BaseForecastable> {
+    fn up_price(&self) -> &Vec<ForecastValue> {
         &self.up_price
     }
-    fn down_price(&self) -> &Option<BaseForecastable> {
+    fn down_price(&self) -> &Vec<ForecastValue> {
         &self.down_price
     }
     fn reserve_activation_price(&self) -> &Vec<Value> {
@@ -1804,9 +1984,18 @@ mod tests {
             min_bid: 1.2,
             max_bid: 1.3,
             fee: 1.4,
-            price: Some(BaseForecastable::Constant(1.5.into())),
-            up_price: Some(BaseForecastable::Constant(1.6.into())),
-            down_price: Some(BaseForecastable::Constant(1.7.into())),
+            price: vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(1.5.into()),
+            }],            
+            up_price: vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(1.6.into()),
+            }],
+            down_price: vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(1.7.into()),
+            }],
             reserve_activation_price: vec![Value {
                 scenario: None,
                 value: SeriesValue::Constant(Constant { value: 1.8 }),
@@ -2120,9 +2309,18 @@ mod tests {
             min_bid: 1.2,
             max_bid: 1.3,
             fee: 1.4,
-            price: Some(BaseForecastable::Constant(1.5.into())),
-            up_price: Some(BaseForecastable::Constant(1.6.into())),
-            down_price: Some(BaseForecastable::Constant(1.7.into())),
+            price: vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(1.5.into()),
+            }],
+            up_price: vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(1.6.into()),
+            }],
+            down_price: vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(1.7.into()),
+            }],
             reserve_activation_price: vec![Value {
                 scenario: None,
                 value: SeriesValue::Constant(Constant { value: 1.8 }),
@@ -2509,6 +2707,105 @@ mod tests {
             .iter()
             .map(|&(y, m, d, h, min, s)| Utc.with_ymd_and_hms(y, m, d, h, min, s).unwrap().into())
             .collect()
+    }
+    #[test]
+    fn forecast_values_to_forecastable_returns_forecast_variant() {
+        // If any ForecastValue is a Forecast variant, then the conversion should return that forecast.
+        let fv = ForecastValue {
+            scenario: None,
+            value: BaseForecastable::Forecast(Forecast::new("MyForecast".to_string())),
+        };
+        let forecast_values = vec![fv];
+        let scenarios = vec![Scenario::new("S1", 1.0).unwrap()];
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let result = forecast_values_to_forecastable(&forecast_values, &scenarios, &timeline);
+        match result {
+            Forecastable::Forecast(f) => {
+                assert_eq!(f.name(), "MyForecast");
+            }
+            _ => panic!("Expected Forecastable::Forecast"),
+        }
+    }
+    #[test]
+    #[should_panic(expected = "Cannot convert Forecast variant to time series")]
+    fn forecast_values_to_time_series_data_errors_on_forecast_variant() {
+        let fv = ForecastValue {
+            scenario: Some("S1".to_string()),
+            value: BaseForecastable::Forecast(Forecast::new("BadForecast".to_string())),
+        };
+        let forecast_values = vec![fv];
+        let scenarios = vec![Scenario::new("S1", 1.0).unwrap()];
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let _ = forecast_values_to_time_series_data(&forecast_values, &scenarios, &timeline).unwrap();
+    }
+    #[test]
+    #[should_panic(expected = "Missing forecast value for scenario")]
+    fn forecast_values_to_time_series_data_missing_default_error() {
+        let fv = ForecastValue {
+            scenario: Some("S1".to_string()),
+            value: BaseForecastable::Constant(Constant { value: 10.0 }),
+        };
+        let forecast_values = vec![fv];
+        let scenarios = vec![
+            Scenario::new("S1", 1.0).unwrap(),
+            Scenario::new("S2", 1.0).unwrap(),
+        ];
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let _ = forecast_values_to_time_series_data(&forecast_values, &scenarios, &timeline).unwrap();
+    }
+    #[test]
+    #[should_panic(expected = "Multiple default forecast values found")]
+    fn forecast_values_to_time_series_data_multiple_defaults_error() {
+        let fv1 = ForecastValue {
+            scenario: None,
+            value: BaseForecastable::Constant(Constant { value: 10.0 }),
+        };
+        let fv2 = ForecastValue {
+            scenario: None,
+            value: BaseForecastable::Constant(Constant { value: 20.0 }),
+        };
+        let forecast_values = vec![fv1, fv2];
+        let scenarios = vec![Scenario::new("S1", 1.0).unwrap()];
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let _ = forecast_values_to_time_series_data(&forecast_values, &scenarios, &timeline).unwrap();
+    }
+    #[test]
+    fn forecast_values_to_forecastable_returns_time_series_data() {
+        let fv_default = ForecastValue {
+            scenario: None,
+            value: BaseForecastable::Constant(Constant { value: 42.0 }),
+        };
+        let fv_s1 = ForecastValue {
+            scenario: Some("S1".to_string()),
+            value: BaseForecastable::Constant(Constant { value: 10.0 }),
+        };
+        let forecast_values = vec![fv_default, fv_s1];
+        let scenarios = vec![
+            Scenario::new("S1", 1.0).unwrap(),
+            Scenario::new("S2", 1.0).unwrap(),
+        ];
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let result = forecast_values_to_forecastable(&forecast_values, &scenarios, &timeline);
+        match result {
+            Forecastable::TimeSeriesData(ts_data) => {
+                let ts_map: BTreeMap<_, _> = ts_data.ts_data.into_iter()
+                    .map(|ts| (ts.scenario, ts.series))
+                    .collect();
+                let expected_s1: BTreeMap<TimeStamp, f64> = timeline
+                    .iter()
+                    .cloned()
+                    .map(|ts| (ts, 10.0))
+                    .collect();
+                let expected_s2: BTreeMap<TimeStamp, f64> = timeline
+                    .iter()
+                    .cloned()
+                    .map(|ts| (ts, 42.0))
+                    .collect();
+                assert_eq!(ts_map.get("S1").unwrap(), &expected_s1);
+                assert_eq!(ts_map.get("S2").unwrap(), &expected_s2);
+            }
+            _ => panic!("Expected Forecastable::TimeSeriesData"),
+        }
     }
     // Test A single default (scenario = None) constant value is applied to all scenarios.
     #[test]

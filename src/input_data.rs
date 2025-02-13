@@ -180,6 +180,9 @@ impl Forecast {
     pub fn new(name: String) -> Self {
         Forecast { name }
     }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
