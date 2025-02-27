@@ -623,6 +623,7 @@ impl Mutation {
             node,
             &mut model.input_data.nodes,
             &mut model.input_data.processes,
+            &mut model.input_data.scenarios,
         )
     }
 

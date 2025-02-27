@@ -4,8 +4,9 @@ use super::{MaybeError, ValidationError, ValidationErrors};
 use crate::input_data::Forecast;
 use crate::input_data_base::{
     BaseForecastable, BaseGenConstraint, BaseInflowBlock, BaseMarket, BaseNode, BaseNodeDiffusion,
-    BaseNodeHistory, BaseProcess, ConstraintFactorType, Delay, NodeGroup, ValueInput, Value,
+    BaseNodeHistory, BaseProcess, ConstraintFactorType, Delay, NodeGroup, ValueInput, Value, ForecastValue, ForecastValueInput
 };
+use crate::scenarios::Scenario;
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
@@ -15,11 +16,11 @@ pub struct NewNode {
     is_market: bool,
     is_res: bool,
     cost: Vec<ValueInput>,
-    inflow: Option<f64>,
+    inflow: Vec<ForecastValueInput>,
 }
 
 impl NewNode {
-    fn to_node(self) -> BaseNode {
+    fn to_node(self, scenarios: &Vec<Scenario>) -> BaseNode {
         BaseNode {
             name: self.name,
             groups: Vec::new(),
@@ -33,7 +34,7 @@ impl NewNode {
             .map(Value::try_from)
             .collect::<Result<Vec<Value>, _>>()
             .expect("Could not parse cost values"),
-            inflow: forecastable::to_forecastable(self.inflow),
+            inflow: forecastable::convert_forecast_value_inputs(self.inflow, scenarios),
         }
     }
 }
@@ -54,12 +55,13 @@ pub fn create_node(
     node: NewNode,
     nodes: &mut Vec<BaseNode>,
     processes: &mut Vec<BaseProcess>,
+    scenarios: &mut Vec<Scenario>,
 ) -> ValidationErrors {
     let errors = validate_node_creation(&node, nodes, processes);
     if !errors.is_empty() {
         return ValidationErrors::from(errors);
     }
-    nodes.push(node.to_node());
+    nodes.push(node.to_node(scenarios));
     ValidationErrors::default()
 }
 
@@ -96,7 +98,10 @@ pub fn connect_node_inflow_to_temperature_forecast(
         Some(node) => node,
         None => return "no such node".into(),
     };
-    node.inflow = Some(BaseForecastable::Forecast(Forecast::new(forecast_name)));
+    node.inflow = vec![ForecastValue {
+        scenario: None,
+        value: BaseForecastable::Forecast(Forecast::new(forecast_name)),
+    }];
     MaybeError::new_ok()
 }
 

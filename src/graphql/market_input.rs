@@ -15,7 +15,7 @@ pub struct NewMarket {
     node: String,
     process_group: String,
     direction: Option<MarketDirection>,
-    realisation: Option<f64>,
+    realisation: Vec<ValueInput>,
     reserve_type: Option<String>,
     is_bid: bool,
     is_limited: bool,
@@ -36,7 +36,12 @@ impl NewMarket {
             node: self.node,
             process_group: self.process_group,
             direction: self.direction,
-            realisation: self.realisation,
+            realisation: self
+            .realisation
+            .into_iter()
+            .map(Value::try_from)
+            .collect::<Result<Vec<Value>, _>>()
+            .expect("Could not parse reserve activation price values"),
             reserve_type: self.reserve_type,
             is_bid: self.is_bid,
             is_limited: self.is_limited,

@@ -949,7 +949,7 @@ pub struct BaseNode {
     pub is_res: bool,
     pub state: Option<State>,
     pub cost: Vec<Value>,
-    pub inflow: Option<BaseForecastable>,
+    pub inflow: Vec<ForecastValue>,
 }
 
 impl TypeName for BaseNode {
@@ -973,7 +973,7 @@ impl ExpandToTimeSeries for BaseNode {
             is_market: self.is_market,
             is_state: self.state.is_some(),
             is_res: self.is_res,
-            is_inflow: self.inflow.is_some(),
+            is_inflow: !self.inflow.is_empty(),
             state: self.state.clone(),
             cost: values_to_time_series_data(self.cost.clone(), scenarios.clone(), time_line.clone())
                 .unwrap_or_else(|err| {
@@ -982,7 +982,7 @@ impl ExpandToTimeSeries for BaseNode {
                         self.name, err
                     )
                 }),
-            inflow: expand_forecastable_to_time_series(&self.inflow, time_line, scenarios),
+            inflow: forecast_values_to_forecastable(&self.inflow, scenarios, time_line),
         }
     }
 }
@@ -1027,7 +1027,7 @@ impl BaseNode {
     fn cost(&self) -> &Vec<Value> {
         &self.cost
     }
-    fn inflow(&self) -> &Option<BaseForecastable> {
+    fn inflow(&self) -> &Vec<ForecastValue> {
         &self.inflow
     }
 }
@@ -1042,7 +1042,7 @@ impl BaseNode {
             is_res: false,
             state: None,
             cost: Vec::new(),
-            inflow: None,
+            inflow: Vec::new(),
         }
     }
 }
@@ -1187,43 +1187,6 @@ impl MarketDirection {
     }
 }
 
-fn expand_forecastable_to_time_series(
-    forecastable: &Option<BaseForecastable>,
-    time_line: &TimeLine,
-    scenarios: &Vec<Scenario>,
-) -> Forecastable {
-    match forecastable {
-        Some(ref constant_or_forecast) => match constant_or_forecast {
-            BaseForecastable::Constant(ref constant) => Forecastable::TimeSeriesData(
-                expand_optional_time_series(Some(constant.value), time_line, scenarios),
-            ),
-            BaseForecastable::FloatList(ref float_list) => {
-                if float_list.values.len() != time_line.len() {
-                    panic!(
-                        "time series mismatch in FloatList, expected length {}, found {}",
-                        time_line.len(),
-                        float_list.values.len()
-                    );
-                }
-                let series: std::collections::BTreeMap<TimeStamp, f64> =
-                    time_line.iter().cloned().zip(float_list.values.iter().cloned()).collect();
-                let ts_data = TimeSeriesData {
-                    ts_data: scenarios
-                        .iter()
-                        .map(|scenario| TimeSeries {
-                            scenario: scenario.name().clone(),
-                            series: series.clone(),
-                        })
-                        .collect(),
-                };
-                Forecastable::TimeSeriesData(ts_data)
-            },
-            BaseForecastable::Forecast(ref forecast) => Forecastable::Forecast(forecast.clone()),
-        },
-        None => Forecastable::TimeSeriesData(expand_optional_time_series(None, time_line, scenarios)),
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, Name, Serialize)]
 pub struct BaseMarket {
     pub name: String,
@@ -1231,7 +1194,7 @@ pub struct BaseMarket {
     pub node: String,
     pub process_group: String,
     pub direction: Option<MarketDirection>,
-    pub realisation: Option<f64>,
+    pub realisation: Vec<Value>,
     pub reserve_type: Option<String>,
     pub is_bid: bool,
     pub is_limited: bool,
@@ -1273,7 +1236,17 @@ impl ExpandToTimeSeries for BaseMarket {
                 Some(dir) => dir.to_input(),
                 None => "none".to_string(),
             },
-            realisation: expand_optional_time_series(self.realisation, time_line, scenarios),
+            realisation: values_to_time_series_data(
+                self.realisation.clone(),
+                scenarios.clone(),
+                time_line.clone(),
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to convert 'realisation' to TimeSeriesData for market '{}': {}",
+                    self.name, err
+                )
+            }),
             reserve_type: match self.reserve_type {
                 Some(ref reserve_type) => reserve_type.clone(),
                 None => String::new(),
@@ -1331,8 +1304,8 @@ impl BaseMarket {
     fn direction(&self) -> Option<MarketDirection> {
         self.direction
     }
-    fn realisation(&self) -> Option<f64> {
-        self.realisation
+    fn realisation(&self) -> &Vec<Value> {
+        &self.realisation
     }
     async fn reserve_type(&self, context: &HerttaContext) -> FieldResult<Option<ReserveType>> {
         let model = context.model().lock().await;
@@ -1824,26 +1797,10 @@ pub fn find_input_node_names<'a>(nodes: impl Iterator<Item = &'a BaseNode>) -> V
                 && !node.is_market
                 && node.state.is_none()
                 && !node.is_res
-                && node.inflow.is_none()
+                && node.inflow.is_empty()
         })
         .map(|node| node.name.clone())
         .collect()
-}
-
-fn to_time_series_data(y: f64, time_line: &TimeLine, scenarios: &Vec<Scenario>) -> TimeSeriesData {
-    let single_series: BTreeMap<TimeStamp, f64> = time_line
-        .iter()
-        .map(|time_stamp| (time_stamp.clone(), y))
-        .collect();
-    TimeSeriesData {
-        ts_data: scenarios
-            .iter()
-            .map(|scenario| TimeSeries {
-                scenario: scenario.name().clone(),
-                series: single_series.clone(),
-            })
-            .collect(),
-    }
 }
 
 fn make_temporals(time_line: &TimeLine) -> Temporals {
@@ -1851,17 +1808,6 @@ fn make_temporals(time_line: &TimeLine) -> Temporals {
         t: time_line.clone(),
         dtf: (time_line[1] - time_line[0]).num_seconds() as f64 / 3600.0,
         variable_dt: None,
-    }
-}
-
-fn expand_optional_time_series(
-    optional: Option<f64>,
-    time_line: &TimeLine,
-    scenarios: &Vec<Scenario>,
-) -> TimeSeriesData {
-    match optional {
-        Some(constant) => to_time_series_data(constant, time_line, scenarios),
-        None => TimeSeriesData::default(),
     }
 }
 
@@ -1874,6 +1820,21 @@ mod tests {
         let mut map = BTreeMap::new();
         map.insert(x.name().clone(), x);
         map
+    }
+    fn to_time_series_data(y: f64, time_line: &TimeLine, scenarios: &Vec<Scenario>) -> TimeSeriesData {
+        let single_series: BTreeMap<TimeStamp, f64> = time_line
+            .iter()
+            .map(|time_stamp| (time_stamp.clone(), y))
+            .collect();
+        TimeSeriesData {
+            ts_data: scenarios
+                .iter()
+                .map(|scenario| TimeSeries {
+                    scenario: scenario.name().clone(),
+                    series: single_series.clone(),
+                })
+                .collect(),
+        }
     }
     #[test]
     fn expanding_input_data_works() {
@@ -1941,7 +1902,10 @@ mod tests {
                 scenario: None,
                 value: SeriesValue::Constant(Constant { value: 1.1 }),
             }],
-            inflow: Some(BaseForecastable::Constant(1.2.into())),
+            inflow: vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(Constant { value: 1.2 }),
+            }],
         };
         let node = base_node.expand_to_time_series(&time_line, &scenarios);
         let base_node_diffusion = BaseNodeDiffusion {
@@ -1977,7 +1941,10 @@ mod tests {
             node: "North".to_string(),
             process_group: "Group".to_string(),
             direction: None,
-            realisation: Some(1.0),
+            realisation: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.0 }),
+            }],
             reserve_type: Some("not none".to_string()),
             is_bid: true,
             is_limited: false,
@@ -2213,7 +2180,10 @@ mod tests {
                 scenario: None,
                 value: SeriesValue::Constant(Constant { value: 1.1 }),
             }],
-            inflow: Some(BaseForecastable::Constant(1.2.into())),
+            inflow: vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(Constant { value: 1.2 }),
+            }],
         };
         let node = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(node.name, "East");
@@ -2302,7 +2272,10 @@ mod tests {
             node: "North".to_string(),
             process_group: "Group".to_string(),
             direction: None,
-            realisation: Some(1.1),
+            realisation: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.1 }),
+            }],
             reserve_type: Some("not none".to_string()),
             is_bid: true,
             is_limited: false,
@@ -2519,7 +2492,10 @@ mod tests {
             res_nodes[0].is_res = true;
             assert!(find_input_node_names(res_nodes.iter()).is_empty());
             let mut inflow_nodes = vec![BaseNode::new("inflow".to_string())];
-            inflow_nodes[0].inflow = Some(BaseForecastable::Constant(2.3.into()));
+            inflow_nodes[0].inflow = vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(Constant { value: 2.3 }),
+            }];
             assert!(find_input_node_names(inflow_nodes.iter()).is_empty());
         }
         #[test]
