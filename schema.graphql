@@ -96,7 +96,7 @@ input NewMarket {
   node: String!
   processGroup: String!
   direction: MarketDirection
-  realisation: Float
+  realisation: [ValueInput!]!
   reserveType: String
   isBid: Boolean!
   isLimited: Boolean!
@@ -360,7 +360,7 @@ type Market {
   node: Node!
   processGroup: ProcessGroup!
   direction: MarketDirection
-  realisation: Float
+  realisation: [Value!]!
   reserveType: ReserveType
   isBid: Boolean!
   isLimited: Boolean!

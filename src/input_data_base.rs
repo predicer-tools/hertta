@@ -164,10 +164,14 @@ fn values_to_time_series_data(
     scenarios: Vec<Scenario>, 
     timeline: TimeLine
 ) -> Result<TimeSeriesData, String> {
+    if values.is_empty() {
+        return Ok(TimeSeriesData { ts_data: Vec::new() });
+    }
+    
     let default_values: Vec<&Value> = values.iter()
         .filter(|v| v.scenario.is_none())
         .collect();
-    
+
     if default_values.len() > 1 {
         return Err("Multiple default values found (scenario = None)".to_string());
     }
