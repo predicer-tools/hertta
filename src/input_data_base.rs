@@ -167,7 +167,7 @@ fn values_to_time_series_data(
     if values.is_empty() {
         return Ok(TimeSeriesData { ts_data: Vec::new() });
     }
-    
+
     let default_values: Vec<&Value> = values.iter()
         .filter(|v| v.scenario.is_none())
         .collect();
@@ -282,7 +282,9 @@ pub fn forecast_values_to_time_series_data(
     scenarios: &Vec<Scenario>,
     timeline: &TimeLine,
 ) -> Result<TimeSeriesData, String> {
-
+    if forecast_values.is_empty() {
+        return Ok(TimeSeriesData { ts_data: Vec::new() });
+    }
     let default_values: Vec<&ForecastValue> = forecast_values
         .iter()
         .filter(|fv| fv.scenario.is_none())
@@ -1185,7 +1187,7 @@ impl MarketDirection {
         match self {
             MarketDirection::Up => "up",
             MarketDirection::Down => "down",
-            MarketDirection::UpDown => "updown",
+            MarketDirection::UpDown => "up_down",
         }
         .into()
     }
