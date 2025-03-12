@@ -1795,18 +1795,8 @@ impl VariableId {
         }
     }
 }
-
 pub fn find_input_node_names<'a>(nodes: impl Iterator<Item = &'a BaseNode>) -> Vec<String> {
-    nodes
-        .filter(|node| {
-            !node.is_commodity
-                && !node.is_market
-                && node.state.is_none()
-                && !node.is_res
-                && node.inflow.is_empty()
-        })
-        .map(|node| node.name.clone())
-        .collect()
+    nodes.map(|node| node.name.clone()).collect()
 }
 
 fn make_temporals(time_line: &TimeLine) -> Temporals {

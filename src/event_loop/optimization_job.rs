@@ -34,7 +34,7 @@ use zmq::{Context, Socket};
 const PREDICER_SEND_FLAGS: i32 = 0;
 const PREDICER_RECEIVE_FLAGS: i32 = 0;
 
-#[derive(Clone, GraphQLObject)]
+#[derive(Clone, GraphQLObject, Debug)]
 pub struct ControlSignal {
     pub name: String,
     pub signal: Vec<f64>,
@@ -67,6 +67,7 @@ pub async fn start(
             return;
         }
     };
+    println!("Expected control processes: {:#?}", control_processes);
     let mut zmq_port = settings_snapshot.predicer_port;
     if zmq_port == 0 {
         zmq_port = match find_available_port().await {
@@ -204,6 +205,9 @@ pub async fn start(
                         return;
                     }
                 };
+                if let Some(result_batch) = results.get("v_flow") {
+                    println!("Columns in v_flow: {:?}", result_batch.schema().fields().iter().map(|f| f.name()).collect::<Vec<_>>());
+                }                
                 let control_data =
                     match controls_from_result_batch(&result_batch, control_processes) {
                         Ok(d) => d,
@@ -215,6 +219,12 @@ pub async fn start(
                             return;
                         }
                     };
+                
+                /*let control_file_path = "control_signals.txt";
+                match std::fs::write(control_file_path, format!("{:#?}", control_data)) {
+                    Ok(_) => println!("Control signals successfully written to {}", control_file_path),
+                    Err(e) => eprintln!("Failed to write control signals to file: {}", e),
+                }*/
                 let result_data = OptimizationOutcome::new(time_stamps, control_data);
                 job_store
                     .set_job_status(
@@ -261,6 +271,7 @@ fn expected_control_processes(model_data: &BaseInputData) -> Result<Vec<ProcessI
         &mut model_data.processes.iter(),
         &input_data_base::find_input_node_names(model_data.nodes.iter()),
     );
+    println!("process names: {:#?}", process_names);
     let first_scenario_name = match model_data.scenarios.first() {
         Some(scenario) => scenario.name().clone(),
         None => {
@@ -276,6 +287,7 @@ fn expected_control_processes(model_data: &BaseInputData) -> Result<Vec<ProcessI
         .collect())
 }
 
+#[derive(Clone, Debug)]
 struct ProcessInfo {
     name: String,
     column_name: String,
@@ -286,7 +298,9 @@ fn processes_and_column_prefixes<'a>(
     input_node_names: &Vec<String>,
 ) -> Vec<(String, String)> {
     let mut process_names = Vec::new();
+    println!("Input node names: {:#?}", input_node_names);
     for process in processes {
+        println!("Checking process: {}", process.name);
         for topology in &process.topos {
             if input_node_names.contains(&topology.source) && process.name == topology.sink {
                 let prefix = format!("{}_{}_{}", &process.name, &topology.source, &process.name);
@@ -466,6 +480,12 @@ async fn optimization_task(
                                     ))
                                 }
                             };
+                              // Write the results to a file (writing the debug representation)
+                            let output_path = "optimization_results.txt";
+                            match std::fs::write(output_path, format!("{:#?}", result)) {
+                                Ok(_) => println!("Results successfully written to {}", output_path),
+                                Err(e) => eprintln!("Failed to write results to file: {}", e),
+                            }
                             is_running = false;
                         } else if command == "Failed" {
                             return Err("optimization_task: Predicer process failed".into());
