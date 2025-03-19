@@ -719,7 +719,7 @@ impl BaseInputDataSetup {
 #[derive(Clone, Copy, Debug, Deserialize, GraphQLEnum, Serialize)]
 pub enum Conversion {
     Unit,
-    Transport,
+    Transfer,
     Market,
 }
 
@@ -727,7 +727,7 @@ impl Conversion {
     fn to_input(&self) -> i64 {
         match self {
             Conversion::Unit => 1,
-            Conversion::Transport => 2,
+            Conversion::Transfer => 2,
             Conversion::Market => 3,
         }
     }
@@ -1180,6 +1180,8 @@ pub enum MarketDirection {
     Up,
     Down,
     UpDown,
+    ResUp,
+    ResDown,
 }
 
 impl MarketDirection {
@@ -1188,6 +1190,8 @@ impl MarketDirection {
             MarketDirection::Up => "up",
             MarketDirection::Down => "down",
             MarketDirection::UpDown => "up_down",
+            MarketDirection::ResUp => "res_up",
+            MarketDirection::ResDown => "res_down",
         }
         .into()
     }
@@ -1255,7 +1259,7 @@ impl ExpandToTimeSeries for BaseMarket {
             }),
             reserve_type: match self.reserve_type {
                 Some(ref reserve_type) => reserve_type.clone(),
-                None => String::new(),
+                None => "none".to_string(),
             },
             is_bid: self.is_bid,
             is_limited: self.is_limited,
@@ -2103,7 +2107,7 @@ mod tests {
         let base = BaseProcess {
             name: "Conversion".to_string(),
             groups: vec!["Group".to_string()],
-            conversion: Conversion::Transport,
+            conversion: Conversion::Transfer,
             is_cf: true,
             is_cf_fix: false,
             is_online: true,

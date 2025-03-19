@@ -142,55 +142,112 @@ fn temps_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
 fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, DataConversionError> {
     let setup = &input_data.setup;
     let parameters = vec![
-        "use_market_bids",
-        "use_reserves",
-        "use_reserve_realisation",
-        "use_node_dummy_variables",
-        "use_ramp_dummy_variables",
-        "node_dummy_variable_cost",
-        "ramp_dummy_variable_cost",
-        "common_timesteps",
-        "common_scenario_name",
+        "use_reserves",        // boolean index 0
+        "contains_online",          // boolean index 1
+        "contains_states",          // boolean index 2
+        "contains_piecewise_eff",   // boolean index 3
+        "contains_risk",            // boolean index 4
+        "contains_diffusion",       // boolean index 5
+        "contains_delay",           // boolean index 6
+        "contains_markets",         // boolean index 7
+        "use_reserve_realisation",  // boolean index 8
+        "use_market_bids",          // boolean index 9
+        "common_timesteps",         // int index 0
+        "common_scenario_name",     // string index 0
+        "use_node_dummy_variables", // boolean index 10
+        "use_ramp_dummy_variables", // boolean index 11
+        "node_dummy_variable_cost", // float index 0
+        "ramp_dummy_variable_cost", // float index 1
     ];
+
     let bool_array = BooleanArray::from(vec![
-        setup.contains_markets,
         setup.contains_reserves,
+        setup.contains_online,
+        setup.contains_states,
+        setup.contains_piecewise_eff,
+        setup.contains_risk,
+        setup.contains_diffusion,
+        setup.contains_delay,
+        setup.contains_markets,
         setup.reserve_realisation,
+        setup.use_market_bids,
         setup.use_node_dummy_variables,
         setup.use_ramp_dummy_variables,
     ]);
+    
     let float_array = Float64Array::from(vec![
         setup.node_dummy_variable_cost,
         setup.ramp_dummy_variable_cost,
     ]);
+    
     let int_array = Int64Array::from(vec![setup.common_timesteps]);
+    
     let scenario_name = if setup.common_scenario_name.is_empty() {
         "missing".to_string()
     } else {
         setup.common_scenario_name.clone()
     };
     let str_array = StringArray::from(vec![scenario_name]);
+
     let union_fields = [
         (0, Arc::new(Field::new("bool", DataType::Boolean, false))),
         (1, Arc::new(Field::new("float", DataType::Float64, false))),
-        (2, Arc::new(Field::new("int", DataType::Int32, false))),
+        (2, Arc::new(Field::new("int", DataType::Int64, false))),
         (3, Arc::new(Field::new("str", DataType::Utf8, false))),
     ]
     .into_iter()
     .collect::<UnionFields>();
-    let type_ids = [0, 0, 0, 0, 0, 1, 1, 2, 3]
-        .into_iter()
-        .collect::<ScalarBuffer<i8>>();
-    let offsets = [0, 1, 2, 3, 4, 0, 1, 0, 0]
-        .into_iter()
-        .collect::<ScalarBuffer<i32>>();
+
+    // Booleans: 0, Floats: 1, Int: 2, String: 3.
+    let type_ids = vec![
+        0, // use_reserves
+        0, // contains_online
+        0, // contains_states
+        0, // contains_piecewise_eff
+        0, // contains_risk
+        0, // contains_diffusion
+        0, // contains_delay
+        0, // contains_markets
+        0, // reserve_realisation
+        0, // use_market_bids
+        2, // common_timesteps
+        3, // common_scenario_name
+        0, // use_node_dummy_variables
+        0, // use_ramp_dummy_variables
+        1, // node_dummy_variable_cost
+        1, // ramp_dummy_variable_cost
+    ];
+    let offsets = vec![
+        0,  // use_reserves -> bool[0]
+        1,  // contains_online -> bool[1]
+        2,  // contains_states -> bool[2]
+        3,  // contains_piecewise_eff -> bool[3]
+        4,  // contains_risk -> bool[4]
+        5,  // contains_diffusion -> bool[5]
+        6,  // contains_delay -> bool[6]
+        7,  // contains_markets -> bool[7]
+        8,  // reserve_realisation -> bool[8]
+        9,  // use_market_bids -> bool[9]
+        0,  // common_timesteps -> int[0]
+        0,  // common_scenario_name -> str[0]
+        10, // use_node_dummy_variables -> bool[10]
+        11, // use_ramp_dummy_variables -> bool[11]
+        0,  // node_dummy_variable_cost -> float[0]
+        1,  // ramp_dummy_variable_cost -> float[1]
+    ];
+    
+    let type_ids = ScalarBuffer::from(type_ids);
+    let offsets = ScalarBuffer::from(offsets);
+    
     let children = vec![
         Arc::new(bool_array) as ArrayRef,
         Arc::new(float_array),
         Arc::new(int_array),
         Arc::new(str_array),
     ];
-    let values = UnionArray::try_new(union_fields, type_ids, Some(offsets), children).unwrap();
+    let values = UnionArray::try_new(union_fields, type_ids, Some(offsets), children)
+        .unwrap();
+
     if parameters.len() != values.len() {
         return Err(DataConversionError::InvalidInput(
             "Mismatched parameters and values lengths".to_string(),

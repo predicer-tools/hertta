@@ -67,7 +67,6 @@ pub async fn start(
             return;
         }
     };
-    println!("Expected control processes: {:#?}", control_processes);
     let mut zmq_port = settings_snapshot.predicer_port;
     if zmq_port == 0 {
         zmq_port = match find_available_port().await {
@@ -204,10 +203,7 @@ pub async fn start(
                             .expect("setting job status should not fail");
                         return;
                     }
-                };
-                if let Some(result_batch) = results.get("v_flow") {
-                    println!("Columns in v_flow: {:?}", result_batch.schema().fields().iter().map(|f| f.name()).collect::<Vec<_>>());
-                }                
+                };               
                 let control_data =
                     match controls_from_result_batch(&result_batch, control_processes) {
                         Ok(d) => d,
@@ -220,11 +216,6 @@ pub async fn start(
                         }
                     };
                 
-                /*let control_file_path = "control_signals.txt";
-                match std::fs::write(control_file_path, format!("{:#?}", control_data)) {
-                    Ok(_) => println!("Control signals successfully written to {}", control_file_path),
-                    Err(e) => eprintln!("Failed to write control signals to file: {}", e),
-                }*/
                 let result_data = OptimizationOutcome::new(time_stamps, control_data);
                 job_store
                     .set_job_status(
@@ -271,7 +262,6 @@ fn expected_control_processes(model_data: &BaseInputData) -> Result<Vec<ProcessI
         &mut model_data.processes.iter(),
         &input_data_base::find_input_node_names(model_data.nodes.iter()),
     );
-    println!("process names: {:#?}", process_names);
     let first_scenario_name = match model_data.scenarios.first() {
         Some(scenario) => scenario.name().clone(),
         None => {
@@ -282,17 +272,39 @@ fn expected_control_processes(model_data: &BaseInputData) -> Result<Vec<ProcessI
         .iter()
         .map(|name| ProcessInfo {
             name: name.0.clone(),
-            column_name: format!("{}_{}", name.1, first_scenario_name),
+            column_name: format!("{}_{}_{}", name.0, name.1, first_scenario_name),
         })
         .collect())
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct ProcessInfo {
     name: String,
     column_name: String,
 }
 
+fn processes_and_column_prefixes<'a>(
+    processes: impl Iterator<Item = &'a BaseProcess>,
+    input_node_names: &Vec<String>,
+) -> Vec<(String, String)> {
+    let mut process_names = Vec::new();
+
+    for process in processes {
+        for topology in &process.topos {
+            if topology.source != topology.sink
+                && (input_node_names.contains(&topology.source) || process.name == topology.source)
+                && (input_node_names.contains(&topology.sink)   || process.name == topology.sink)
+            {
+                let p_name = process.name.clone();
+                let prefix = format!("{}_{}", topology.source, topology.sink);
+                process_names.push((p_name, prefix));
+            }
+        }
+    }
+    process_names
+}
+
+/* 
 fn processes_and_column_prefixes<'a>(
     processes: impl Iterator<Item = &'a BaseProcess>,
     input_node_names: &Vec<String>,
@@ -310,6 +322,7 @@ fn processes_and_column_prefixes<'a>(
     }
     process_names
 }
+    */
 
 fn time_stamps_from_result_batch(batch: &RecordBatch) -> Result<Vec<DateTime<Utc>>, String> {
     match batch.column_by_name("t") {
@@ -480,12 +493,6 @@ async fn optimization_task(
                                     ))
                                 }
                             };
-                              // Write the results to a file (writing the debug representation)
-                            let output_path = "optimization_results.txt";
-                            match std::fs::write(output_path, format!("{:#?}", result)) {
-                                Ok(_) => println!("Results successfully written to {}", output_path),
-                                Err(e) => eprintln!("Failed to write results to file: {}", e),
-                            }
                             is_running = false;
                         } else if command == "Failed" {
                             return Err("optimization_task: Predicer process failed".into());
@@ -1000,6 +1007,7 @@ mod tests {
     use arrow::datatypes::{DataType, Field, Schema};
     use std::net::TcpListener as SyncTcpListener;
     use std::thread;
+    use std::fs;
 
     fn find_available_port_sync() -> Result<u16, io::Error> {
         let listener = SyncTcpListener::bind("127.0.0.1:0")?;
@@ -1298,5 +1306,42 @@ mod tests {
             .collect();
             assert_eq!(fitted_prices, expected_prices);
         }
+    }
+    #[test]
+    fn test_expected_control_processes() {
+        let data = fs::read_to_string("test_model.json").expect("Unable to read test_model.json");
+        let model: Model = serde_json::from_str(&data).expect("JSON was not well-formatted");
+        
+        let result = expected_control_processes(&model.input_data)
+            .expect("expected_control_processes failed");
+        
+        // Expected output:
+        // Based on the test JSON the expected tuples from processes_and_column_prefixes are:
+        //   ("ngchp", "ng_ngchp"),
+        //   ("ngchp", "ngchp_dh"),
+        //   ("ngchp", "ngchp_elc"),
+        //   ("hp1", "elc_hp1"),
+        //   ("hp1", "hp1_dh"),
+        //   ("p2x1", "elc_p2x1"),
+        //   ("p2x1", "p2x1_h2"),
+        //   ("pv1", "pv1_elc"),
+        //   ("pv2", "pv2_elc"),
+        //   ("dh_tra", "dh_dh2")
+        //
+        // The first scenario in the JSON is "s1", so the column_name is built as:
+        //    "{process_name}_{prefix}_s1"
+        let expected = vec![
+            ProcessInfo { name: "ngchp".into(), column_name: "ngchp_ng_ngchp_s1".into() },
+            ProcessInfo { name: "ngchp".into(), column_name: "ngchp_ngchp_dh_s1".into() },
+            ProcessInfo { name: "ngchp".into(), column_name: "ngchp_ngchp_elc_s1".into() },
+            ProcessInfo { name: "hp1".into(),   column_name: "hp1_elc_hp1_s1".into() },
+            ProcessInfo { name: "hp1".into(),   column_name: "hp1_hp1_dh_s1".into() },
+            ProcessInfo { name: "p2x1".into(),  column_name: "p2x1_elc_p2x1_s1".into() },
+            ProcessInfo { name: "p2x1".into(),  column_name: "p2x1_p2x1_h2_s1".into() },
+            ProcessInfo { name: "pv1".into(),   column_name: "pv1_pv1_elc_s1".into() },
+            ProcessInfo { name: "pv2".into(),   column_name: "pv2_pv2_elc_s1".into() },
+            ProcessInfo { name: "dh_tra".into(),column_name: "dh_tra_dh_dh2_s1".into() },
+        ];
+        assert_eq!(result, expected);
     }
 }
