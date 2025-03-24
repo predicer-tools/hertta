@@ -7,7 +7,7 @@ use super::utilities;
 use super::weather_forecast_job;
 use super::{ElectricityPriceData, OptimizationData, WeatherData};
 use crate::input_data::{Forecastable, InputData, Market, TimeSeries, TimeSeriesData};
-use crate::input_data_base::{self, BaseInputData, BaseProcess};
+use crate::input_data_base::{self, BaseInputData, BaseProcess, BaseMarket, MarketType};
 use crate::model::Model;
 use crate::scenarios::Scenario;
 use crate::settings::{LocationSettings, Settings};
@@ -205,7 +205,7 @@ pub async fn start(
                     }
                 };               
                 let control_data =
-                    match controls_from_result_batch(&result_batch, control_processes) {
+                    match controls_from_result_batch(&result_batch) {
                         Ok(d) => d,
                         Err(error) => {
                             job_store
@@ -257,24 +257,63 @@ async fn find_available_port() -> Result<u16, io::Error> {
     Ok(port)
 }
 
-fn expected_control_processes(model_data: &BaseInputData) -> Result<Vec<ProcessInfo>, String> {
-    let process_names = processes_and_column_prefixes(
-        &mut model_data.processes.iter(),
-        &input_data_base::find_input_node_names(model_data.nodes.iter()),
-    );
-    let first_scenario_name = match model_data.scenarios.first() {
-        Some(scenario) => scenario.name().clone(),
-        None => {
-            return Err("no scenarios in model data".to_string());
+fn generate_energy_market_prefixes<'a>(
+    markets: impl Iterator<Item = &'a BaseMarket>,
+    input_node_names: &Vec<String>,
+) -> Vec<String> {
+    let mut prefixes = Vec::new();
+
+    for market in markets {
+        if let MarketType::Energy = market.m_type {
+            let node = &market.node;
+
+            if input_node_names.contains(node) {
+                let market_name = &market.name;
+
+                let prefix1 = format!("{node}_{market}_trade_process_{node}_{market}",
+                    node = node, market = market_name);
+                let prefix2 = format!("{node}_{market}_trade_process_{market}_{node}",
+                    node = node, market = market_name);
+
+                prefixes.push(prefix1);
+                prefixes.push(prefix2);
+            }
         }
-    };
-    Ok(process_names
-        .iter()
-        .map(|name| ProcessInfo {
-            name: name.0.clone(),
-            column_name: format!("{}_{}_{}", name.0, name.1, first_scenario_name),
-        })
-        .collect())
+    }
+
+    prefixes
+}
+
+fn expected_control_processes(model_data: &BaseInputData) -> Result<Vec<ProcessInfo>, String> {
+    let input_node_names = input_data_base::find_input_node_names(model_data.nodes.iter());
+
+    let mut process_names = processes_and_column_prefixes(
+        model_data.processes.iter(),
+        &input_node_names,
+    );
+    let market_prefixes = generate_energy_market_prefixes(model_data.markets.iter(), &input_node_names);
+
+    for prefix in market_prefixes {
+        process_names.push((prefix.clone(), prefix));
+    }
+
+    if model_data.scenarios.is_empty() {
+        return Err("no scenarios in model data".to_string());
+    }
+
+    let mut result = Vec::new();
+
+    for scenario in &model_data.scenarios {
+        let scenario_name = scenario.name();
+        for (proc_name, prefix) in &process_names {
+            result.push(ProcessInfo {
+                name: proc_name.clone(),
+                column_name: format!("{}_{}", prefix, scenario_name),
+            });
+        }
+    }
+
+    Ok(result)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -303,26 +342,6 @@ fn processes_and_column_prefixes<'a>(
     }
     process_names
 }
-
-/* 
-fn processes_and_column_prefixes<'a>(
-    processes: impl Iterator<Item = &'a BaseProcess>,
-    input_node_names: &Vec<String>,
-) -> Vec<(String, String)> {
-    let mut process_names = Vec::new();
-    println!("Input node names: {:#?}", input_node_names);
-    for process in processes {
-        println!("Checking process: {}", process.name);
-        for topology in &process.topos {
-            if input_node_names.contains(&topology.source) && process.name == topology.sink {
-                let prefix = format!("{}_{}_{}", &process.name, &topology.source, &process.name);
-                process_names.push((process.name.clone(), prefix));
-            }
-        }
-    }
-    process_names
-}
-    */
 
 fn time_stamps_from_result_batch(batch: &RecordBatch) -> Result<Vec<DateTime<Utc>>, String> {
     match batch.column_by_name("t") {
@@ -355,41 +374,37 @@ fn convert_time_stamp_column_to_vec(column: &dyn Array, time_zone: &str) -> Vec<
     }
     time_stamps_in_vec
 }
-
 fn controls_from_result_batch(
     batch: &RecordBatch,
-    control_processes: Vec<ProcessInfo>,
 ) -> Result<Vec<ControlSignal>, String> {
-    let mut control_data = Vec::with_capacity(control_processes.len());
-    for control_process in control_processes {
-        match batch.column_by_name(&control_process.column_name) {
-            Some(column) => match column.data_type() {
-                DataType::Float64 => {
-                    let float_array = array::as_primitive_array::<Float64Type>(column);
-                    let data_as_vec = float_array
-                        .into_iter()
-                        .map(|x| x.unwrap())
-                        .collect::<Vec<f64>>();
-                    control_data.push(ControlSignal {
-                        name: control_process.name,
-                        signal: data_as_vec,
-                    });
-                }
-                unexpected_type => {
-                    let message = format!(
-                        "unexpected data type in '{}' column: '{}'",
-                        control_process.column_name,
-                        unexpected_type.to_string()
-                    );
-                    return Err(message);
-                }
-            },
-            None => {
-                let message = format!("no '{}' column in v_flow", control_process.column_name);
-                return Err(message);
+    let mut control_data = Vec::with_capacity(batch.num_columns());
+
+    for (i, field) in batch.schema().fields().iter().enumerate() {
+        let column = batch.column(i);
+        let column_name = field.name().clone();
+
+        match column.data_type() {
+            DataType::Float64 => {
+                let float_array = array::as_primitive_array::<Float64Type>(column);
+                let data_as_vec = float_array
+                    .into_iter()
+                    .map(|x| x.unwrap()) 
+                    .collect::<Vec<f64>>();
+                control_data.push(ControlSignal {
+                    name: column_name,
+                    signal: data_as_vec,
+                });
+            }
+            other_type => {
+                println!(
+                    "Skipping column '{}' with unsupported type '{}'",
+                    column_name,
+                    other_type
+                );
             }
         }
     }
+
     Ok(control_data)
 }
 
