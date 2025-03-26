@@ -1,5 +1,9 @@
 # hertta
 
+> [!WARNING]
+> **This project is currently under development and may not be fully functional.**
+> Please note that the interface for this program is not working as expected. We are actively working on improvements and updates. Thank you for your patience.
+
 This Rust project provides a [GraphQL](https://graphql.org/) server for the Hertta system, offering an API for optimization, electricity price fetching, and weather forecast jobs.
 
 ## 1. Install Rust and Cargo
