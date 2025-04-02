@@ -251,6 +251,7 @@ impl Query {
     }
     async fn market(name: String, context: &HerttaContext) -> FieldResult<BaseMarket> {
         let model = context.model.lock().await;
+        println!("DEBUG: Market input data: {:?}", model.input_data.markets);
         model
             .input_data
             .markets
@@ -784,6 +785,7 @@ impl Mutation {
     async fn create_market(market: NewMarket, context: &HerttaContext) -> ValidationErrors {
         let mut model_ref = context.model.lock().await;
         let model = model_ref.deref_mut();
+        println!("DEBUG: New market input: {:?}", market);
         market_input::create_market(
             market,
             &mut model.input_data.markets,

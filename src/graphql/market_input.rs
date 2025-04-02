@@ -8,7 +8,7 @@ use crate::input_data_base::{
 use crate::scenarios::Scenario;
 use juniper::GraphQLInputObject;
 
-#[derive(GraphQLInputObject)]
+#[derive(GraphQLInputObject, Debug)]
 pub struct NewMarket {
     name: String,
     m_type: MarketType,

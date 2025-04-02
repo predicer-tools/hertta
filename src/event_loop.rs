@@ -18,6 +18,7 @@ use jobs::{Job, NewJob};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use std::io::{self, Write};
 
 pub struct OptimizationData {
     pub input_data: BaseInputData,
@@ -65,6 +66,12 @@ pub async fn event_loop(
     mut message_receiver: mpsc::Receiver<NewJob>,
 ) {
     while let Some(new_job) = message_receiver.recv().await {
+        {
+            // Lock the model and print the current market data
+            let model_guard = model.lock().await;
+            println!("DEBUG: Current markets: {:?}", model_guard.input_data.markets);
+            io::stdout().flush().unwrap();
+        }
         match new_job.job() {
             Job::ElectricityPrice => {
                 start_electricity_price_fetch(

@@ -79,13 +79,11 @@ impl TryFrom<ValueInput> for Value {
             (Some(constant), None) => SeriesValue::Constant(Constant { value: constant }),
             (None, Some(series)) => SeriesValue::FloatList(FloatList { values: series }),
             (Some(_), Some(_)) => {
-                // Explicitly handle this case and return an error
                 return Err(
                     "ValueInput cannot have both `constant` and `series` populated simultaneously."
                         .to_string(),
                 );
             }
-            // If both are None, default to a constant with a value of 0.0
             (None, None) => SeriesValue::Constant(Constant { value: 0.0 }),
         };
 
@@ -177,28 +175,17 @@ fn values_to_time_series_data(
     }
     
     let default_series_option = if let Some(default_value) = default_values.first() {
-        let default_series = convert_value_to_series(default_value, &timeline)?;
-        Some(default_series)
+        Some(convert_value_to_series(default_value, &timeline)?)
     } else {
         None
     };
-    
+
     let mut ts_vec: Vec<TimeSeries> = Vec::new();
-    
     let mut scenarios_with_values: HashSet<String> = HashSet::new();
-    
+
     for value in &values {
-        if value.scenario.is_none() {
-            let default_ts = TimeSeries {
-                scenario: "Default".to_string(),
-                series: convert_value_to_series(value, &timeline)?,
-            };
-            ts_vec.push(default_ts);
-        } else {
-            let scenario_name = value.scenario.as_ref().unwrap();
-            let scenario_exists = scenarios.iter()
-                .any(|s| s.name() == scenario_name);
-            if !scenario_exists {
+        if let Some(scenario_name) = &value.scenario {
+            if !scenarios.iter().any(|s| s.name() == scenario_name) {
                 return Err(format!(
                     "Scenario '{}' specified in Value does not exist in provided scenarios",
                     scenario_name
@@ -213,7 +200,7 @@ fn values_to_time_series_data(
             ts_vec.push(ts);
         }
     }
-    
+
     if let Some(default_series) = default_series_option {
         for scenario in &scenarios {
             if !scenarios_with_values.contains(scenario.name().as_str()) {
@@ -225,13 +212,11 @@ fn values_to_time_series_data(
             }
         }
     } else {
-        let scenarios_without_values: Vec<&Scenario> = scenarios.iter()
+        let missing_scenarios: Vec<String> = scenarios.iter()
             .filter(|s| !scenarios_with_values.contains(s.name().as_str()))
+            .map(|s| s.name().clone())
             .collect();
-        if !scenarios_without_values.is_empty() {
-            let missing_scenarios: Vec<String> = scenarios_without_values.iter()
-                .map(|s| s.name().clone())
-                .collect();
+        if !missing_scenarios.is_empty() {
             return Err(format!(
                 "Missing default values for scenarios: {:?}",
                 missing_scenarios
@@ -2686,7 +2671,6 @@ mod tests {
     }
     #[test]
     fn forecast_values_to_forecastable_returns_forecast_variant() {
-        // If any ForecastValue is a Forecast variant, then the conversion should return that forecast.
         let fv = ForecastValue {
             scenario: None,
             value: BaseForecastable::Forecast(Forecast::new("MyForecast".to_string())),

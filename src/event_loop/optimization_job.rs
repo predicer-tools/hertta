@@ -7,7 +7,7 @@ use super::utilities;
 use super::weather_forecast_job;
 use super::{ElectricityPriceData, OptimizationData, WeatherData};
 use crate::input_data::{Forecastable, InputData, Market, TimeSeries, TimeSeriesData};
-use crate::input_data_base::{self, BaseInputData, BaseProcess, BaseMarket, MarketType};
+use crate::input_data_base::{self, BaseInputData, BaseProcess, BaseMarket, BaseForecastable, MarketType};
 use crate::model::Model;
 use crate::scenarios::Scenario;
 use crate::settings::{LocationSettings, Settings};
@@ -53,6 +53,7 @@ pub async fn start(
     {
         return;
     }
+    
     let settings_snapshot = settings.lock().await.clone();
     let model_snapshot = model.lock().await.clone();
     let optimization_data = OptimizationData::with_input_data(model_snapshot.input_data);
@@ -658,28 +659,30 @@ async fn generate_model_task(
             .time_data
             .as_ref()
             .ok_or("generate_model_task: didn't receive time data".to_string())?;
-        let mut input_data = optimization_data
-            .input_data
-            .expand_to_time_series(time_line);
-        let weather_data = optimization_data.weather_data.take().ok_or(
-            "update_model_data_task: weather data missing in optimization data".to_string(),
-        )?;
-        if let Err(e) = update_outside_node(&mut input_data, weather_data) {
-            return Err(format!(
-                "update_model_data_task: failed to update outside node inflow: {}",
-                e
-            ));
+        let mut input_data = optimization_data.input_data.expand_to_time_series(time_line);
+        
+        if let Some(weather_data) = optimization_data.weather_data.take() {
+            if let Err(e) = update_outside_node(&mut input_data, weather_data) {
+                return Err(format!(
+                    "update_model_data_task: failed to update outside node inflow: {}",
+                    e
+                ));
+            }
+        } else {
+            println!("No weather data available; skipping update of outside node inflow.");
         }
-        let electricity_price_data = optimization_data.elec_price_data.take().ok_or(
-            "update_model_data_task: electricity price data missing in optimization data"
-                .to_string(),
-        )?;
-        if let Err(e) = update_npe_market_prices(&mut input_data.markets, electricity_price_data) {
-            return Err(format!(
-                "update_model_data_task: failed to update NPE market prices: {}",
-                e
-            ));
+        
+        if let Some(electricity_price_data) = optimization_data.elec_price_data.take() {
+            if let Err(e) = update_npe_market_prices(&mut input_data.markets, electricity_price_data) {
+                return Err(format!(
+                    "update_model_data_task: failed to update NPE market prices: {}",
+                    e
+                ));
+            }
+        } else {
+            println!("No electricity price data available; skipping update of market prices.");
         }
+        
         input_data.check_ts_data_against_temporals()?;
         if tx.send(input_data).is_err() {
             return Err("update_model_data_task: failed to send generated input data".to_string());
@@ -826,57 +829,50 @@ pub async fn fetch_weather_data_task(
     python_exec: &String,
     weather_fetcher_script: &String,
     rx: oneshot::Receiver<OptimizationData>,
-    tx: oneshot::Sender<OptimizationData>,
+    tx_elec: oneshot::Sender<OptimizationData>,
 ) -> Result<(), String> {
     if let Ok(mut optimization_data) = rx.await {
-        let time_line = optimization_data
-            .time_data
-            .as_ref()
-            .ok_or("fetch_weather_data_task: did not receive time data".to_string())?;
-        let start_time = time_line.first().ok_or("empty time line".to_string())?;
-        let end_time = time_line.last().ok_or("empty time line".to_string())?;
-        match weather_forecast_job::fetch_weather_data(
-            &location.place,
-            &start_time,
-            &end_time,
-            &time_line_settings.step().to_time_delta(),
-            python_exec,
-            weather_fetcher_script,
-        ) {
-            Ok(weather_values) => {
-                let series = optimization_data
-                    .time_data
-                    .as_ref()
-                    .ok_or("series missing from time data".to_string())?;
-                if let Err(error) =
-                    utilities::check_stamps_match(&weather_values, &time_line, "weather forecast")
-                {
-                    return Err(error);
+        let requires_weather = optimization_data.input_data.nodes.iter().any(|node| {
+            node.inflow.iter().any(|fv| matches!(fv.value, BaseForecastable::Forecast(_)))
+        });        
+
+        if requires_weather {
+            let time_line = optimization_data.time_data
+                .as_ref()
+                .ok_or("fetch_weather_data_task: did not receive time data".to_string())?;
+            let start_time = time_line.first().ok_or("empty time line".to_string())?;
+            let end_time = time_line.last().ok_or("empty time line".to_string())?;
+            match weather_forecast_job::fetch_weather_data(
+                &location.place,
+                &start_time,
+                &end_time,
+                &time_line_settings.step().to_time_delta(),
+                python_exec,
+                weather_fetcher_script,
+            ) {
+                Ok(weather_values) => {
+                    utilities::check_stamps_match(&weather_values, &time_line, "weather forecast")?;
+                    let values = time_series::extract_values_from_pairs_checked(&weather_values, &time_line)
+                        .map_err(|e| format!("fetch_weather_data: {}", e))?;
+                    optimization_data.weather_data = Some(update_weather_data(
+                        time_line,
+                        &values,
+                        &optimization_data.input_data.scenarios,
+                    ));
                 }
-                let values =
-                    time_series::extract_values_from_pairs_checked(&weather_values, &series)
-                        .or_else(|e| Err(format!("fetch_weather_data: {}", e)))?;
-                optimization_data.weather_data = Some(update_weather_data(
-                    series,
-                    &values,
-                    &optimization_data.input_data.scenarios,
-                ));
+                Err(e) => {
+                    return Err(format!("fetch_weather_data_task: failed to fetch weather data: {}", e));
+                }
             }
-            Err(e) => {
-                return Err(format!(
-                    "fetch_weather_data_task: failed to fetch weather data: {}",
-                    e
-                ))
-            }
+        } else {
+            println!("No node requires weather forecast; skipping weather fetch.");
         }
-        return match tx.send(optimization_data) {
-            Ok(..) => Ok(()),
-            Err(..) => {
-                Err("fetch_weather_data_task: failed to forward optimization data".to_string())
-            }
-        };
+        tx_elec.send(optimization_data).map_err(|_| {
+            "fetch_weather_data_task: failed to forward optimization data".to_string()
+        })?;
+        Ok(())
     } else {
-        return Err("fetch_weather_data_task: input channel closed".to_string());
+        Err("fetch_weather_data_task: input channel closed".to_string())
     }
 }
 
@@ -944,44 +940,46 @@ async fn fetch_electricity_price_task(
     tx: oneshot::Sender<OptimizationData>,
 ) -> Result<(), String> {
     if let Ok(mut optimization_data) = rx.await {
-        let time_line = optimization_data
-            .time_data
-            .as_ref()
-            .ok_or("fetch_electricity_price_task: didn't receive time data")?;
-        let start_time = time_line.first().ok_or("time line is empty")?;
-        let end_time = (*time_line.last().ok_or("time line is empty")? - TimeDelta::hours(1))
-            .duration_trunc(TimeDelta::hours(1))
-            .unwrap();
-        match electricity_price_job::fetch_electricity_prices(
-            &location.country,
-            start_time,
-            &end_time,
-        )
-        .await
-        {
-            Ok(prices) => {
-                let prices = fit_prices_to_time_line(&prices, time_line)?;
-                if let Err(error) =
-                    utilities::check_stamps_match(&prices, time_line, "electricity prices")
-                {
-                    return Err(error);
+        let should_fetch = optimization_data.input_data.markets.iter().any(|market| {
+            market.price.iter().any(|fv| matches!(fv.value, BaseForecastable::Forecast(_)))
+        });               
+        
+        if should_fetch {
+            let time_line = optimization_data
+                .time_data
+                .as_ref()
+                .ok_or("fetch_electricity_price_task: didn't receive time data")?;
+            let start_time = time_line.first().ok_or("time line is empty")?;
+            let end_time = (*time_line.last().ok_or("time line is empty")? - TimeDelta::hours(1))
+                .duration_trunc(TimeDelta::hours(1))
+                .unwrap();
+            match electricity_price_job::fetch_electricity_prices(
+                &location.country,
+                start_time,
+                &end_time,
+            )
+            .await
+            {
+                Ok(prices) => {
+                    let prices = fit_prices_to_time_line(&prices, time_line)?;
+                    utilities::check_stamps_match(&prices, time_line, "electricity prices")?;
+                    let prices = prices.iter().map(|pair| (pair.0.clone(), pair.1)).collect();
+                    create_and_update_elec_price_data(&mut optimization_data, &prices, scenarios)?;
                 }
-                let prices = prices.iter().map(|pair| (pair.0.clone(), pair.1)).collect();
-                create_and_update_elec_price_data(&mut optimization_data, &prices, scenarios)?;
-                if tx.send(optimization_data).is_err() {
-                    return Err("fetch_electricity_price_task: failed to send updated optimization data in electricity prices".to_string());
+                Err(e) => {
+                    return Err(format!(
+                        "fetch_electricity_price_task: failed to fetch electricity price data: {}",
+                        e
+                    ));
                 }
-            }
-            Err(e) => {
-                return Err(format!(
-                    "fetch_electricity_price_task: failed to fetch electricity price data: {}",
-                    e
-                ));
             }
         }
-        return Ok(());
+        if tx.send(optimization_data).is_err() {
+            return Err("fetch_electricity_price_task: failed to send updated optimization data".to_string());
+        }
+        Ok(())
     } else {
-        return Err("fetch_electricity_price_task: input channel closed".to_string());
+        Err("fetch_electricity_price_task: input channel closed".to_string())
     }
 }
 
