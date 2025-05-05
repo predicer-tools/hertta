@@ -4,6 +4,7 @@ use hertta_derive::Name;
 use juniper::GraphQLObject;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use indexmap::IndexMap;
 
 #[derive(Clone, Debug, Deserialize, GraphQLObject, Name, Serialize, PartialEq)]
 #[graphql(description = "Scenario for stochastics.")]
@@ -67,6 +68,13 @@ impl Scenario {
         Ok(())
     }
     pub fn to_map(scenarios: &Vec<Self>) -> BTreeMap<String, f64> {
+        let weight_sum: f64 = scenarios.iter().map(|s| s.weight).sum();
+        scenarios
+            .iter()
+            .map(|s| (s.name.clone(), s.weight / weight_sum))
+            .collect()
+    }
+    pub fn to_indexmap(scenarios: &Vec<Self>) -> IndexMap<String, f64> {
         let weight_sum: f64 = scenarios.iter().map(|s| s.weight).sum();
         scenarios
             .iter()

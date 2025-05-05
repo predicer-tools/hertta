@@ -15,6 +15,7 @@ use arrow_ipc::writer::StreamWriter;
 use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+use indexmap::IndexMap;
 
 // Function to create and serialize multiple RecordBatches
 pub fn create_and_serialize_record_batches(
@@ -965,7 +966,7 @@ fn markets_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
 }
 
 fn sort_unique_market_and_scenario_names(
-    markets: &BTreeMap<String, Market>,
+    markets: &IndexMap<String, Market>,
 ) -> (Vec<String>, Vec<String>) {
     // Use BTreeSet to ensure lexicographical order for market and scenario names
     let mut scenario_names: BTreeSet<String> = BTreeSet::new();

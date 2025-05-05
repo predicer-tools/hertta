@@ -8,7 +8,7 @@ mod utilities;
 mod weather_forecast_job;
 
 use crate::input_data::{TimeSeries, TimeSeriesData};
-use crate::input_data_base::BaseInputData;
+use crate::input_data_base::{BaseInputData, BaseForecastable, ForecastValue};
 use crate::model::Model;
 use crate::settings::Settings;
 use crate::time_line_settings::TimeLineSettings;
@@ -18,7 +18,7 @@ use jobs::{Job, NewJob};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
-use std::io::{self, Write};
+use crate::event_loop::jobs::{JobStatus, JobOutcome, ElectricityPriceOutcome, WeatherForecastOutcome};
 
 pub struct OptimizationData {
     pub input_data: BaseInputData,
@@ -66,22 +66,43 @@ pub async fn event_loop(
     mut message_receiver: mpsc::Receiver<NewJob>,
 ) {
     while let Some(new_job) = message_receiver.recv().await {
-        {
-            // Lock the model and print the current market data
-            let model_guard = model.lock().await;
-            println!("DEBUG: Current markets: {:?}", model_guard.input_data.markets);
-            io::stdout().flush().unwrap();
-        }
         match new_job.job() {
             Job::ElectricityPrice => {
+                let has_price_forecast = {
+                    let model_guard = model.lock().await;
+                    model_guard
+                        .input_data
+                        .nodes
+                        .iter()
+                        .any(|node| node.inflow.iter().any(|fv: &ForecastValue| match &fv.value {
+                            BaseForecastable::Forecast(f) if f.name() == "ELERING" || f.name() == "ENTSOE" => true,
+                            _ => false,
+                        }))
+                };
+
+                if !has_price_forecast {
+                    let _ = job_store
+                        .set_job_status(
+                            new_job.job_id(),
+                            Arc::new(JobStatus::Finished(
+                                JobOutcome::ElectricityPrice(
+                                    ElectricityPriceOutcome::new(vec![], vec![]),
+                                ),
+                            )),
+                        )
+                        .await;
+                    continue;
+                }
+
                 start_electricity_price_fetch(
                     new_job.job_id(),
                     Arc::clone(&settings),
                     job_store.clone(),
                     model.lock().await.time_line.clone(),
                 )
-                .await
+                .await;
             }
+
             Job::Optimization => {
                 start_optimization(
                     new_job.job_id(),
@@ -89,16 +110,47 @@ pub async fn event_loop(
                     job_store.clone(),
                     Arc::clone(&model),
                 )
-                .await
+                .await;
             }
+
             Job::WeatherForecast => {
+                // Only fetch if there's a forecastable node named "FMI"
+                let has_weather_forecast = {
+                    let model_guard = model.lock().await;
+                    model_guard
+                        .input_data
+                        .nodes
+                        .iter()
+                        .any(|node| {
+                            node.inflow.iter().any(|fv| match &fv.value {
+                                BaseForecastable::Forecast(f) if f.name() == "FMI" => true,
+                                _ => false,
+                            })
+                        })
+                };
+
+                if !has_weather_forecast {
+                    let _ = job_store
+                        .set_job_status(
+                            new_job.job_id(),
+                            Arc::new(JobStatus::Finished(
+                                JobOutcome::WeatherForecast(
+                                    WeatherForecastOutcome::new(vec![], vec![]),
+                                ),
+                            )),
+                        )
+                        .await;
+                    continue;
+                }
+
+                // Spawn the weather forecast fetch task
                 start_weather_forecast_fetch(
                     new_job.job_id(),
                     Arc::clone(&settings),
                     job_store.clone(),
                     model.lock().await.time_line.clone(),
                 )
-                .await
+                .await;
             }
         };
     }

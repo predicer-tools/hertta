@@ -7,7 +7,7 @@ use super::utilities;
 use super::weather_forecast_job;
 use super::{ElectricityPriceData, OptimizationData, WeatherData};
 use crate::input_data::{Forecastable, InputData, Market, TimeSeries, TimeSeriesData};
-use crate::input_data_base::{self, BaseInputData, BaseProcess, BaseMarket, BaseForecastable, MarketType};
+use crate::input_data_base::BaseForecastable;
 use crate::model::Model;
 use crate::scenarios::Scenario;
 use crate::settings::{LocationSettings, Settings};
@@ -30,6 +30,7 @@ use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use zmq::{Context, Socket};
+use indexmap::IndexMap;
 
 const PREDICER_SEND_FLAGS: i32 = 0;
 const PREDICER_RECEIVE_FLAGS: i32 = 0;
@@ -58,16 +59,6 @@ pub async fn start(
     let model_snapshot = model.lock().await.clone();
     let optimization_data = OptimizationData::with_input_data(model_snapshot.input_data);
     let start_time = compute_timeline_start(&model_snapshot.time_line);
-    let control_processes = match expected_control_processes(&optimization_data.input_data) {
-        Ok(names) => names,
-        Err(error) => {
-            job_store
-                .set_job_status(job_id, Arc::new(JobStatus::Failed(error.into())))
-                .await
-                .expect("setting job status should not fail");
-            return;
-        }
-    };
     let mut zmq_port = settings_snapshot.predicer_port;
     if zmq_port == 0 {
         zmq_port = match find_available_port().await {
@@ -258,91 +249,6 @@ async fn find_available_port() -> Result<u16, io::Error> {
     Ok(port)
 }
 
-fn generate_energy_market_prefixes<'a>(
-    markets: impl Iterator<Item = &'a BaseMarket>,
-    input_node_names: &Vec<String>,
-) -> Vec<String> {
-    let mut prefixes = Vec::new();
-
-    for market in markets {
-        if let MarketType::Energy = market.m_type {
-            let node = &market.node;
-
-            if input_node_names.contains(node) {
-                let market_name = &market.name;
-
-                let prefix1 = format!("{node}_{market}_trade_process_{node}_{market}",
-                    node = node, market = market_name);
-                let prefix2 = format!("{node}_{market}_trade_process_{market}_{node}",
-                    node = node, market = market_name);
-
-                prefixes.push(prefix1);
-                prefixes.push(prefix2);
-            }
-        }
-    }
-
-    prefixes
-}
-
-fn expected_control_processes(model_data: &BaseInputData) -> Result<Vec<ProcessInfo>, String> {
-    let input_node_names = input_data_base::find_input_node_names(model_data.nodes.iter());
-
-    let mut process_names = processes_and_column_prefixes(
-        model_data.processes.iter(),
-        &input_node_names,
-    );
-    let market_prefixes = generate_energy_market_prefixes(model_data.markets.iter(), &input_node_names);
-
-    for prefix in market_prefixes {
-        process_names.push((prefix.clone(), prefix));
-    }
-
-    if model_data.scenarios.is_empty() {
-        return Err("no scenarios in model data".to_string());
-    }
-
-    let mut result = Vec::new();
-
-    for scenario in &model_data.scenarios {
-        let scenario_name = scenario.name();
-        for (proc_name, prefix) in &process_names {
-            result.push(ProcessInfo {
-                name: proc_name.clone(),
-                column_name: format!("{}_{}", prefix, scenario_name),
-            });
-        }
-    }
-
-    Ok(result)
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct ProcessInfo {
-    name: String,
-    column_name: String,
-}
-
-fn processes_and_column_prefixes<'a>(
-    processes: impl Iterator<Item = &'a BaseProcess>,
-    input_node_names: &Vec<String>,
-) -> Vec<(String, String)> {
-    let mut process_names = Vec::new();
-
-    for process in processes {
-        for topology in &process.topos {
-            if topology.source != topology.sink
-                && (input_node_names.contains(&topology.source) || process.name == topology.source)
-                && (input_node_names.contains(&topology.sink)   || process.name == topology.sink)
-            {
-                let p_name = process.name.clone();
-                let prefix = format!("{}_{}", topology.source, topology.sink);
-                process_names.push((p_name, prefix));
-            }
-        }
-    }
-    process_names
-}
 
 fn time_stamps_from_result_batch(batch: &RecordBatch) -> Result<Vec<DateTime<Utc>>, String> {
     match batch.column_by_name("t") {
@@ -693,7 +599,7 @@ async fn generate_model_task(
 }
 
 fn update_npe_market_prices(
-    markets: &mut BTreeMap<String, Market>,
+    markets: &mut IndexMap<String, Market>,
     electricity_price_data: ElectricityPriceData,
 ) -> Result<(), String> {
     for market in markets.values_mut() {
@@ -722,51 +628,57 @@ fn update_outside_node(
     input_data: &mut InputData,
     weather_data: WeatherData,
 ) -> Result<(), String> {
-    let nodes = &mut input_data.nodes;
-    for (node_name, node) in nodes {
-        if let Forecastable::Forecast(_) = node.inflow {
-            if !node.is_inflow {
-                return Err(format!("{} node is not marked for inflow", node_name));
+    for (node_name, node) in &mut input_data.nodes {
+        if let Forecastable::Forecast(f) = &node.inflow {
+            if f.name() != "FMI" {
+                continue;
             }
-            let state = match &mut node.state {
-                Some(state) => state,
-                None => return Err(format!("{} node has no state", node_name)),
-            };
-            if !state.is_temp {
-                return Err(format!(
-                    "{} node state is not marked as temperature",
-                    node_name
-                ));
-            }
-            if state.state_min > state.state_max {
-                return Err(format!(
-                    "{} node state has state_min greater than state_max",
-                    node_name
-                ));
-            }
-            let initial_temperature = weather_data
-                .first()
-                .expect("weather data should have at least one time series")
-                .series
-                .values()
-                .next()
-                .expect("weather data should have at least one data point");
-            if state.state_min > *initial_temperature {
-                return Err("forecast temperature is below outside node state_min".to_string());
-            }
-            if state.state_max < *initial_temperature {
-                return Err("forecast temperature is above outside node state_max".to_string());
-            }
-            state.initial_state = *initial_temperature;
-            node.inflow = Forecastable::TimeSeriesData(
-                weather_data
-                    .iter()
-                    .map(|d| time_series_diffs(*initial_temperature, d))
-                    .collect::<Vec<TimeSeries>>()
-                    .into(),
-            );
+        } else {
+            continue;
         }
+
+        if !node.is_inflow {
+            return Err(format!("{} node is not marked for inflow", node_name));
+        }
+
+        let state = node
+            .state
+            .as_mut()
+            .ok_or_else(|| format!("{} node has no state", node_name))?;
+
+        if !state.is_temp {
+            return Err(format!("{} node state is not marked as temperature", node_name));
+        }
+        if state.state_min > state.state_max {
+            return Err(format!(
+                "{} node state has state_min greater than state_max",
+                node_name
+            ));
+        }
+
+        let initial_temperature = weather_data
+            .first()
+            .and_then(|ts| ts.series.values().next())
+            .ok_or_else(|| "weather data should have at least one point".to_string())?;
+
+        if state.state_min > *initial_temperature {
+            return Err("forecast temperature is below outside node state_min".into());
+        }
+        if state.state_max < *initial_temperature {
+            return Err("forecast temperature is above outside node state_max".into());
+        }
+
+        state.initial_state = *initial_temperature;
+
+        node.inflow = Forecastable::TimeSeriesData(
+            weather_data
+                .iter()
+                .map(|d| time_series_diffs(*initial_temperature, d))
+                .collect::<Vec<TimeSeries>>()
+                .into(),
+        );
     }
+
     Ok(())
 }
 
@@ -1258,27 +1170,7 @@ mod tests {
             Ok(())
         }
     }
-    mod processes_and_column_prefixes {
-        use super::*;
-        use crate::input_data_base::{BaseTopology, Conversion};
-        #[test]
-        fn column_prefix_gets_generated() {
-            let mut process = BaseProcess::new("control_process".to_string(), Conversion::Unit);
-            process.topos.push(BaseTopology::new(
-                "input_node".to_string(),
-                "control_process".to_string(),
-            ));
-            let processes = vec![process];
-            let input_node_names = vec!["input_node".to_string()];
-            let process_names = processes_and_column_prefixes(processes.iter(), &input_node_names);
-            assert_eq!(process_names.len(), 1);
-            assert_eq!(process_names[0].0, "control_process");
-            assert_eq!(
-                process_names[0].1,
-                "control_process_input_node_control_process"
-            );
-        }
-    }
+    
     mod fit_prices_to_time_line {
         use chrono::TimeZone;
 
@@ -1319,42 +1211,5 @@ mod tests {
             .collect();
             assert_eq!(fitted_prices, expected_prices);
         }
-    }
-    #[test]
-    fn test_expected_control_processes() {
-        let data = fs::read_to_string("test_model.json").expect("Unable to read test_model.json");
-        let model: Model = serde_json::from_str(&data).expect("JSON was not well-formatted");
-        
-        let result = expected_control_processes(&model.input_data)
-            .expect("expected_control_processes failed");
-        
-        // Expected output:
-        // Based on the test JSON the expected tuples from processes_and_column_prefixes are:
-        //   ("ngchp", "ng_ngchp"),
-        //   ("ngchp", "ngchp_dh"),
-        //   ("ngchp", "ngchp_elc"),
-        //   ("hp1", "elc_hp1"),
-        //   ("hp1", "hp1_dh"),
-        //   ("p2x1", "elc_p2x1"),
-        //   ("p2x1", "p2x1_h2"),
-        //   ("pv1", "pv1_elc"),
-        //   ("pv2", "pv2_elc"),
-        //   ("dh_tra", "dh_dh2")
-        //
-        // The first scenario in the JSON is "s1", so the column_name is built as:
-        //    "{process_name}_{prefix}_s1"
-        let expected = vec![
-            ProcessInfo { name: "ngchp".into(), column_name: "ngchp_ng_ngchp_s1".into() },
-            ProcessInfo { name: "ngchp".into(), column_name: "ngchp_ngchp_dh_s1".into() },
-            ProcessInfo { name: "ngchp".into(), column_name: "ngchp_ngchp_elc_s1".into() },
-            ProcessInfo { name: "hp1".into(),   column_name: "hp1_elc_hp1_s1".into() },
-            ProcessInfo { name: "hp1".into(),   column_name: "hp1_hp1_dh_s1".into() },
-            ProcessInfo { name: "p2x1".into(),  column_name: "p2x1_elc_p2x1_s1".into() },
-            ProcessInfo { name: "p2x1".into(),  column_name: "p2x1_p2x1_h2_s1".into() },
-            ProcessInfo { name: "pv1".into(),   column_name: "pv1_pv1_elc_s1".into() },
-            ProcessInfo { name: "pv2".into(),   column_name: "pv2_pv2_elc_s1".into() },
-            ProcessInfo { name: "dh_tra".into(),column_name: "dh_tra_dh_dh2_s1".into() },
-        ];
-        assert_eq!(result, expected);
     }
 }

@@ -12,6 +12,7 @@ use juniper::{graphql_object, FieldResult, GraphQLEnum, GraphQLObject, GraphQLUn
 use serde::{self, Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::convert::TryFrom;
+use indexmap::IndexMap;
 
 pub trait TypeName {
     fn type_name() -> &'static str;
@@ -497,7 +498,7 @@ pub struct ReserveType {
 }
 
 impl ReserveType {
-    fn to_map(reserve_types: &Vec<Self>) -> BTreeMap<String, f64> {
+    fn to_indexmap(reserve_types: &Vec<Self>) -> IndexMap<String, f64> {
         reserve_types
             .iter()
             .map(|reserve| (reserve.name.clone(), reserve.ramp_rate))
@@ -524,7 +525,7 @@ impl TypeName for Risk {
 }
 
 impl Risk {
-    fn to_map(risks: &Vec<Self>) -> BTreeMap<String, f64> {
+    fn to_indexmap(risks: &Vec<Self>) -> IndexMap<String, f64> {
         risks
             .iter()
             .map(|risk| (risk.parameter.clone(), risk.value))
@@ -571,15 +572,15 @@ impl BaseInputData {
                 .map(|market| expand_and_use_name_as_key(market, time_line, &self.scenarios))
                 .collect(),
             groups: groups.iter().map(|group| use_name_as_key(group)).collect(),
-            scenarios: Scenario::to_map(&self.scenarios),
-            reserve_type: ReserveType::to_map(&self.reserve_type),
-            risk: Risk::to_map(&self.risk),
+            scenarios: Scenario::to_indexmap(&self.scenarios),
+            reserve_type: ReserveType::to_indexmap(&self.reserve_type),
+            risk: Risk::to_indexmap(&self.risk),
             inflow_blocks: self
                 .inflow_blocks
                 .iter()
                 .map(|block| expand_and_use_name_as_key(block, time_line, &self.scenarios))
                 .collect(),
-            bid_slots: BTreeMap::new(),
+            bid_slots: IndexMap::new(),
             gen_constraints: self
                 .gen_constraints
                 .iter()
@@ -1252,8 +1253,8 @@ impl ExpandToTimeSeries for BaseMarket {
             max_bid: self.max_bid,
             fee: self.fee,
             price: forecast_values_to_forecastable(&self.price, scenarios, time_line),
-            up_price: forecast_values_to_forecastable(&self.price, scenarios, time_line),
-            down_price: forecast_values_to_forecastable(&self.price, scenarios, time_line),
+            up_price: forecast_values_to_forecastable(&self.up_price, scenarios, time_line),
+            down_price: forecast_values_to_forecastable(&self.down_price, scenarios, time_line),
             reserve_activation_price: values_to_time_series_data(
                 self.reserve_activation_price.clone(),
                 scenarios.clone(),
@@ -1784,9 +1785,6 @@ impl VariableId {
         }
     }
 }
-pub fn find_input_node_names<'a>(nodes: impl Iterator<Item = &'a BaseNode>) -> Vec<String> {
-    nodes.map(|node| node.name.clone()).collect()
-}
 
 fn make_temporals(time_line: &TimeLine) -> Temporals {
     Temporals {
@@ -1803,6 +1801,11 @@ mod tests {
     use chrono::{TimeZone, Utc};
     fn as_map<T: Name>(x: T) -> BTreeMap<String, T> {
         let mut map = BTreeMap::new();
+        map.insert(x.name().clone(), x);
+        map
+    }
+    fn as_indexmap<T: Name>(x: T) -> IndexMap<String, T> {
+        let mut map = IndexMap::new();
         map.insert(x.name().clone(), x);
         map
     }
@@ -2026,8 +2029,8 @@ mod tests {
         };
         assert_eq!(input_data.temporals, temporals);
         assert_eq!(input_data.setup, setup);
-        assert_eq!(input_data.processes, as_map(process));
-        assert_eq!(input_data.nodes, as_map(node));
+        assert_eq!(input_data.processes, as_indexmap(process));
+        assert_eq!(input_data.nodes, as_indexmap(node));
         assert_eq!(input_data.node_diffusion, vec![node_diffusion]);
         assert_eq!(
             input_data.node_delay,
@@ -2036,9 +2039,9 @@ mod tests {
                 .map(|delay| delay.to_tuple())
                 .collect::<Vec<_>>()
         );
-        assert_eq!(input_data.node_histories, as_map(node_history));
-        assert_eq!(input_data.markets, as_map(market));
-        let mut groups = BTreeMap::new();
+        assert_eq!(input_data.node_histories, as_indexmap(node_history));
+        assert_eq!(input_data.markets, as_indexmap(market));
+        let mut groups = IndexMap::new();
         groups.insert(
             "The node club".to_string(),
             Group {
@@ -2056,15 +2059,15 @@ mod tests {
             },
         );
         assert_eq!(input_data.groups, groups,);
-        assert_eq!(input_data.scenarios, Scenario::to_map(&base.scenarios));
+        assert_eq!(input_data.scenarios, Scenario::to_indexmap(&base.scenarios));
         assert_eq!(
             input_data.reserve_type,
-            ReserveType::to_map(&base.reserve_type)
+            ReserveType::to_indexmap(&base.reserve_type)
         );
-        assert_eq!(input_data.risk, Risk::to_map(&base.risk));
-        assert_eq!(input_data.inflow_blocks, as_map(inflow_block));
-        assert_eq!(input_data.bid_slots, BTreeMap::<String, BidSlot>::new());
-        assert_eq!(input_data.gen_constraints, as_map(gen_constraint));
+        assert_eq!(input_data.risk, Risk::to_indexmap(&base.risk));
+        assert_eq!(input_data.inflow_blocks, as_indexmap(inflow_block));
+        assert_eq!(input_data.bid_slots, IndexMap::<String, BidSlot>::new());
+        assert_eq!(input_data.gen_constraints, as_indexmap(gen_constraint));
     }
     #[test]
     fn expanding_process_works() {

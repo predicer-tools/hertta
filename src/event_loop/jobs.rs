@@ -58,7 +58,7 @@ impl JobFailure {
 
 #[derive(Clone, GraphQLUnion)]
 pub enum JobOutcome {
-    ElectiricityPrice(ElectricityPriceOutcome),
+    ElectricityPrice(ElectricityPriceOutcome),
     Optimization(OptimizationOutcome),
     WeatherForecast(WeatherForecastOutcome),
 }

@@ -45,7 +45,7 @@ pub async fn start(
             if job_store
                 .set_job_status(
                     job_id,
-                    Arc::new(JobStatus::Finished(JobOutcome::ElectiricityPrice(
+                    Arc::new(JobStatus::Finished(JobOutcome::ElectricityPrice(
                         forecast_to_outcome(forecast),
                     ))),
                 )
