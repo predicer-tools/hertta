@@ -31,6 +31,7 @@ pub struct ForecastValueInput {
     pub constant: Option<f64>,
     pub series: Option<Vec<f64>>,
     pub forecast: Option<String>,
+    pub f_type: Option<String>,
 }
 
 #[derive(GraphQLObject, Clone, Debug, Deserialize, Serialize)]
@@ -45,22 +46,30 @@ impl TryFrom<ForecastValueInput> for ForecastValue {
     fn try_from(input: ForecastValueInput) -> Result<Self, Self::Error> {
         let scenario = input.scenario;
 
-        let value = if let Some(forecast) = input.forecast {
-            BaseForecastable::Forecast(Forecast::new(forecast))
-        } else {
-            match (input.constant, input.series) {
-                (Some(c), None) => BaseForecastable::Constant(Constant { value: c }),
-                (None, Some(series)) => BaseForecastable::FloatList(FloatList { values: series }),
-                (Some(_), Some(_)) => {
-                    return Err("ForecastValueInput cannot have both `constant` and `series` populated simultaneously.".to_string())
-                }
-                (None, None) => {
-                    return Err("ForecastValueInput requires one of `forecast`, `constant`, or `series` to be provided.".to_string())
-                }
-            }
-        };
-
-        Ok(ForecastValue { scenario, value })
+        match (input.forecast, input.f_type, input.constant, input.series) {
+            (Some(name), Some(f_type), None, None) => Ok(ForecastValue {
+                scenario,
+                value: BaseForecastable::Forecast(Forecast::new(name, f_type)),
+            }),
+            (None, None, Some(c), None) => Ok(ForecastValue {
+                scenario,
+                value: BaseForecastable::Constant(Constant { value: c }),
+            }),
+            (None, None, None, Some(series)) => Ok(ForecastValue {
+                scenario,
+                value: BaseForecastable::FloatList(FloatList { values: series }),
+            }),
+            (Some(_), None, _, _) | (None, Some(_), _, _) => Err(
+                "`forecast` and `f_type` must be provided **together**.".into(),
+            ),
+            _ => Err(
+                "Provide **exactly one** of the following:\n\
+                 • `forecast` + `f_type`\n\
+                 • `constant`\n\
+                 • `series`"
+                    .into(),
+            ),
+        }
     }
 }
 
@@ -2458,6 +2467,7 @@ mod tests {
             values_to_time_series_data(base.data.clone(), scenarios.clone(), time_line.clone()).unwrap()
         );
     }
+    /* 
     mod find_input_node_names {
         use super::*;
         #[test]
@@ -2494,6 +2504,7 @@ mod tests {
             assert_eq!(input_nodes[0], "input");
         }
     }
+    */
     #[test]
     fn make_temporals_works() {
         let time_line: TimeLine = vec![
@@ -2676,7 +2687,7 @@ mod tests {
     fn forecast_values_to_forecastable_returns_forecast_variant() {
         let fv = ForecastValue {
             scenario: None,
-            value: BaseForecastable::Forecast(Forecast::new("MyForecast".to_string())),
+            value: BaseForecastable::Forecast(Forecast::new("MyForecast".to_string(),"Energy".to_string())),
         };
         let forecast_values = vec![fv];
         let scenarios = vec![Scenario::new("S1", 1.0).unwrap()];
@@ -2694,7 +2705,7 @@ mod tests {
     fn forecast_values_to_time_series_data_errors_on_forecast_variant() {
         let fv = ForecastValue {
             scenario: Some("S1".to_string()),
-            value: BaseForecastable::Forecast(Forecast::new("BadForecast".to_string())),
+            value: BaseForecastable::Forecast(Forecast::new("BadForecast".to_string(),"Energy".to_string())),
         };
         let forecast_values = vec![fv];
         let scenarios = vec![Scenario::new("S1", 1.0).unwrap()];

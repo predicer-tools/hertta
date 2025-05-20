@@ -1750,8 +1750,14 @@ fn market_balance_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, 
         return RecordBatch::try_new(schema, arrays);
     }
 
-    // Initialize column data for up and down prices
-    for market in input_data.markets.values().filter(|m| m.m_type == "energy") {
+    // -----------------------------------------------------------------
+    // Iterate over **all** markets – removed the m_type == "energy" filter
+    // -----------------------------------------------------------------
+    for market in input_data.markets.values() {
+        println!(
+            "[market_balance_price_to_arrow] Converting market '{}' (up & down prices)",
+            market.name
+        );
         for (label, forecastable_price) in
             [("up", &market.up_price), ("dw", &market.down_price)].iter()
         {

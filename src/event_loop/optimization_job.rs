@@ -555,7 +555,6 @@ fn receive_single_predicer_result(socket: &Socket) -> Result<RecordBatch, Box<dy
     }
     Ok(batches.pop().expect("batches should have an element"))
 }
-
 async fn generate_model_task(
     rx: oneshot::Receiver<OptimizationData>,
     tx: oneshot::Sender<InputData>,
@@ -579,7 +578,7 @@ async fn generate_model_task(
         }
         
         if let Some(electricity_price_data) = optimization_data.elec_price_data.take() {
-            if let Err(e) = update_npe_market_prices(&mut input_data.markets, electricity_price_data) {
+            if let Err(e) = update_npe_market_prices(&mut input_data.markets, &electricity_price_data) {
                 return Err(format!(
                     "update_model_data_task: failed to update NPE market prices: {}",
                     e
@@ -598,29 +597,48 @@ async fn generate_model_task(
     Err("update_model_data_task: input channel closed".to_string())
 }
 
+fn scale_ts_data(src: &TimeSeriesData, factor: f64) -> TimeSeriesData {
+    let scaled = src.ts_data
+        .iter()
+        .map(|ts| TimeSeries {
+            scenario: ts.scenario.clone(),
+            series: ts.series
+                .iter()
+                .map(|(ts, v)| (*ts, v * factor))
+                .collect(),
+        })
+        .collect();
+
+    TimeSeriesData { ts_data: scaled }
+}
+
+
+
 fn update_npe_market_prices(
     markets: &mut IndexMap<String, Market>,
-    electricity_price_data: ElectricityPriceData,
+    electricity_price_data: &ElectricityPriceData,
 ) -> Result<(), String> {
+    // 1) We must have a base price series to work with.
+    println!("pöö");
+    let base_price = electricity_price_data
+        .price_data
+        .as_ref()
+        .ok_or("ElectricityPriceData::price_data is None")?;
+
+    // 2) Prepare the three flavours once so we can reuse the clones.
+    let price_ts      = base_price.clone();
+    let up_price_ts   = scale_ts_data(base_price, 1.10);
+    let down_price_ts = scale_ts_data(base_price, 0.90);
+
+    // 3) Update every market that still carries a Forecast.
     for market in markets.values_mut() {
-        if let Forecastable::Forecast(_) = market.price {
-            if let Some(price_data) = &electricity_price_data.price_data {
-                market.price = Forecastable::TimeSeriesData(price_data.ts_data.clone().into());
-            }
-        }
-        if let Forecastable::Forecast(_) = market.up_price {
-            if let Some(up_price_data) = &electricity_price_data.up_price_data {
-                market.up_price =
-                    Forecastable::TimeSeriesData(up_price_data.ts_data.clone().into());
-            }
-        }
-        if let Forecastable::Forecast(_) = market.down_price {
-            if let Some(down_price_data) = &electricity_price_data.down_price_data {
-                market.down_price =
-                    Forecastable::TimeSeriesData(down_price_data.ts_data.clone().into());
-            }
+        if matches!(market.price, Forecastable::Forecast(_)) {
+            market.price      = Forecastable::TimeSeriesData(price_ts.clone());
+            market.up_price   = Forecastable::TimeSeriesData(up_price_ts.clone());
+            market.down_price = Forecastable::TimeSeriesData(down_price_ts.clone());
         }
     }
+
     Ok(())
 }
 
@@ -702,7 +720,6 @@ fn diffs(
     diff_values
 }
 
-// Function to create TimeSeriesData from weather values and update the weather_data field in optimization_data
 fn update_weather_data(
     time_data: &TimeLine,
     values: &[f64],
@@ -712,7 +729,6 @@ fn update_weather_data(
     create_time_series_data_with_scenarios(paired_series, scenarios)
 }
 
-// Function to create TimeSeriesData
 fn create_time_series_data_with_scenarios(
     paired_series: BTreeMap<TimeStamp, f64>,
     scenarios: &Vec<Scenario>,
@@ -799,20 +815,8 @@ fn create_and_update_elec_price_data(
             1.0,
             scenarios,
         ));
-        let up_price_ts_data = Some(create_modified_price_series_data(
-            price_series,
-            1.1,
-            scenarios,
-        ));
-        let down_price_ts_data = Some(create_modified_price_series_data(
-            price_series,
-            0.9,
-            scenarios,
-        ));
         let electricity_price_data = ElectricityPriceData {
             price_data: original_ts_data,
-            up_price_data: up_price_ts_data,
-            down_price_data: down_price_ts_data,
         };
         optimization_data.elec_price_data = Some(electricity_price_data);
     } else {

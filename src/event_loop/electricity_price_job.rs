@@ -3,10 +3,13 @@ use super::jobs::{ElectricityPriceOutcome, JobOutcome, JobStatus};
 use crate::settings::Settings;
 use crate::time_line_settings::{TimeLineSettings, compute_timeline_start};
 use crate::TimeStamp;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use quick_xml::{events::Event, reader::Reader, name::QName};
+use std::collections::HashMap;
+use std::borrow::Cow;
 
 pub async fn start(
     job_id: i32,
@@ -14,6 +17,7 @@ pub async fn start(
     job_store: JobStore,
     time_line_settings: TimeLineSettings,
 ) {
+
     if job_store
         .set_job_status(job_id, Arc::new(JobStatus::InProgress))
         .await
@@ -83,6 +87,10 @@ pub async fn fetch_electricity_prices(
     start_time: &DateTime<Utc>,
     end_time: &DateTime<Utc>,
 ) -> Result<Vec<(TimeStamp, f64)>, Box<dyn std::error::Error + Send + Sync>> {
+    println!(
+        "[start_electricity_price_fetch] Entered start() for country {}", 
+        country
+    );
     let format_string = "%Y-%m-%dT%H:%M:%S%.3fZ";
     let start_time_str = start_time.format(&format_string).to_string();
     let end_time_str = end_time.format(&format_string).to_string();
@@ -105,6 +113,179 @@ pub async fn fetch_electricity_prices(
         &response_text,
         &as_elering_country(country)?,
     )?)
+}
+
+/// Map ISO-3166 country codes (or short names) → ENTSO-E bidding-zone EIC codes.
+/// Extend this table as you need.
+fn country_to_eic(country: &str) -> Result<&'static str, Box<dyn std::error::Error + Send + Sync>> {
+    let map: HashMap<&str, &str> = [
+        ("FI", "10YFI-1--------U"),
+        ("SE1", "10Y1001A1001A44P"),
+        ("SE2", "10Y1001A1001A45N"),
+        ("SE3", "10Y1001A1001A46L"),
+        ("SE4", "10Y1001A1001A47J"),
+        ("EE", "10Y1001A1001A39I"),
+        ("LV", "10Y1001A1001A51S"),
+        ("LT", "10YLT-1001A0008Q"),
+        ("DE", "10Y1001A1001A83F"), // Germany/LU common price zone
+        ("DK1", "10YDK-1--------W"),
+        ("DK2", "10YDK-2--------M"),
+    ]
+    .into_iter()
+    .collect();
+
+    map.get(country)
+        .copied()
+        .ok_or_else(|| format!("Unknown country/bidding zone: {country}").into())
+}
+
+pub async fn fetch_electricity_prices_entsoe(
+    api_key:  &str,
+    country:  &str,
+    start:    &DateTime<Utc>,
+    end:      &DateTime<Utc>,
+) -> Result<Vec<(TimeStamp, f64)>, Box<dyn std::error::Error + Send + Sync>> {
+    // ---- 1. Build request ----------------------------------------------------
+    let eic          = country_to_eic(country)?;          // still your lookup
+    let period_start = start.format("%Y%m%d%H%M").to_string();
+    let period_end   = end  .format("%Y%m%d%H%M").to_string();
+
+    let url = format!(
+        "https://web-api.tp.entsoe.eu/api\
+         ?securityToken={api_key}&documentType=A44\
+         &in_Domain={eic}&out_Domain={eic}\
+         &periodStart={period_start}&periodEnd={period_end}"
+    );
+
+    // ---- 2. Download XML ------------------------------------------------------
+    let xml_bytes = reqwest::Client::new()
+        .get(&url)
+        .header("accept", "application/xml")
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?;                                            // Vec<u8>
+
+    let xml_text = std::str::from_utf8(&xml_bytes)
+        .map_err(|e| format!("response not valid UTF-8: {e}"))?;  // &str
+
+    // ---- 3. Parse & return ----------------------------------------------------
+    parse_entsoe_response(xml_text)                         // Result<_, String>
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })
+}
+
+
+pub fn parse_entsoe_response(
+    xml: &str,
+) -> Result<Vec<(DateTime<Utc>, f64)>, String> {
+    // ── reader setup ─────────────────────────────────────────────────────
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);                    // newer API :contentReference[oaicite:1]{index=1}
+    let mut buf = Vec::<u8>::new();
+
+    // ── detect root element ──────────────────────────────────────────────
+    let root = loop {
+        match reader
+            .read_event_into(&mut buf)
+            .map_err(|e| format!("ill-formed XML: {e}"))?    // ✨ String
+        {
+            Event::Start(e) => break e.name().as_ref().to_vec(),
+            Event::Eof      => return Err("empty XML document".into()),
+            _               => buf.clear(),
+        }
+    };
+
+    // ── acknowledgement branch ───────────────────────────────────────────
+    if root == b"Acknowledgement_MarketDocument" {
+        let mut code: Option<Cow<'_, str>> = None;
+        let mut text: Option<Cow<'_, str>> = None;
+
+        loop {
+            match reader
+                .read_event_into(&mut buf)
+                .map_err(|e| format!("XML error in acknowledgement: {e}"))?  // ✨
+            {
+                Event::Start(tag) if tag.name().as_ref() == b"code" => {
+                    code = Some(
+                        reader
+                            .read_text(QName(b"code"))
+                            .map_err(|e| e.to_string())?,                  // ✨
+                    );
+                }
+                Event::Start(tag) if tag.name().as_ref() == b"text" => {
+                    text = Some(
+                        reader
+                            .read_text(QName(b"text"))
+                            .map_err(|e| e.to_string())?,                  // ✨
+                    );
+                }
+                Event::End(end) if end.name().as_ref() == b"Reason" => break,
+                Event::Eof => break,
+                _ => {}
+            }
+            buf.clear();
+        }
+
+        let msg = match (code.as_deref(), text.as_deref()) {
+            (Some("B08"), _)        => "ENTSO-E: data not yet available (B08)".to_owned(),
+            (Some(c), Some(t))      => format!("ENTSO-E acknowledgement {c}: {t}"),
+            (Some(c), None)         => format!("ENTSO-E acknowledgement {c}"),
+            _                       => "ENTSO-E sent acknowledgement".to_owned(),
+        };
+        return Err(msg);
+    }
+
+    // ── normal price document ────────────────────────────────────────────
+    let mut series_start = None::<DateTime<Utc>>;
+    let mut position     = None::<u32>;
+    let mut out          = Vec::<(DateTime<Utc>, f64)>::new();
+
+    loop {
+        match reader
+            .read_event_into(&mut buf)
+            .map_err(|e| format!("XML parse error: {e}"))?                 // ✨
+        {
+            Event::Start(tag) if tag.name().as_ref() == b"timeInterval" => {
+                let txt = reader
+                    .read_text(QName(b"start"))
+                    .map_err(|e| e.to_string())?;                          // ✨
+                series_start = Some(
+                    DateTime::parse_from_rfc3339(&txt)
+                        .map_err(|e| e.to_string())?                       // ✨
+                        .with_timezone(&Utc),
+                );
+            }
+            Event::Start(tag) if tag.name().as_ref() == b"Point" => {
+                position = None;
+            }
+            Event::Start(tag) if tag.name().as_ref() == b"position" => {
+                let txt = reader
+                    .read_text(QName(b"position"))
+                    .map_err(|e| e.to_string())?;                          // ✨
+                position = Some(txt.parse().map_err(|e| format!("bad position: {e}"))?);
+            }
+            Event::Start(tag) if tag.name().as_ref() == b"price.amount" => {
+                let txt = reader
+                    .read_text(QName(b"price.amount"))
+                    .map_err(|e| e.to_string())?;                          // ✨
+                let price = txt.parse::<f64>().map_err(|e| format!("bad price: {e}"))?;
+                if let (Some(base), Some(pos)) = (series_start, position) {
+                    let ts = base + Duration::hours((pos - 1) as i64);
+                    out.push((ts, price));
+                }
+            }
+            Event::Eof => break,
+            _          => {}
+        }
+        buf.clear();
+    }
+
+    if out.is_empty() {
+        Err("no price data found in document".into())
+    } else {
+        Ok(out)
+    }
 }
 
 fn parse_elering_response(
@@ -192,9 +373,14 @@ fn elering_time_stamp_pair(time_stamp_entry: &Value) -> Result<(TimeStamp, f64),
     Ok((time_stamp, price))
 }
 
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+    use dotenvy::dotenv;
+
     mod as_elering_country {
         use super::*;
         #[test]
@@ -242,6 +428,53 @@ mod tests {
             let expected_date_time = Utc.with_ymd_and_hms(2024, 11, 18, 11, 00, 00).unwrap();
             let expected_time_series = vec![(expected_date_time, 70.05)];
             assert_eq!(time_series, expected_time_series);
+        }
+    }
+    mod country_to_eic {
+        use super::*;
+
+        // Use the *same* error type as the function under test
+        #[test]
+        fn gives_correct_eic_codes() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            assert_eq!(country_to_eic("FI")?,  "10YFI-1--------U");
+            assert_eq!(country_to_eic("SE1")?, "10Y1001A1001A44P");
+            assert_eq!(country_to_eic("EE")?,  "10Y1001A1001A39I");
+            Ok(())
+        }
+
+        #[test]
+        fn fails_with_unknown_country() {
+            assert!(country_to_eic("Mordor").is_err());
+        }
+    }
+
+    // -------------------- live round-trip (ignored) ----------------------
+    mod fetch_electricity_prices_entsoe {
+        use super::*;
+        use chrono::{TimeZone, Utc, Datelike};
+
+        #[tokio::test]
+        #[ignore]   // run with `cargo test -- --include-ignored`
+        async fn pulls_one_day() {
+            dotenv().ok();  // read ENTSOE_API_KEY from .env if present
+            let api_key =
+                env::var("ENTSOE_API_KEY").expect("Set ENTSOE_API_KEY to run this test");
+
+            let yesterday   = Utc::now() - chrono::Duration::days(1);
+            let date        = yesterday.date_naive();                       // NaiveDate
+            let start = Utc
+                .with_ymd_and_hms(date.year(), date.month(), date.day(), 0, 0, 0)
+                .unwrap();
+            let end   = start + chrono::Duration::days(1);
+
+            let prices = fetch_electricity_prices_entsoe(&api_key, "FI", &start, &end)
+                .await
+                .expect("API call or XML parsing failed");
+
+            // basic sanity
+            assert_eq!(prices.len(), 24);
+            let (first_ts, _) = prices.first().unwrap();
+            assert_eq!(*first_ts, start);
         }
     }
 }

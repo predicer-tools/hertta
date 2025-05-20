@@ -109,6 +109,7 @@ fn validate_market_creation(
 pub fn connect_market_prices_to_forecast(
     market_name: &str,
     forecast_name: String,
+    forecast_type: String,
     markets: &mut Vec<BaseMarket>,
 ) -> MaybeError {
     let market = match markets.iter_mut().find(|m| m.name == market_name) {
@@ -117,15 +118,15 @@ pub fn connect_market_prices_to_forecast(
     };
     market.price = vec![ForecastValue {
         scenario: None,
-        value: BaseForecastable::Forecast(Forecast::new(forecast_name.clone())),
+        value: BaseForecastable::Forecast(Forecast::new(forecast_name.clone(), forecast_type.clone())),
     }];
     market.up_price = vec![ForecastValue {
         scenario: None,
-        value: BaseForecastable::Forecast(Forecast::new(forecast_name.clone())),
+        value: BaseForecastable::Forecast(Forecast::new(forecast_name.clone(),forecast_type.clone())),
     }];
     market.down_price = vec![ForecastValue {
         scenario: None,
-        value: BaseForecastable::Forecast(Forecast::new(forecast_name)),
+        value: BaseForecastable::Forecast(Forecast::new(forecast_name.clone(),forecast_type.clone())),
     }];
     MaybeError::new_ok()
 }

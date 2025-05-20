@@ -92,6 +92,7 @@ fn validate_node_creation(
 pub fn connect_node_inflow_to_temperature_forecast(
     node_name: &str,
     forecast_name: String,
+    forecast_type: String,
     nodes: &mut Vec<BaseNode>,
 ) -> MaybeError {
     let node = match nodes.iter_mut().find(|n| n.name == node_name) {
@@ -100,7 +101,7 @@ pub fn connect_node_inflow_to_temperature_forecast(
     };
     node.inflow = vec![ForecastValue {
         scenario: None,
-        value: BaseForecastable::Forecast(Forecast::new(forecast_name)),
+        value: BaseForecastable::Forecast(Forecast::new(forecast_name, forecast_type)),
     }];
     MaybeError::new_ok()
 }

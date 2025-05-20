@@ -669,12 +669,14 @@ impl Mutation {
     async fn connect_node_inflow_to_temperature_forecast(
         node_name: String,
         forecast_name: String,
+        forecast_type: String,
         context: &HerttaContext,
     ) -> MaybeError {
         let mut model = context.model.lock().await;
         node_input::connect_node_inflow_to_temperature_forecast(
             &node_name,
             forecast_name,
+            forecast_type,
             &mut model.input_data.nodes,
         )
     }
@@ -801,12 +803,14 @@ impl Mutation {
     async fn connect_market_prices_to_forecast(
         market_name: String,
         forecast_name: String,
+        forecast_type: String,
         context: &HerttaContext,
     ) -> MaybeError {
         let mut model = context.model.lock().await;
         market_input::connect_market_prices_to_forecast(
             &market_name,
             forecast_name,
+            forecast_type,
             &mut model.input_data.markets,
         )
     }

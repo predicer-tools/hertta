@@ -175,15 +175,20 @@ pub struct Process {
 #[derive(Clone, Debug, Deserialize, GraphQLObject, Name, PartialEq, Serialize)]
 pub struct Forecast {
     name: String,
+    f_type: String,
 }
 
 impl Forecast {
-    pub fn new(name: String) -> Self {
-        Forecast { name }
+    pub fn new(name: String, f_type: String) -> Self {
+        Forecast { name, f_type }
     }
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn f_type(&self) -> &str {
+        &self.f_type
     }
 }
 
