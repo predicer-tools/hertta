@@ -1808,11 +1808,7 @@ mod tests {
     use super::*;
     use crate::input_data::{BidSlot, Group, GroupType};
     use chrono::{TimeZone, Utc};
-    fn as_map<T: Name>(x: T) -> BTreeMap<String, T> {
-        let mut map = BTreeMap::new();
-        map.insert(x.name().clone(), x);
-        map
-    }
+
     fn as_indexmap<T: Name>(x: T) -> IndexMap<String, T> {
         let mut map = IndexMap::new();
         map.insert(x.name().clone(), x);

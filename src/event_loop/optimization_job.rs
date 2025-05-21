@@ -1,5 +1,6 @@
 use super::arrow_input;
 use super::electricity_price_job;
+use super::electricity_price_job_entsoe;
 use super::job_store::JobStore;
 use super::jobs::{JobOutcome, JobStatus, OptimizationOutcome};
 use super::time_series;
@@ -125,8 +126,23 @@ pub async fn start(
     });
     let location_clone = location_snapshot.clone();
     let scenarios_clone = optimization_data.input_data.scenarios.clone();
+    let python_exec_clone = settings_snapshot.python_exec.clone();
+    let price_fetcher_script_clone = settings_snapshot.price_fetcher_script.clone();
+    let api_token = settings_snapshot
+        .entsoe_api_token
+        .clone()                               // Option<String>
+        .expect("ENTSO-E token must be configured");
     let fetch_electricity_price_handle = tokio::spawn(async move {
-        fetch_electricity_price_task(&location_clone, &scenarios_clone, rx_elec, tx_update).await
+    fetch_electricity_price_task(
+        &api_token,
+        &python_exec_clone,
+        &price_fetcher_script_clone,
+        &location_clone,
+        &scenarios_clone,
+        rx_elec,
+        tx_update,
+    )
+    .await
     });
     let update_model_data_handle =
         tokio::spawn(async move { generate_model_task(rx_update, tx_batches).await });
@@ -850,11 +866,13 @@ fn create_modified_price_series_data(
 }
 
 async fn fetch_electricity_price_task(
+    api_token: &str,
+    python_exec: &str,
+    price_fetcher_script: &str,
     location: &LocationSettings,
     scenarios: &Vec<Scenario>,
     rx: oneshot::Receiver<OptimizationData>,
-    tx: oneshot::Sender<OptimizationData>,
-) -> Result<(), String> {
+    tx: oneshot::Sender<OptimizationData>) -> Result<(), String> {
     if let Ok(mut optimization_data) = rx.await {
         let should_fetch = optimization_data.input_data.markets.iter().any(|market| {
             market.price.iter().any(|fv| matches!(fv.value, BaseForecastable::Forecast(_)))
@@ -869,10 +887,22 @@ async fn fetch_electricity_price_task(
             let end_time = (*time_line.last().ok_or("time line is empty")? - TimeDelta::hours(1))
                 .duration_trunc(TimeDelta::hours(1))
                 .unwrap();
-            match electricity_price_job::fetch_electricity_prices(
-                &location.country,
+            let bidding_zone = match location.country.as_str() {
+                "Finland"   => "FI",
+                "Estonia"   => "EE",
+                "Lithuania" => "LT",
+                "Latvia"    => "LV",
+                other => {
+                    return Err(format!("unsupported country for ENTSO-E fetcher: {other}"));
+                }
+            };
+            match electricity_price_job_entsoe::fetch_electricity_prices(
+                bidding_zone,
+                &api_token,
                 start_time,
                 &end_time,
+                &python_exec, 
+                &price_fetcher_script,
             )
             .await
             {
@@ -907,6 +937,11 @@ fn fit_prices_to_time_line(
     if prices.is_empty() {
         return Err("electricity prices should have at least one time stamp".into());
     }
+    eprintln!(
+    "DEBUG  first price stamp = {}, first time-line stamp = {}",
+    prices[0].0.format("%Y-%m-%dT%H:%M:%S"),
+    time_line[0].format("%Y-%m-%dT%H:%M:%S"),
+    );
     if prices[0].0 != time_line[0] {
         return Err("first electricity price time stamp mismatches with time line start".into());
     }
@@ -936,7 +971,6 @@ mod tests {
     use arrow::datatypes::{DataType, Field, Schema};
     use std::net::TcpListener as SyncTcpListener;
     use std::thread;
-    use std::fs;
 
     fn find_available_port_sync() -> Result<u16, io::Error> {
         let listener = SyncTcpListener::bind("127.0.0.1:0")?;

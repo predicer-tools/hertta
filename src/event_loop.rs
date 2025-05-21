@@ -1,5 +1,6 @@
 mod arrow_input;
 mod electricity_price_job;
+mod electricity_price_job_entsoe;
 pub mod job_store;
 pub mod jobs;
 mod optimization_job;
@@ -181,7 +182,8 @@ async fn start_electricity_price_fetch(
     time_line_settings: TimeLineSettings,
 ) {
     tokio::spawn(async move {
-        electricity_price_job::start(job_id, settings, job_store, time_line_settings).await
+        //electricity_price_job::start(job_id, settings, job_store, time_line_settings).await elering
+        electricity_price_job_entsoe::start(job_id, settings, job_store, time_line_settings).await
     });
 }
 
