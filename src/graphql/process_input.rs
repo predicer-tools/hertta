@@ -2,7 +2,7 @@ use super::delete;
 use super::{MaybeError, ValidationError, ValidationErrors};
 use crate::input_data_base::{
     BaseConFactor, BaseGenConstraint, BaseNode, BaseProcess, ConstraintFactorType, Conversion,
-    ProcessGroup,
+    ProcessGroup, ValueInput, Value,
 };
 use juniper::GraphQLInputObject;
 
@@ -23,8 +23,8 @@ pub struct NewProcess {
     max_offline: f64,
     initial_state: bool,
     is_scenario_independent: bool,
-    cf: Option<f64>,
-    eff_ts: Option<f64>,
+    cf: Vec<ValueInput>,
+    eff_ts: Vec<ValueInput>,
 }
 
 impl NewProcess {
@@ -33,7 +33,7 @@ impl NewProcess {
             name: self.name,
             groups: Vec::new(),
             conversion: self.conversion,
-            is_cf: self.cf.is_some(),
+            is_cf: !self.cf.is_empty(),
             is_cf_fix: self.is_cf_fix,
             is_online: self.is_online,
             is_res: self.is_res,
@@ -48,8 +48,18 @@ impl NewProcess {
             initial_state: self.initial_state,
             is_scenario_independent: self.is_scenario_independent,
             topos: Vec::new(),
-            cf: self.cf.unwrap_or(0.0),
-            eff_ts: self.eff_ts,
+            cf: self
+            .cf
+            .into_iter()
+            .map(Value::try_from)
+            .collect::<Result<Vec<Value>, _>>()
+            .expect("Could not parse cost values"),
+            eff_ts: self
+            .eff_ts
+            .into_iter()
+            .map(Value::try_from)
+            .collect::<Result<Vec<Value>, _>>()
+            .expect("Could not parse cost values"),
             eff_ops: Vec::new(),
             eff_fun: Vec::new(),
         }

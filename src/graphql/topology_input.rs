@@ -1,5 +1,5 @@
 use super::{MaybeError, ValidationError, ValidationErrors};
-use crate::input_data_base::{BaseNode, BaseProcess, BaseTopology};
+use crate::input_data_base::{BaseNode, BaseProcess, BaseTopology, Value, ValueInput};
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
@@ -10,7 +10,7 @@ pub struct NewTopology {
     pub ramp_down: f64,
     pub initial_load: f64,
     pub initial_flow: f64,
-    pub cap_ts: Option<f64>,
+    pub cap_ts: Vec<ValueInput>,
 }
 
 impl NewTopology {
@@ -24,7 +24,12 @@ impl NewTopology {
             ramp_down: self.ramp_down,
             initial_load: self.initial_load,
             initial_flow: self.initial_flow,
-            cap_ts: self.cap_ts,
+            cap_ts: self
+            .cap_ts
+            .into_iter()
+            .map(Value::try_from)
+            .collect::<Result<Vec<Value>, _>>()
+            .expect("Could not parse cost values"),
         }
     }
 }

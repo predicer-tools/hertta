@@ -1,6 +1,6 @@
 use super::delete;
 use super::{MaybeError, ValidationError, ValidationErrors};
-use crate::input_data_base::{BaseGenConstraint, ConstraintType};
+use crate::input_data_base::{BaseGenConstraint, ConstraintType, Value, ValueInput};
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
@@ -9,7 +9,7 @@ pub struct NewGenConstraint {
     gc_type: ConstraintType,
     is_setpoint: bool,
     penalty: f64,
-    constant: Option<f64>,
+    constant: Vec<ValueInput>,
 }
 
 impl NewGenConstraint {
@@ -20,7 +20,12 @@ impl NewGenConstraint {
             is_setpoint: self.is_setpoint,
             penalty: self.penalty,
             factors: Vec::new(),
-            constant: self.constant,
+            constant: self
+            .constant
+            .into_iter()
+            .map(Value::try_from)
+            .collect::<Result<Vec<Value>, _>>()
+            .expect("Could not parse cost values"),
         }
     }
 }

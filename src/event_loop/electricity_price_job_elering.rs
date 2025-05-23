@@ -7,13 +7,13 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
 pub async fn start(
     job_id: i32,
     settings: Arc<Mutex<Settings>>,
     job_store: JobStore,
     time_line_settings: TimeLineSettings,
 ) {
+
     if job_store
         .set_job_status(job_id, Arc::new(JobStatus::InProgress))
         .await
@@ -40,12 +40,12 @@ pub async fn start(
     };
     let start_time = compute_timeline_start(&time_line_settings);
     let end_time = start_time + time_line_settings.duration().to_time_delta();
-    match fetch_electricity_prices(&country, &start_time, &end_time).await {
+    match fetch_electricity_prices_elering(&country, &start_time, &end_time).await {
         Ok(forecast) => {
             if job_store
                 .set_job_status(
                     job_id,
-                    Arc::new(JobStatus::Finished(JobOutcome::ElectiricityPrice(
+                    Arc::new(JobStatus::Finished(JobOutcome::ElectricityPrice(
                         forecast_to_outcome(forecast),
                     ))),
                 )
@@ -78,11 +78,15 @@ fn forecast_to_outcome(forecast: Vec<(TimeStamp, f64)>) -> ElectricityPriceOutco
     ElectricityPriceOutcome::new(time_line, prices)
 }
 
-pub async fn fetch_electricity_prices(
+pub async fn fetch_electricity_prices_elering(
     country: &String,
     start_time: &DateTime<Utc>,
     end_time: &DateTime<Utc>,
 ) -> Result<Vec<(TimeStamp, f64)>, Box<dyn std::error::Error + Send + Sync>> {
+    println!(
+        "[start_electricity_price_fetch] Entered start() for country {}", 
+        country
+    );
     let format_string = "%Y-%m-%dT%H:%M:%S%.3fZ";
     let start_time_str = start_time.format(&format_string).to_string();
     let end_time_str = end_time.format(&format_string).to_string();
@@ -195,6 +199,7 @@ fn elering_time_stamp_pair(time_stamp_entry: &Value) -> Result<(TimeStamp, f64),
 #[cfg(test)]
 mod tests {
     use super::*;
+
     mod as_elering_country {
         use super::*;
         #[test]

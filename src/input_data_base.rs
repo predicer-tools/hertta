@@ -8,12 +8,357 @@ use crate::scenarios::Scenario;
 use crate::time_line_settings::Duration;
 use crate::{TimeLine, TimeStamp};
 use hertta_derive::{Members, Name};
-use juniper::{graphql_object, FieldResult, GraphQLEnum, GraphQLObject, GraphQLUnion};
+use juniper::{graphql_object, FieldResult, GraphQLEnum, GraphQLObject, GraphQLUnion, GraphQLInputObject};
 use serde::{self, Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+use std::convert::TryFrom;
+use indexmap::IndexMap;
 
 pub trait TypeName {
     fn type_name() -> &'static str;
+}
+
+#[derive(GraphQLInputObject, Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ValueInput {
+    pub scenario: Option<String>, 
+    pub constant: Option<f64>,  
+    pub series: Option<Vec<f64>>, 
+}
+
+#[derive(GraphQLInputObject, Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ForecastValueInput {
+    pub scenario: Option<String>,
+    pub constant: Option<f64>,
+    pub series: Option<Vec<f64>>,
+    pub forecast: Option<String>,
+    pub f_type: Option<String>,
+}
+
+#[derive(GraphQLObject, Clone, Debug, Deserialize, Serialize)]
+pub struct ForecastValue {
+    pub scenario: Option<String>,
+    pub value: BaseForecastable,
+}
+
+impl TryFrom<ForecastValueInput> for ForecastValue {
+    type Error = String;
+
+    fn try_from(input: ForecastValueInput) -> Result<Self, Self::Error> {
+        let scenario = input.scenario;
+
+        match (input.forecast, input.f_type, input.constant, input.series) {
+            (Some(name), Some(f_type), None, None) => Ok(ForecastValue {
+                scenario,
+                value: BaseForecastable::Forecast(Forecast::new(name, f_type)),
+            }),
+            (None, None, Some(c), None) => Ok(ForecastValue {
+                scenario,
+                value: BaseForecastable::Constant(Constant { value: c }),
+            }),
+            (None, None, None, Some(series)) => Ok(ForecastValue {
+                scenario,
+                value: BaseForecastable::FloatList(FloatList { values: series }),
+            }),
+            (Some(_), None, _, _) | (None, Some(_), _, _) => Err(
+                "`forecast` and `f_type` must be provided **together**.".into(),
+            ),
+            _ => Err(
+                "Provide **exactly one** of the following:\n\
+                 • `forecast` + `f_type`\n\
+                 • `constant`\n\
+                 • `series`"
+                    .into(),
+            ),
+        }
+    }
+}
+
+#[derive(GraphQLObject, Clone, Debug, Deserialize, Serialize)]
+pub struct Value {
+    pub scenario: Option<String>, 
+    pub value: SeriesValue,
+}
+
+impl TryFrom<ValueInput> for Value {
+    type Error = String;
+
+    fn try_from(input: ValueInput) -> Result<Self, Self::Error> {
+        let scenario = input.scenario;
+
+        let value = match (input.constant, input.series) {
+            (Some(constant), None) => SeriesValue::Constant(Constant { value: constant }),
+            (None, Some(series)) => SeriesValue::FloatList(FloatList { values: series }),
+            (Some(_), Some(_)) => {
+                return Err(
+                    "ValueInput cannot have both `constant` and `series` populated simultaneously."
+                        .to_string(),
+                );
+            }
+            (None, None) => SeriesValue::Constant(Constant { value: 0.0 }),
+        };
+
+        Ok(Value { scenario, value })
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
+pub struct Constant {
+    value: f64,
+}
+
+impl Constant {
+    pub fn new(value: f64) -> Self {
+        Constant { value }
+    }
+
+    pub fn value(&self) -> f64 {
+        self.value
+    }
+}
+
+impl From<f64> for Constant {
+    fn from(value: f64) -> Self {
+        Constant { value }
+    }
+}
+
+impl From<&f64> for Constant {
+    fn from(value: &f64) -> Self {
+        Constant { value: *value }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
+pub struct FloatList {
+    values: Vec<f64>,
+}
+
+#[derive(Clone, Debug, GraphQLUnion, Deserialize, Serialize)]
+pub enum SeriesValue {
+    Constant(Constant),
+    FloatList(FloatList),
+}
+
+fn convert_value_to_series(value: &Value, timeline: &TimeLine) -> Result<BTreeMap<TimeStamp, f64>, String> {
+    match &value.value {
+        SeriesValue::Constant(constant) => {
+            let series: BTreeMap<TimeStamp, f64> = timeline
+                .iter()
+                .cloned()
+                .map(|ts| (ts, constant.value))
+                .collect();
+            Ok(series)
+        },
+        SeriesValue::FloatList(float_list) => {
+            if float_list.values.len() != timeline.len() {
+                return Err(format!(
+                    "time series mismatch in FloatList, expected length {}, found {}",
+                    timeline.len(),
+                    float_list.values.len()
+                ));
+            }
+            let series: BTreeMap<TimeStamp, f64> = timeline
+                .iter()
+                .cloned()
+                .zip(float_list.values.iter().cloned())
+                .collect();
+            Ok(series)
+        },
+    }
+}
+
+fn values_to_time_series_data(
+    values: Vec<Value>, 
+    scenarios: Vec<Scenario>, 
+    timeline: TimeLine
+) -> Result<TimeSeriesData, String> {
+    if values.is_empty() {
+        return Ok(TimeSeriesData { ts_data: Vec::new() });
+    }
+
+    let default_values: Vec<&Value> = values.iter()
+        .filter(|v| v.scenario.is_none())
+        .collect();
+
+    if default_values.len() > 1 {
+        return Err("Multiple default values found (scenario = None)".to_string());
+    }
+    
+    let default_series_option = if let Some(default_value) = default_values.first() {
+        Some(convert_value_to_series(default_value, &timeline)?)
+    } else {
+        None
+    };
+
+    let mut ts_vec: Vec<TimeSeries> = Vec::new();
+    let mut scenarios_with_values: HashSet<String> = HashSet::new();
+
+    for value in &values {
+        if let Some(scenario_name) = &value.scenario {
+            if !scenarios.iter().any(|s| s.name() == scenario_name) {
+                return Err(format!(
+                    "Scenario '{}' specified in Value does not exist in provided scenarios",
+                    scenario_name
+                ));
+            }
+            scenarios_with_values.insert(scenario_name.clone());
+            let series = convert_value_to_series(value, &timeline)?;
+            let ts = TimeSeries {
+                scenario: scenario_name.clone(),
+                series,
+            };
+            ts_vec.push(ts);
+        }
+    }
+
+    if let Some(default_series) = default_series_option {
+        for scenario in &scenarios {
+            if !scenarios_with_values.contains(scenario.name().as_str()) {
+                let ts = TimeSeries {
+                    scenario: scenario.name().clone(),
+                    series: default_series.clone(),
+                };
+                ts_vec.push(ts);
+            }
+        }
+    } else {
+        let missing_scenarios: Vec<String> = scenarios.iter()
+            .filter(|s| !scenarios_with_values.contains(s.name().as_str()))
+            .map(|s| s.name().clone())
+            .collect();
+        if !missing_scenarios.is_empty() {
+            return Err(format!(
+                "Missing default values for scenarios: {:?}",
+                missing_scenarios
+            ));
+        }
+    }
+    
+    let ts_data = TimeSeriesData::from(ts_vec);
+    Ok(ts_data)
+}
+
+fn convert_forecast_value_to_series(
+    fv: &ForecastValue,
+    timeline: &TimeLine,
+) -> Result<BTreeMap<TimeStamp, f64>, String> {
+    match &fv.value {
+        BaseForecastable::Constant(constant) => {
+            let series: BTreeMap<TimeStamp, f64> = timeline
+                .iter()
+                .cloned()
+                .map(|ts| (ts, constant.value))
+                .collect();
+            Ok(series)
+        },
+        BaseForecastable::FloatList(float_list) => {
+            if float_list.values.len() != timeline.len() {
+                return Err(format!(
+                    "time series mismatch in FloatList, expected length {}, found {}",
+                    timeline.len(),
+                    float_list.values.len()
+                ));
+            }
+            let series: BTreeMap<TimeStamp, f64> = timeline
+                .iter()
+                .cloned()
+                .zip(float_list.values.iter().cloned())
+                .collect();
+            Ok(series)
+        },
+        BaseForecastable::Forecast(_forecast) => {
+            Err("Cannot convert Forecast variant to time series".to_string())
+        }
+    }
+}
+
+pub fn forecast_values_to_time_series_data(
+    forecast_values: &Vec<ForecastValue>,
+    scenarios: &Vec<Scenario>,
+    timeline: &TimeLine,
+) -> Result<TimeSeriesData, String> {
+    if forecast_values.is_empty() {
+        return Ok(TimeSeriesData { ts_data: Vec::new() });
+    }
+    let default_values: Vec<&ForecastValue> = forecast_values
+        .iter()
+        .filter(|fv| fv.scenario.is_none())
+        .collect();
+    if default_values.len() > 1 {
+        return Err("Multiple default forecast values found (scenario = None)".to_string());
+    }
+    let default_series_option: Option<BTreeMap<TimeStamp, f64>> =
+        if let Some(default_value) = default_values.first() {
+            Some(convert_forecast_value_to_series(default_value, timeline)?)
+        } else {
+            None
+        };
+
+    let mut ts_vec: Vec<TimeSeries> = Vec::new();
+    let mut scenarios_with_values: HashSet<String> = HashSet::new();
+
+    for fv in forecast_values.iter() {
+        if fv.scenario.is_none() {
+            let series = convert_forecast_value_to_series(fv, timeline)?;
+            ts_vec.push(TimeSeries {
+                scenario: "Default".to_string(),
+                series,
+            });
+        } else {
+            let scenario_name = fv.scenario.as_ref().unwrap();
+            if !scenarios.iter().any(|s| s.name() == scenario_name) {
+                return Err(format!(
+                    "Scenario '{}' specified in ForecastValue does not exist in provided scenarios",
+                    scenario_name
+                ));
+            }
+            scenarios_with_values.insert(scenario_name.clone());
+            let series = convert_forecast_value_to_series(fv, timeline)?;
+            ts_vec.push(TimeSeries {
+                scenario: scenario_name.clone(),
+                series,
+            });
+        }
+    }
+
+    if let Some(default_series) = default_series_option {
+        for scenario in scenarios.iter() {
+            if !scenarios_with_values.contains(scenario.name().as_str()) {
+                ts_vec.push(TimeSeries {
+                    scenario: scenario.name().clone(),
+                    series: default_series.clone(),
+                });
+            }
+        }
+    } else {
+        for scenario in scenarios.iter() {
+            if !scenarios_with_values.contains(scenario.name().as_str()) {
+                return Err(format!("Missing forecast value for scenario {}", scenario.name()));
+            }
+        }
+    }
+    Ok(TimeSeriesData::from(ts_vec))
+}
+
+pub fn forecast_values_to_forecastable(
+    forecast_values: &Vec<ForecastValue>,
+    scenarios: &Vec<Scenario>,
+    timeline: &TimeLine,
+) -> Forecastable {
+
+    if let Some(fv) = forecast_values.iter().find(|fv| {
+        matches!(fv.value, BaseForecastable::Forecast(_))
+    }) {
+        if let BaseForecastable::Forecast(ref forecast) = fv.value {
+            return Forecastable::Forecast(forecast.clone());
+        }
+    }
+
+    let ts_data = forecast_values_to_time_series_data(forecast_values, scenarios, timeline)
+        .unwrap_or_else(|err| {
+            panic!("Error converting forecast values to time series data: {}", err)
+        });
+    Forecastable::TimeSeriesData(ts_data)
 }
 
 pub trait ExpandToTimeSeries {
@@ -162,7 +507,7 @@ pub struct ReserveType {
 }
 
 impl ReserveType {
-    fn to_map(reserve_types: &Vec<Self>) -> BTreeMap<String, f64> {
+    fn to_indexmap(reserve_types: &Vec<Self>) -> IndexMap<String, f64> {
         reserve_types
             .iter()
             .map(|reserve| (reserve.name.clone(), reserve.ramp_rate))
@@ -189,7 +534,7 @@ impl TypeName for Risk {
 }
 
 impl Risk {
-    fn to_map(risks: &Vec<Self>) -> BTreeMap<String, f64> {
+    fn to_indexmap(risks: &Vec<Self>) -> IndexMap<String, f64> {
         risks
             .iter()
             .map(|risk| (risk.parameter.clone(), risk.value))
@@ -236,15 +581,15 @@ impl BaseInputData {
                 .map(|market| expand_and_use_name_as_key(market, time_line, &self.scenarios))
                 .collect(),
             groups: groups.iter().map(|group| use_name_as_key(group)).collect(),
-            scenarios: Scenario::to_map(&self.scenarios),
-            reserve_type: ReserveType::to_map(&self.reserve_type),
-            risk: Risk::to_map(&self.risk),
+            scenarios: Scenario::to_indexmap(&self.scenarios),
+            reserve_type: ReserveType::to_indexmap(&self.reserve_type),
+            risk: Risk::to_indexmap(&self.risk),
             inflow_blocks: self
                 .inflow_blocks
                 .iter()
                 .map(|block| expand_and_use_name_as_key(block, time_line, &self.scenarios))
                 .collect(),
-            bid_slots: BTreeMap::new(),
+            bid_slots: IndexMap::new(),
             gen_constraints: self
                 .gen_constraints
                 .iter()
@@ -369,7 +714,7 @@ impl BaseInputDataSetup {
 #[derive(Clone, Copy, Debug, Deserialize, GraphQLEnum, Serialize)]
 pub enum Conversion {
     Unit,
-    Transport,
+    Transfer,
     Market,
 }
 
@@ -377,7 +722,7 @@ impl Conversion {
     fn to_input(&self) -> i64 {
         match self {
             Conversion::Unit => 1,
-            Conversion::Transport => 2,
+            Conversion::Transfer => 2,
             Conversion::Market => 3,
         }
     }
@@ -403,8 +748,8 @@ pub struct BaseProcess {
     pub initial_state: bool,
     pub is_scenario_independent: bool,
     pub topos: Vec<BaseTopology>,
-    pub cf: f64,
-    pub eff_ts: Option<f64>,
+    pub cf: Vec<Value>,
+    pub eff_ts: Vec<Value>,
     pub eff_ops: Vec<String>,
     pub eff_fun: Vec<Point>,
 }
@@ -460,8 +805,20 @@ impl ExpandToTimeSeries for BaseProcess {
                 .iter()
                 .map(|topology| topology.expand_to_time_series(time_line, scenarios))
                 .collect(),
-            cf: to_time_series_data(self.cf, time_line, scenarios),
-            eff_ts: expand_optional_time_series(self.eff_ts, time_line, scenarios),
+            cf: values_to_time_series_data(self.cf.clone(), scenarios.clone(), time_line.clone())
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to convert 'cf' to TimeSeriesData for node '{}': {}",
+                    self.name, err
+                )
+            }),
+            eff_ts: values_to_time_series_data(self.eff_ts.clone(), scenarios.clone(), time_line.clone())
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to convert 'eff_ts' to TimeSeriesData for node '{}': {}",
+                    self.name, err
+                )
+            }),
             eff_ops: self.eff_ops.clone(),
             eff_fun: self
                 .eff_fun
@@ -533,11 +890,11 @@ impl BaseProcess {
     fn topos(&self) -> &Vec<BaseTopology> {
         &self.topos
     }
-    fn cf(&self) -> f64 {
-        self.cf
+    fn cf(&self) -> &Vec<Value> {
+        &self.cf
     }
-    fn eff_ts(&self) -> Option<f64> {
-        self.eff_ts
+    fn eff_ts(&self) -> &Vec<Value> {
+        &self.eff_ts
     }
     fn eff_ops(&self) -> &Vec<String> {
         &self.eff_ops
@@ -568,28 +925,11 @@ impl BaseProcess {
             initial_state: false,
             is_scenario_independent: false,
             topos: Vec::new(),
-            cf: 0.0,
-            eff_ts: None,
+            cf: Vec::new(),
+            eff_ts: Vec::new(),
             eff_ops: Vec::new(),
             eff_fun: Vec::new(),
         }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
-pub struct Constant {
-    value: f64,
-}
-
-impl From<f64> for Constant {
-    fn from(value: f64) -> Self {
-        Constant { value }
-    }
-}
-
-impl From<&f64> for Constant {
-    fn from(value: &f64) -> Self {
-        Constant { value: *value }
     }
 }
 
@@ -597,6 +937,7 @@ impl From<&f64> for Constant {
 #[graphql(name = "Forecastable")]
 pub enum BaseForecastable {
     Constant(Constant),
+    FloatList(FloatList),
     Forecast(Forecast),
 }
 
@@ -608,8 +949,8 @@ pub struct BaseNode {
     pub is_market: bool,
     pub is_res: bool,
     pub state: Option<State>,
-    pub cost: Option<f64>,
-    pub inflow: Option<BaseForecastable>,
+    pub cost: Vec<Value>,
+    pub inflow: Vec<ForecastValue>,
 }
 
 impl TypeName for BaseNode {
@@ -620,6 +961,7 @@ impl TypeName for BaseNode {
 
 impl ExpandToTimeSeries for BaseNode {
     type Expanded = Node;
+    
     fn expand_to_time_series(
         &self,
         time_line: &TimeLine,
@@ -632,10 +974,16 @@ impl ExpandToTimeSeries for BaseNode {
             is_market: self.is_market,
             is_state: self.state.is_some(),
             is_res: self.is_res,
-            is_inflow: self.inflow.is_some(),
+            is_inflow: !self.inflow.is_empty(),
             state: self.state.clone(),
-            cost: expand_optional_time_series(self.cost, time_line, scenarios),
-            inflow: expand_forecastable_to_time_series(&self.inflow, time_line, scenarios),
+            cost: values_to_time_series_data(self.cost.clone(), scenarios.clone(), time_line.clone())
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "Failed to convert 'cost' to TimeSeriesData for node '{}': {}",
+                        self.name, err
+                    )
+                }),
+            inflow: forecast_values_to_forecastable(&self.inflow, scenarios, time_line),
         }
     }
 }
@@ -677,10 +1025,10 @@ impl BaseNode {
     fn state(&self) -> &Option<State> {
         &self.state
     }
-    fn cost(&self) -> Option<f64> {
-        self.cost
+    fn cost(&self) -> &Vec<Value> {
+        &self.cost
     }
-    fn inflow(&self) -> &Option<BaseForecastable> {
+    fn inflow(&self) -> &Vec<ForecastValue> {
         &self.inflow
     }
 }
@@ -694,8 +1042,8 @@ impl BaseNode {
             is_market: false,
             is_res: false,
             state: None,
-            cost: None,
-            inflow: None,
+            cost: Vec::new(),
+            inflow: Vec::new(),
         }
     }
 }
@@ -704,7 +1052,7 @@ impl BaseNode {
 pub struct BaseNodeDiffusion {
     pub from_node: String,
     pub to_node: String,
-    pub coefficient: f64,
+    pub coefficient: Vec<Value>,
 }
 
 impl ExpandToTimeSeries for BaseNodeDiffusion {
@@ -718,7 +1066,20 @@ impl ExpandToTimeSeries for BaseNodeDiffusion {
         NodeDiffusion {
             node1: self.from_node.clone(),
             node2: self.to_node.clone(),
-            coefficient: to_time_series_data(self.coefficient, &time_line, scenarios),
+            coefficient: if self.coefficient.is_empty() {
+                panic!(
+                    "No coefficient values provided for NodeDiffusion from '{}' to '{}'",
+                    self.from_node, self.to_node
+                );
+            } else {
+                values_to_time_series_data(self.coefficient.clone(), scenarios.clone(), time_line.clone())
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "Failed to convert 'coefficient' to TimeSeriesData for NodeDiffusion from '{}' to '{}': {}",
+                            self.from_node, self.to_node, err
+                        )
+                    })
+            },
         }
     }
 }
@@ -734,8 +1095,8 @@ impl BaseNodeDiffusion {
         let model = context.model().lock().await;
         find_node(&self.to_node, "to_node", &model.input_data.nodes)
     }
-    fn coefficient(&self) -> f64 {
-        self.coefficient
+    fn coefficient(&self) -> &Vec<Value> {
+        &self.coefficient
     }
 }
 
@@ -814,6 +1175,8 @@ pub enum MarketDirection {
     Up,
     Down,
     UpDown,
+    ResUp,
+    ResDown,
 }
 
 impl MarketDirection {
@@ -821,27 +1184,11 @@ impl MarketDirection {
         match self {
             MarketDirection::Up => "up",
             MarketDirection::Down => "down",
-            MarketDirection::UpDown => "updown",
+            MarketDirection::UpDown => "up_down",
+            MarketDirection::ResUp => "res_up",
+            MarketDirection::ResDown => "res_down",
         }
         .into()
-    }
-}
-
-fn expand_forecastable_to_time_series(
-    forecastable: &Option<BaseForecastable>,
-    time_line: &TimeLine,
-    scenarios: &Vec<Scenario>,
-) -> Forecastable {
-    match forecastable {
-        Some(ref constant_or_forecast) => match constant_or_forecast {
-            BaseForecastable::Constant(ref constant) => Forecastable::TimeSeriesData(
-                expand_optional_time_series(Some(constant.value), time_line, scenarios),
-            ),
-            BaseForecastable::Forecast(ref forecast) => Forecastable::Forecast(forecast.clone()),
-        },
-        None => {
-            Forecastable::TimeSeriesData(expand_optional_time_series(None, time_line, scenarios))
-        }
     }
 }
 
@@ -852,17 +1199,17 @@ pub struct BaseMarket {
     pub node: String,
     pub process_group: String,
     pub direction: Option<MarketDirection>,
-    pub realisation: Option<f64>,
+    pub realisation: Vec<Value>,
     pub reserve_type: Option<String>,
     pub is_bid: bool,
     pub is_limited: bool,
     pub min_bid: f64,
     pub max_bid: f64,
     pub fee: f64,
-    pub price: Option<BaseForecastable>,
-    pub up_price: Option<BaseForecastable>,
-    pub down_price: Option<BaseForecastable>,
-    pub reserve_activation_price: Option<f64>,
+    pub price: Vec<ForecastValue>,
+    pub up_price: Vec<ForecastValue>,
+    pub down_price: Vec<ForecastValue>,
+    pub reserve_activation_price: Vec<Value>,
     pub fixed: Vec<MarketFix>,
 }
 
@@ -894,32 +1241,45 @@ impl ExpandToTimeSeries for BaseMarket {
                 Some(dir) => dir.to_input(),
                 None => "none".to_string(),
             },
-            realisation: expand_optional_time_series(self.realisation, time_line, scenarios),
+            realisation: values_to_time_series_data(
+                self.realisation.clone(),
+                scenarios.clone(),
+                time_line.clone(),
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to convert 'realisation' to TimeSeriesData for market '{}': {}",
+                    self.name, err
+                )
+            }),
             reserve_type: match self.reserve_type {
                 Some(ref reserve_type) => reserve_type.clone(),
-                None => String::new(),
+                None => "none".to_string(),
             },
             is_bid: self.is_bid,
             is_limited: self.is_limited,
             min_bid: self.min_bid,
             max_bid: self.max_bid,
             fee: self.fee,
-            price: expand_forecastable_to_time_series(&self.price, time_line, scenarios),
-            up_price: expand_forecastable_to_time_series(&self.up_price, time_line, scenarios),
-            down_price: expand_forecastable_to_time_series(&self.down_price, time_line, scenarios),
-            reserve_activation_price: expand_optional_time_series(
-                self.reserve_activation_price,
-                time_line,
-                scenarios,
-            ),
-            fixed: self
-                .fixed
-                .iter()
-                .map(|fix| (fix.name.clone(), fix.factor))
-                .collect(),
+            price: forecast_values_to_forecastable(&self.price, scenarios, time_line),
+            up_price: forecast_values_to_forecastable(&self.up_price, scenarios, time_line),
+            down_price: forecast_values_to_forecastable(&self.down_price, scenarios, time_line),
+            reserve_activation_price: values_to_time_series_data(
+                self.reserve_activation_price.clone(),
+                scenarios.clone(),
+                time_line.clone(),
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to convert 'reserve_activation_price' to TimeSeriesData for market '{}': {}",
+                    self.name, err
+                )
+            }),
+            fixed: self.fixed.iter().map(|fix| (fix.name.clone(), fix.factor)).collect(),
         }
     }
 }
+
 
 #[graphql_object]
 #[graphql(name = "Market", context = HerttaContext)]
@@ -949,8 +1309,8 @@ impl BaseMarket {
     fn direction(&self) -> Option<MarketDirection> {
         self.direction
     }
-    fn realisation(&self) -> Option<f64> {
-        self.realisation
+    fn realisation(&self) -> &Vec<Value> {
+        &self.realisation
     }
     async fn reserve_type(&self, context: &HerttaContext) -> FieldResult<Option<ReserveType>> {
         let model = context.model().lock().await;
@@ -984,17 +1344,17 @@ impl BaseMarket {
     fn fee(&self) -> f64 {
         self.fee
     }
-    fn price(&self) -> &Option<BaseForecastable> {
+    fn price(&self) -> &Vec<ForecastValue> {
         &self.price
     }
-    fn up_price(&self) -> &Option<BaseForecastable> {
+    fn up_price(&self) -> &Vec<ForecastValue> {
         &self.up_price
     }
-    fn down_price(&self) -> &Option<BaseForecastable> {
+    fn down_price(&self) -> &Vec<ForecastValue> {
         &self.down_price
     }
-    fn reserve_activation_price(&self) -> Option<f64> {
-        self.reserve_activation_price
+    fn reserve_activation_price(&self) -> &Vec<Value> {
+        &self.reserve_activation_price
     }
     fn fixed(&self) -> &Vec<MarketFix> {
         &self.fixed
@@ -1112,7 +1472,7 @@ impl From<&ProcessGroup> for Group {
 pub struct BaseInflowBlock {
     pub name: String,
     pub node: String,
-    pub data: f64,
+    pub data: Vec<Value>,
 }
 
 impl ExpandToTimeSeries for BaseInflowBlock {
@@ -1126,7 +1486,17 @@ impl ExpandToTimeSeries for BaseInflowBlock {
             name: self.name.clone(),
             node: self.node.clone(),
             start_time: time_line[0].clone(),
-            data: to_time_series_data(self.data, time_line, scenarios),
+            data: values_to_time_series_data(
+                self.data.clone(),
+                scenarios.clone(),
+                time_line.clone(),
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to convert 'data' to TimeSeriesData for inflow block '{}': {}",
+                    self.name, err
+                )
+            }),
         }
     }
 }
@@ -1141,8 +1511,8 @@ impl BaseInflowBlock {
         let model = context.model().lock().await;
         find_node(&self.node, "node", &model.input_data.nodes)
     }
-    fn data(&self) -> f64 {
-        self.data
+    fn data(&self) -> &Vec<Value> {
+        &self.data
     }
 }
 
@@ -1172,7 +1542,7 @@ pub struct BaseGenConstraint {
     pub is_setpoint: bool,
     pub penalty: f64,
     pub factors: Vec<BaseConFactor>,
-    pub constant: Option<f64>,
+    pub constant: Vec<Value>,
 }
 
 impl TypeName for BaseGenConstraint {
@@ -1198,7 +1568,17 @@ impl ExpandToTimeSeries for BaseGenConstraint {
                 .iter()
                 .map(|factor| factor.expand_to_time_series(time_line, scenarios))
                 .collect(),
-            constant: expand_optional_time_series(self.constant, time_line, scenarios),
+            constant: values_to_time_series_data(
+                self.constant.clone(),
+                scenarios.clone(),
+                time_line.clone(),
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to convert 'constant' to TimeSeriesData for gen constraint '{}': {}",
+                    self.name, err
+                )
+            }),
         }
     }
 }
@@ -1213,7 +1593,7 @@ pub struct BaseTopology {
     pub ramp_down: f64,
     pub initial_load: f64,
     pub initial_flow: f64,
-    pub cap_ts: Option<f64>,
+    pub cap_ts: Vec<Value>,
 }
 
 impl ExpandToTimeSeries for BaseTopology {
@@ -1232,7 +1612,17 @@ impl ExpandToTimeSeries for BaseTopology {
             ramp_down: self.ramp_down,
             initial_load: self.initial_load,
             initial_flow: self.initial_flow,
-            cap_ts: expand_optional_time_series(self.cap_ts, time_line, scenarios),
+            cap_ts: values_to_time_series_data(
+                self.cap_ts.clone(),
+                scenarios.clone(),
+                time_line.clone(),
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to convert 'cap_ts' to TimeSeriesData for topology ({} -> {}): {}",
+                    self.source, self.sink, err
+                )
+            }),
         }
     }
 }
@@ -1248,7 +1638,7 @@ impl BaseTopology {
             ramp_down: 0.0,
             initial_load: 0.0,
             initial_flow: 0.0,
-            cap_ts: None,
+            cap_ts: Vec::new(),
         }
     }
 }
@@ -1322,7 +1712,7 @@ impl ConstraintFactorType {
 pub struct BaseConFactor {
     pub var_type: ConstraintFactorType,
     pub var_tuple: VariableId,
-    pub data: f64,
+    pub data: Vec<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1345,10 +1735,15 @@ impl ExpandToTimeSeries for BaseConFactor {
                 self.var_tuple
                     .identifier
                     .as_ref()
-                    .map_or("", |s| s.as_str())
-                    .into(),
+                    .map_or("".into(), |s| s.clone()),
             ),
-            data: to_time_series_data(self.data, time_line, scenarios),
+            data: values_to_time_series_data(
+                self.data.clone(),
+                scenarios.clone(),
+                time_line.clone()
+            ).unwrap_or_else(|err| {
+                panic!("Failed to convert 'data' to TimeSeriesData for ConFactor '{}': {}", self.var_tuple.entity, err)
+            }),
         }
     }
 }
@@ -1400,35 +1795,6 @@ impl VariableId {
     }
 }
 
-pub fn find_input_node_names<'a>(nodes: impl Iterator<Item = &'a BaseNode>) -> Vec<String> {
-    nodes
-        .filter(|node| {
-            !node.is_commodity
-                && !node.is_market
-                && node.state.is_none()
-                && !node.is_res
-                && node.inflow.is_none()
-        })
-        .map(|node| node.name.clone())
-        .collect()
-}
-
-fn to_time_series_data(y: f64, time_line: &TimeLine, scenarios: &Vec<Scenario>) -> TimeSeriesData {
-    let single_series: BTreeMap<TimeStamp, f64> = time_line
-        .iter()
-        .map(|time_stamp| (time_stamp.clone(), y))
-        .collect();
-    TimeSeriesData {
-        ts_data: scenarios
-            .iter()
-            .map(|scenario| TimeSeries {
-                scenario: scenario.name().clone(),
-                series: single_series.clone(),
-            })
-            .collect(),
-    }
-}
-
 fn make_temporals(time_line: &TimeLine) -> Temporals {
     Temporals {
         t: time_line.clone(),
@@ -1437,26 +1803,31 @@ fn make_temporals(time_line: &TimeLine) -> Temporals {
     }
 }
 
-fn expand_optional_time_series(
-    optional: Option<f64>,
-    time_line: &TimeLine,
-    scenarios: &Vec<Scenario>,
-) -> TimeSeriesData {
-    match optional {
-        Some(constant) => to_time_series_data(constant, time_line, scenarios),
-        None => TimeSeriesData::default(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::input_data::{BidSlot, Group, GroupType};
     use chrono::{TimeZone, Utc};
-    fn as_map<T: Name>(x: T) -> BTreeMap<String, T> {
-        let mut map = BTreeMap::new();
+
+    fn as_indexmap<T: Name>(x: T) -> IndexMap<String, T> {
+        let mut map = IndexMap::new();
         map.insert(x.name().clone(), x);
         map
+    }
+    fn to_time_series_data(y: f64, time_line: &TimeLine, scenarios: &Vec<Scenario>) -> TimeSeriesData {
+        let single_series: BTreeMap<TimeStamp, f64> = time_line
+            .iter()
+            .map(|time_stamp| (time_stamp.clone(), y))
+            .collect();
+        TimeSeriesData {
+            ts_data: scenarios
+                .iter()
+                .map(|scenario| TimeSeries {
+                    scenario: scenario.name().clone(),
+                    series: single_series.clone(),
+                })
+                .collect(),
+        }
     }
     #[test]
     fn expanding_input_data_works() {
@@ -1477,7 +1848,10 @@ mod tests {
             ramp_down: 1.4,
             initial_load: 1.5,
             initial_flow: 1.6,
-            cap_ts: Some(1.7),
+            cap_ts: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.7 }),
+            }],
         };
         let base_process = BaseProcess {
             name: "Conversion".to_string(),
@@ -1498,8 +1872,14 @@ mod tests {
             initial_state: true,
             is_scenario_independent: false,
             topos: vec![base_topology],
-            cf: 2.0,
-            eff_ts: Some(2.1),
+            cf: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 2.0 }),
+            }],
+            eff_ts: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 2.1 }),
+            }],
             eff_ops: vec!["oops!".to_string()],
             eff_fun: vec![Point { x: 2.2, y: 2.3 }],
         };
@@ -1511,14 +1891,23 @@ mod tests {
             is_market: false,
             is_res: false,
             state: None,
-            cost: Some(1.1),
-            inflow: Some(BaseForecastable::Constant(1.2.into())),
+            cost: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.1 }),
+            }],
+            inflow: vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(Constant { value: 1.2 }),
+            }],
         };
         let node = base_node.expand_to_time_series(&time_line, &scenarios);
         let base_node_diffusion = BaseNodeDiffusion {
             from_node: "Node 1".to_string(),
             to_node: "Node 2".to_string(),
-            coefficient: -2.3,
+            coefficient: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: -2.3 }),
+            }],
         };
         let node_diffusion = base_node_diffusion.expand_to_time_series(&time_line, &scenarios);
         let node_delay = vec![Delay {
@@ -1545,17 +1934,32 @@ mod tests {
             node: "North".to_string(),
             process_group: "Group".to_string(),
             direction: None,
-            realisation: Some(1.0),
+            realisation: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.0 }),
+            }],
             reserve_type: Some("not none".to_string()),
             is_bid: true,
             is_limited: false,
             min_bid: 1.2,
             max_bid: 1.3,
             fee: 1.4,
-            price: Some(BaseForecastable::Constant(1.5.into())),
-            up_price: Some(BaseForecastable::Constant(1.6.into())),
-            down_price: Some(BaseForecastable::Constant(1.7.into())),
-            reserve_activation_price: Some(1.8),
+            price: vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(1.5.into()),
+            }],            
+            up_price: vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(1.6.into()),
+            }],
+            down_price: vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(1.7.into()),
+            }],
+            reserve_activation_price: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.8 }),
+            }],
             fixed: vec![MarketFix {
                 name: "Fix".to_string(),
                 factor: 1.9,
@@ -1577,7 +1981,10 @@ mod tests {
         let base_inflow_block = BaseInflowBlock {
             name: "Inflow".to_string(),
             node: "West".to_string(),
-            data: 2.3,
+            data: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 2.3 }),
+            }],
         };
         let inflow_block = base_inflow_block.expand_to_time_series(&time_line, &scenarios);
         let base_con_factor = BaseConFactor {
@@ -1586,7 +1993,10 @@ mod tests {
                 entity: "interior_air".to_string(),
                 identifier: None,
             },
-            data: 23.0,
+            data: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 23.0 }),
+            }],
         };
         let base_gen_constraint = BaseGenConstraint {
             name: "Constraint".to_string(),
@@ -1594,7 +2004,10 @@ mod tests {
             is_setpoint: true,
             penalty: 1.1,
             factors: vec![base_con_factor],
-            constant: Some(1.2),
+            constant: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.2 }),
+            }],
         };
         let gen_constraint = base_gen_constraint.expand_to_time_series(&time_line, &scenarios);
         let base = BaseInputData {
@@ -1621,8 +2034,8 @@ mod tests {
         };
         assert_eq!(input_data.temporals, temporals);
         assert_eq!(input_data.setup, setup);
-        assert_eq!(input_data.processes, as_map(process));
-        assert_eq!(input_data.nodes, as_map(node));
+        assert_eq!(input_data.processes, as_indexmap(process));
+        assert_eq!(input_data.nodes, as_indexmap(node));
         assert_eq!(input_data.node_diffusion, vec![node_diffusion]);
         assert_eq!(
             input_data.node_delay,
@@ -1631,9 +2044,9 @@ mod tests {
                 .map(|delay| delay.to_tuple())
                 .collect::<Vec<_>>()
         );
-        assert_eq!(input_data.node_histories, as_map(node_history));
-        assert_eq!(input_data.markets, as_map(market));
-        let mut groups = BTreeMap::new();
+        assert_eq!(input_data.node_histories, as_indexmap(node_history));
+        assert_eq!(input_data.markets, as_indexmap(market));
+        let mut groups = IndexMap::new();
         groups.insert(
             "The node club".to_string(),
             Group {
@@ -1651,15 +2064,15 @@ mod tests {
             },
         );
         assert_eq!(input_data.groups, groups,);
-        assert_eq!(input_data.scenarios, Scenario::to_map(&base.scenarios));
+        assert_eq!(input_data.scenarios, Scenario::to_indexmap(&base.scenarios));
         assert_eq!(
             input_data.reserve_type,
-            ReserveType::to_map(&base.reserve_type)
+            ReserveType::to_indexmap(&base.reserve_type)
         );
-        assert_eq!(input_data.risk, Risk::to_map(&base.risk));
-        assert_eq!(input_data.inflow_blocks, as_map(inflow_block));
-        assert_eq!(input_data.bid_slots, BTreeMap::<String, BidSlot>::new());
-        assert_eq!(input_data.gen_constraints, as_map(gen_constraint));
+        assert_eq!(input_data.risk, Risk::to_indexmap(&base.risk));
+        assert_eq!(input_data.inflow_blocks, as_indexmap(inflow_block));
+        assert_eq!(input_data.bid_slots, IndexMap::<String, BidSlot>::new());
+        assert_eq!(input_data.gen_constraints, as_indexmap(gen_constraint));
     }
     #[test]
     fn expanding_process_works() {
@@ -1678,13 +2091,16 @@ mod tests {
             ramp_down: 1.4,
             initial_load: 1.5,
             initial_flow: 1.6,
-            cap_ts: Some(1.7),
+            cap_ts: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.7 }),
+            }],
         };
         let topology = base_topology.expand_to_time_series(&time_line, &scenarios);
         let base = BaseProcess {
             name: "Conversion".to_string(),
             groups: vec!["Group".to_string()],
-            conversion: Conversion::Transport,
+            conversion: Conversion::Transfer,
             is_cf: true,
             is_cf_fix: false,
             is_online: true,
@@ -1700,8 +2116,14 @@ mod tests {
             initial_state: true,
             is_scenario_independent: false,
             topos: vec![base_topology],
-            cf: 2.0,
-            eff_ts: Some(2.1),
+            cf: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 2.0 }),
+            }],
+            eff_ts: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 2.1 }),
+            }],
             eff_ops: vec!["oops!".to_string()],
             eff_fun: vec![Point { x: 2.2, y: 2.3 }],
         };
@@ -1747,8 +2169,14 @@ mod tests {
             is_market: false,
             is_res: false,
             state: None,
-            cost: Some(1.1),
-            inflow: Some(BaseForecastable::Constant(1.2.into())),
+            cost: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.1 }),
+            }],
+            inflow: vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(Constant { value: 1.2 }),
+            }],
         };
         let node = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(node.name, "East");
@@ -1772,7 +2200,10 @@ mod tests {
         let base = BaseNodeDiffusion {
             from_node: "Node 1".to_string(),
             to_node: "Node 2".to_string(),
-            coefficient: -2.3,
+            coefficient: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: -2.3 }),
+            }],
         };
         let time_line: TimeLine = vec![
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
@@ -1834,17 +2265,32 @@ mod tests {
             node: "North".to_string(),
             process_group: "Group".to_string(),
             direction: None,
-            realisation: Some(1.1),
+            realisation: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.1 }),
+            }],
             reserve_type: Some("not none".to_string()),
             is_bid: true,
             is_limited: false,
             min_bid: 1.2,
             max_bid: 1.3,
             fee: 1.4,
-            price: Some(BaseForecastable::Constant(1.5.into())),
-            up_price: Some(BaseForecastable::Constant(1.6.into())),
-            down_price: Some(BaseForecastable::Constant(1.7.into())),
-            reserve_activation_price: Some(1.8),
+            price: vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(1.5.into()),
+            }],
+            up_price: vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(1.6.into()),
+            }],
+            down_price: vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(1.7.into()),
+            }],
+            reserve_activation_price: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.8 }),
+            }],
             fixed: vec![MarketFix {
                 name: "Fix".to_string(),
                 factor: 1.9,
@@ -1895,7 +2341,10 @@ mod tests {
         let base = BaseInflowBlock {
             name: "Inflow".to_string(),
             node: "West".to_string(),
-            data: 2.3,
+            data: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 2.3 }),
+            }],
         };
         let inflow_block = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(inflow_block.name, "Inflow");
@@ -1920,7 +2369,10 @@ mod tests {
                 entity: "interior_air".to_string(),
                 identifier: None,
             },
-            data: 23.0,
+            data: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 23.0 }),
+            }],
         };
         let con_factor = base_con_factor.expand_to_time_series(&time_line, &scenarios);
         let base = BaseGenConstraint {
@@ -1929,7 +2381,10 @@ mod tests {
             is_setpoint: true,
             penalty: 1.1,
             factors: vec![base_con_factor],
-            constant: Some(1.2),
+            constant: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.2 }),
+            }],
         };
         let gen_constraint = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(gen_constraint.name, "Constraint");
@@ -1953,7 +2408,10 @@ mod tests {
             ramp_down: 1.4,
             initial_load: 1.5,
             initial_flow: 1.6,
-            cap_ts: Some(1.7),
+            cap_ts: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 1.7 }),
+            }],
         };
         let time_line: TimeLine = vec![
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
@@ -1983,7 +2441,10 @@ mod tests {
                 entity: "interior_air".to_string(),
                 identifier: None,
             },
-            data: 23.0,
+            data: vec![Value {
+                scenario: None,
+                value: SeriesValue::Constant(Constant { value: 23.0 }),
+            }],
         };
         let time_line: TimeLine = vec![
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
@@ -1999,9 +2460,10 @@ mod tests {
         );
         assert_eq!(
             con_factor.data,
-            to_time_series_data(base.data, &time_line, &scenarios)
+            values_to_time_series_data(base.data.clone(), scenarios.clone(), time_line.clone()).unwrap()
         );
     }
+    /* 
     mod find_input_node_names {
         use super::*;
         #[test]
@@ -2024,7 +2486,10 @@ mod tests {
             res_nodes[0].is_res = true;
             assert!(find_input_node_names(res_nodes.iter()).is_empty());
             let mut inflow_nodes = vec![BaseNode::new("inflow".to_string())];
-            inflow_nodes[0].inflow = Some(BaseForecastable::Constant(2.3.into()));
+            inflow_nodes[0].inflow = vec![ForecastValue {
+                scenario: None,
+                value: BaseForecastable::Constant(Constant { value: 2.3 }),
+            }];
             assert!(find_input_node_names(inflow_nodes.iter()).is_empty());
         }
         #[test]
@@ -2035,6 +2500,7 @@ mod tests {
             assert_eq!(input_nodes[0], "input");
         }
     }
+    */
     #[test]
     fn make_temporals_works() {
         let time_line: TimeLine = vec![
@@ -2142,5 +2608,375 @@ mod tests {
             expected_series.insert(time_line[1], 23.0);
             assert_eq!(time_series.series, expected_series)
         }
+    }
+
+    #[test]
+    fn try_from_value_input_with_constant_only() {
+        let input = ValueInput {
+            scenario: Some("test_scenario".to_string()),
+            constant: Some(42.0),
+            series: None,
+        };
+
+        let value = Value::try_from(input).unwrap();
+        assert_eq!(value.scenario, Some("test_scenario".to_string()));
+        match value.value {
+            SeriesValue::Constant(constant) => assert_eq!(constant.value, 42.0),
+            _ => panic!("Expected SeriesValue::Constant"),
+        }
+    }
+    #[test]
+    fn try_from_value_input_with_series_only() {
+        let input = ValueInput {
+            scenario: Some("test_scenario".to_string()),
+            constant: None,
+            series: Some(vec![1.0, 2.0, 3.0]),
+        };
+
+        let value = Value::try_from(input).unwrap();
+        assert_eq!(value.scenario, Some("test_scenario".to_string()));
+        match value.value {
+            SeriesValue::FloatList(float_list) => assert_eq!(float_list.values, vec![1.0, 2.0, 3.0]),
+            _ => panic!("Expected SeriesValue::FloatList"),
+        }
+    }
+
+    #[test]
+    fn try_from_value_input_with_both_constant_and_series() {
+        let input = ValueInput {
+            scenario: Some("invalid_scenario".to_string()),
+            constant: Some(42.0),
+            series: Some(vec![1.0, 2.0, 3.0]),
+        };
+
+        let result = Value::try_from(input);
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap(),
+            "ValueInput cannot have both `constant` and `series` populated simultaneously."
+        );
+    }
+
+    #[test]
+    fn try_from_value_input_with_none_for_constant_and_series() {
+        let input = ValueInput {
+            scenario: None,
+            constant: None,
+            series: None,
+        };
+
+        let value = Value::try_from(input).unwrap();
+        assert_eq!(value.scenario, None);
+        match value.value {
+            SeriesValue::Constant(constant) => assert_eq!(constant.value, 0.0),
+            _ => panic!("Expected SeriesValue::Constant with default value 0.0"),
+        }
+    }
+    type TimeLine = Vec<TimeStamp>;
+    fn make_timeline(times: &[(i32, u32, u32, u32, u32, u32)]) -> TimeLine {
+        times
+            .iter()
+            .map(|&(y, m, d, h, min, s)| Utc.with_ymd_and_hms(y, m, d, h, min, s).unwrap().into())
+            .collect()
+    }
+    #[test]
+    fn forecast_values_to_forecastable_returns_forecast_variant() {
+        let fv = ForecastValue {
+            scenario: None,
+            value: BaseForecastable::Forecast(Forecast::new("MyForecast".to_string(),"Energy".to_string())),
+        };
+        let forecast_values = vec![fv];
+        let scenarios = vec![Scenario::new("S1", 1.0).unwrap()];
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let result = forecast_values_to_forecastable(&forecast_values, &scenarios, &timeline);
+        match result {
+            Forecastable::Forecast(f) => {
+                assert_eq!(f.name(), "MyForecast");
+            }
+            _ => panic!("Expected Forecastable::Forecast"),
+        }
+    }
+    #[test]
+    #[should_panic(expected = "Cannot convert Forecast variant to time series")]
+    fn forecast_values_to_time_series_data_errors_on_forecast_variant() {
+        let fv = ForecastValue {
+            scenario: Some("S1".to_string()),
+            value: BaseForecastable::Forecast(Forecast::new("BadForecast".to_string(),"Energy".to_string())),
+        };
+        let forecast_values = vec![fv];
+        let scenarios = vec![Scenario::new("S1", 1.0).unwrap()];
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let _ = forecast_values_to_time_series_data(&forecast_values, &scenarios, &timeline).unwrap();
+    }
+    #[test]
+    #[should_panic(expected = "Missing forecast value for scenario")]
+    fn forecast_values_to_time_series_data_missing_default_error() {
+        let fv = ForecastValue {
+            scenario: Some("S1".to_string()),
+            value: BaseForecastable::Constant(Constant { value: 10.0 }),
+        };
+        let forecast_values = vec![fv];
+        let scenarios = vec![
+            Scenario::new("S1", 1.0).unwrap(),
+            Scenario::new("S2", 1.0).unwrap(),
+        ];
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let _ = forecast_values_to_time_series_data(&forecast_values, &scenarios, &timeline).unwrap();
+    }
+    #[test]
+    #[should_panic(expected = "Multiple default forecast values found")]
+    fn forecast_values_to_time_series_data_multiple_defaults_error() {
+        let fv1 = ForecastValue {
+            scenario: None,
+            value: BaseForecastable::Constant(Constant { value: 10.0 }),
+        };
+        let fv2 = ForecastValue {
+            scenario: None,
+            value: BaseForecastable::Constant(Constant { value: 20.0 }),
+        };
+        let forecast_values = vec![fv1, fv2];
+        let scenarios = vec![Scenario::new("S1", 1.0).unwrap()];
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let _ = forecast_values_to_time_series_data(&forecast_values, &scenarios, &timeline).unwrap();
+    }
+    #[test]
+    fn forecast_values_to_forecastable_returns_time_series_data() {
+        let fv_default = ForecastValue {
+            scenario: None,
+            value: BaseForecastable::Constant(Constant { value: 42.0 }),
+        };
+        let fv_s1 = ForecastValue {
+            scenario: Some("S1".to_string()),
+            value: BaseForecastable::Constant(Constant { value: 10.0 }),
+        };
+        let forecast_values = vec![fv_default, fv_s1];
+        let scenarios = vec![
+            Scenario::new("S1", 1.0).unwrap(),
+            Scenario::new("S2", 1.0).unwrap(),
+        ];
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let result = forecast_values_to_forecastable(&forecast_values, &scenarios, &timeline);
+        match result {
+            Forecastable::TimeSeriesData(ts_data) => {
+                let ts_map: BTreeMap<_, _> = ts_data.ts_data.into_iter()
+                    .map(|ts| (ts.scenario, ts.series))
+                    .collect();
+                let expected_s1: BTreeMap<TimeStamp, f64> = timeline
+                    .iter()
+                    .cloned()
+                    .map(|ts| (ts, 10.0))
+                    .collect();
+                let expected_s2: BTreeMap<TimeStamp, f64> = timeline
+                    .iter()
+                    .cloned()
+                    .map(|ts| (ts, 42.0))
+                    .collect();
+                assert_eq!(ts_map.get("S1").unwrap(), &expected_s1);
+                assert_eq!(ts_map.get("S2").unwrap(), &expected_s2);
+            }
+            _ => panic!("Expected Forecastable::TimeSeriesData"),
+        }
+    }
+    // Test A single default (scenario = None) constant value is applied to all scenarios.
+    #[test]
+    fn test_values_to_time_series_data_default_constant() {
+        let timeline = make_timeline(&[
+            (2025, 1, 1, 0, 0, 0),
+            (2025, 1, 1, 1, 0, 0),
+            (2025, 1, 1, 2, 0, 0),
+        ]);
+        let scenarios = vec![
+            Scenario::new("S1", 1.0).expect("failed to create scenario"),
+            Scenario::new("S2", 1.0).expect("failed to create scenario"),
+        ];
+        let value = Value {
+            scenario: None,
+            value: SeriesValue::Constant(Constant { value: 42.0 }),
+        };
+        let values = vec![value];
+
+        let result = values_to_time_series_data(values, scenarios.clone(), timeline.clone());
+        assert!(result.is_ok(), "Expected Ok result, got error: {:?}", result.err());
+        let ts_data = result.unwrap();
+
+        assert_eq!(
+            ts_data.ts_data.len(),
+            1 + scenarios.len(),
+            "Expected default + one entry per scenario"
+        );
+
+        for ts in ts_data.ts_data {
+            assert_eq!(ts.series.len(), timeline.len());
+            for (&_ts, &v) in ts.series.iter() {
+                assert_eq!(v, 42.0);
+            }
+            assert!(
+                ts.scenario == "Default"
+                    || scenarios.iter().any(|s| s.name() == &ts.scenario),
+                "Unexpected scenario name: {}",
+                ts.scenario
+            );
+        }
+    }
+    // Test: Two values provided with scenario-specific constant values.
+    #[test]
+    fn test_values_to_time_series_data_scenario_specific() {
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let scenarios = vec![
+            Scenario::new("S1", 1.0).expect("failed to create scenario"),
+            Scenario::new("S2", 1.0).expect("failed to create scenario"),
+        ];
+
+        let value1 = Value {
+            scenario: Some("S1".to_string()),
+            value: SeriesValue::Constant(Constant { value: 10.0 }),
+        };
+        let value2 = Value {
+            scenario: Some("S2".to_string()),
+            value: SeriesValue::Constant(Constant { value: 20.0 }),
+        };
+        let values = vec![value1, value2];
+
+        let result = values_to_time_series_data(values, scenarios.clone(), timeline.clone());
+        assert!(result.is_ok());
+        let ts_data = result.unwrap();
+        assert_eq!(ts_data.ts_data.len(), 2);
+
+        for ts in ts_data.ts_data {
+            assert_eq!(ts.series.len(), timeline.len());
+            match ts.scenario.as_str() {
+                "S1" => {
+                    for &v in ts.series.values() {
+                        assert_eq!(v, 10.0);
+                    }
+                }
+                "S2" => {
+                    for &v in ts.series.values() {
+                        assert_eq!(v, 20.0);
+                    }
+                }
+                other => panic!("Unexpected scenario name: {}", other),
+            }
+        }
+    }
+
+    // Test: When more than one default value is provided, an error is returned.
+    #[test]
+    fn test_values_to_time_series_data_multiple_defaults_error() {
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let scenarios = vec![Scenario::new("S1", 1.0).expect("failed to create scenario")];
+
+        let value1 = Value {
+            scenario: None,
+            value: SeriesValue::Constant(Constant { value: 5.0 }),
+        };
+        let value2 = Value {
+            scenario: None,
+            value: SeriesValue::Constant(Constant { value: 10.0 }),
+        };
+        let values = vec![value1, value2];
+
+        let result = values_to_time_series_data(values, scenarios, timeline);
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap(),
+            "Multiple default values found (scenario = None)".to_string()
+        );
+    }
+
+    // Test: When a scenario-specific value refers to a scenario not in the provided list.
+    #[test]
+    fn test_values_to_time_series_data_nonexistent_scenario_error() {
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let scenarios = vec![Scenario::new("S1", 1.0).expect("failed to create scenario")];
+
+        let value = Value {
+            scenario: Some("S2".to_string()),
+            value: SeriesValue::Constant(Constant { value: 15.0 }),
+        };
+        let values = vec![value];
+
+        let result = values_to_time_series_data(values, scenarios, timeline);
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap(),
+            "Scenario 'S2' specified in Value does not exist in provided scenarios".to_string()
+        );
+    }
+
+    // Test: When a scenario-specific value is given for one scenario but not all scenarios are covered
+    // and no default value is provided, an error is returned.
+    #[test]
+    fn test_values_to_time_series_data_missing_default_error() {
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let scenarios = vec![
+            Scenario::new("S1", 1.0).expect("failed to create scenario"),
+            Scenario::new("S2", 1.0).expect("failed to create scenario"),
+        ];
+
+        let value = Value {
+            scenario: Some("S1".to_string()),
+            value: SeriesValue::Constant(Constant { value: 100.0 }),
+        };
+        let values = vec![value];
+
+        let result = values_to_time_series_data(values, scenarios, timeline);
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap(),
+            "Missing default values for scenarios: [\"S2\"]".to_string()
+        );
+    }
+
+    // Test: A value with a FloatList that matches the timeline length is converted correctly.
+    #[test]
+    fn test_values_to_time_series_data_float_list() {
+        let timeline = make_timeline(&[
+            (2025, 1, 1, 0, 0, 0),
+            (2025, 1, 1, 1, 0, 0),
+            (2025, 1, 1, 2, 0, 0),
+        ]);
+        let scenarios = vec![Scenario::new("S1", 1.0).expect("failed to create scenario")];
+
+        let value = Value {
+            scenario: Some("S1".to_string()),
+            value: SeriesValue::FloatList(FloatList {
+                values: vec![1.1, 2.2, 3.3],
+            }),
+        };
+        let values = vec![value];
+
+        let result = values_to_time_series_data(values, scenarios, timeline.clone());
+        assert!(result.is_ok());
+        let ts_data = result.unwrap();
+        assert_eq!(ts_data.ts_data.len(), 1);
+        let ts = &ts_data.ts_data[0];
+        assert_eq!(ts.scenario, "S1");
+        for (i, ts_stamp) in timeline.iter().enumerate() {
+            assert_eq!(
+                *ts.series.get(ts_stamp).expect("timestamp missing"),
+                vec![1.1, 2.2, 3.3][i]
+            );
+        }
+    }
+
+    // Test: A FloatList value with a length mismatch relative to the timeline returns an error.
+    #[test]
+    fn test_values_to_time_series_data_float_list_length_mismatch() {
+        let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
+        let scenarios = vec![Scenario::new("S1", 1.0).expect("failed to create scenario")];
+        let value = Value {
+            scenario: Some("S1".to_string()),
+            value: SeriesValue::FloatList(FloatList { values: vec![1.0] }),
+        };
+        let values = vec![value];
+
+        let result = values_to_time_series_data(values, scenarios, timeline);
+        assert!(result.is_err());
+        let expected_err = format!(
+            "time series mismatch in FloatList, expected length {}, found {}",
+            2, 1
+        );
+        assert_eq!(result.err().unwrap(), expected_err);
     }
 }

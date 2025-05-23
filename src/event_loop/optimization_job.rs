@@ -1,5 +1,6 @@
 use super::arrow_input;
-use super::electricity_price_job;
+use super::electricity_price_job_elering;
+use super::electricity_price_job_entsoe;
 use super::job_store::JobStore;
 use super::jobs::{JobOutcome, JobStatus, OptimizationOutcome};
 use super::time_series;
@@ -7,7 +8,7 @@ use super::utilities;
 use super::weather_forecast_job;
 use super::{ElectricityPriceData, OptimizationData, WeatherData};
 use crate::input_data::{Forecastable, InputData, Market, TimeSeries, TimeSeriesData};
-use crate::input_data_base::{self, BaseInputData, BaseProcess};
+use crate::input_data_base::BaseForecastable;
 use crate::model::Model;
 use crate::scenarios::Scenario;
 use crate::settings::{LocationSettings, Settings};
@@ -30,11 +31,12 @@ use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use zmq::{Context, Socket};
+use indexmap::IndexMap;
 
 const PREDICER_SEND_FLAGS: i32 = 0;
 const PREDICER_RECEIVE_FLAGS: i32 = 0;
 
-#[derive(Clone, GraphQLObject)]
+#[derive(Clone, GraphQLObject, Debug)]
 pub struct ControlSignal {
     pub name: String,
     pub signal: Vec<f64>,
@@ -53,20 +55,11 @@ pub async fn start(
     {
         return;
     }
+    
     let settings_snapshot = settings.lock().await.clone();
     let model_snapshot = model.lock().await.clone();
     let optimization_data = OptimizationData::with_input_data(model_snapshot.input_data);
     let start_time = compute_timeline_start(&model_snapshot.time_line);
-    let control_processes = match expected_control_processes(&optimization_data.input_data) {
-        Ok(names) => names,
-        Err(error) => {
-            job_store
-                .set_job_status(job_id, Arc::new(JobStatus::Failed(error.into())))
-                .await
-                .expect("setting job status should not fail");
-            return;
-        }
-    };
     let mut zmq_port = settings_snapshot.predicer_port;
     if zmq_port == 0 {
         zmq_port = match find_available_port().await {
@@ -133,8 +126,23 @@ pub async fn start(
     });
     let location_clone = location_snapshot.clone();
     let scenarios_clone = optimization_data.input_data.scenarios.clone();
+    let python_exec_clone = settings_snapshot.python_exec.clone();
+    let price_fetcher_script_clone = settings_snapshot.price_fetcher_script.clone();
+    let api_token = settings_snapshot
+        .entsoe_api_token
+        .clone()                               // Option<String>
+        .expect("ENTSO-E token must be configured");
     let fetch_electricity_price_handle = tokio::spawn(async move {
-        fetch_electricity_price_task(&location_clone, &scenarios_clone, rx_elec, tx_update).await
+    fetch_electricity_price_task(
+        &api_token,
+        &python_exec_clone,
+        &price_fetcher_script_clone,
+        &location_clone,
+        &scenarios_clone,
+        rx_elec,
+        tx_update,
+    )
+    .await
     });
     let update_model_data_handle =
         tokio::spawn(async move { generate_model_task(rx_update, tx_batches).await });
@@ -203,9 +211,9 @@ pub async fn start(
                             .expect("setting job status should not fail");
                         return;
                     }
-                };
+                };               
                 let control_data =
-                    match controls_from_result_batch(&result_batch, control_processes) {
+                    match controls_from_result_batch(&result_batch) {
                         Ok(d) => d,
                         Err(error) => {
                             job_store
@@ -215,6 +223,7 @@ pub async fn start(
                             return;
                         }
                     };
+                
                 let result_data = OptimizationOutcome::new(time_stamps, control_data);
                 job_store
                     .set_job_status(
@@ -256,46 +265,6 @@ async fn find_available_port() -> Result<u16, io::Error> {
     Ok(port)
 }
 
-fn expected_control_processes(model_data: &BaseInputData) -> Result<Vec<ProcessInfo>, String> {
-    let process_names = processes_and_column_prefixes(
-        &mut model_data.processes.iter(),
-        &input_data_base::find_input_node_names(model_data.nodes.iter()),
-    );
-    let first_scenario_name = match model_data.scenarios.first() {
-        Some(scenario) => scenario.name().clone(),
-        None => {
-            return Err("no scenarios in model data".to_string());
-        }
-    };
-    Ok(process_names
-        .iter()
-        .map(|name| ProcessInfo {
-            name: name.0.clone(),
-            column_name: format!("{}_{}", name.1, first_scenario_name),
-        })
-        .collect())
-}
-
-struct ProcessInfo {
-    name: String,
-    column_name: String,
-}
-
-fn processes_and_column_prefixes<'a>(
-    processes: impl Iterator<Item = &'a BaseProcess>,
-    input_node_names: &Vec<String>,
-) -> Vec<(String, String)> {
-    let mut process_names = Vec::new();
-    for process in processes {
-        for topology in &process.topos {
-            if input_node_names.contains(&topology.source) && process.name == topology.sink {
-                let prefix = format!("{}_{}_{}", &process.name, &topology.source, &process.name);
-                process_names.push((process.name.clone(), prefix));
-            }
-        }
-    }
-    process_names
-}
 
 fn time_stamps_from_result_batch(batch: &RecordBatch) -> Result<Vec<DateTime<Utc>>, String> {
     match batch.column_by_name("t") {
@@ -328,41 +297,37 @@ fn convert_time_stamp_column_to_vec(column: &dyn Array, time_zone: &str) -> Vec<
     }
     time_stamps_in_vec
 }
-
 fn controls_from_result_batch(
     batch: &RecordBatch,
-    control_processes: Vec<ProcessInfo>,
 ) -> Result<Vec<ControlSignal>, String> {
-    let mut control_data = Vec::with_capacity(control_processes.len());
-    for control_process in control_processes {
-        match batch.column_by_name(&control_process.column_name) {
-            Some(column) => match column.data_type() {
-                DataType::Float64 => {
-                    let float_array = array::as_primitive_array::<Float64Type>(column);
-                    let data_as_vec = float_array
-                        .into_iter()
-                        .map(|x| x.unwrap())
-                        .collect::<Vec<f64>>();
-                    control_data.push(ControlSignal {
-                        name: control_process.name,
-                        signal: data_as_vec,
-                    });
-                }
-                unexpected_type => {
-                    let message = format!(
-                        "unexpected data type in '{}' column: '{}'",
-                        control_process.column_name,
-                        unexpected_type.to_string()
-                    );
-                    return Err(message);
-                }
-            },
-            None => {
-                let message = format!("no '{}' column in v_flow", control_process.column_name);
-                return Err(message);
+    let mut control_data = Vec::with_capacity(batch.num_columns());
+
+    for (i, field) in batch.schema().fields().iter().enumerate() {
+        let column = batch.column(i);
+        let column_name = field.name().clone();
+
+        match column.data_type() {
+            DataType::Float64 => {
+                let float_array = array::as_primitive_array::<Float64Type>(column);
+                let data_as_vec = float_array
+                    .into_iter()
+                    .map(|x| x.unwrap()) 
+                    .collect::<Vec<f64>>();
+                control_data.push(ControlSignal {
+                    name: column_name,
+                    signal: data_as_vec,
+                });
+            }
+            other_type => {
+                println!(
+                    "Skipping column '{}' with unsupported type '{}'",
+                    column_name,
+                    other_type
+                );
             }
         }
     }
+
     Ok(control_data)
 }
 
@@ -606,7 +571,6 @@ fn receive_single_predicer_result(socket: &Socket) -> Result<RecordBatch, Box<dy
     }
     Ok(batches.pop().expect("batches should have an element"))
 }
-
 async fn generate_model_task(
     rx: oneshot::Receiver<OptimizationData>,
     tx: oneshot::Sender<InputData>,
@@ -616,28 +580,30 @@ async fn generate_model_task(
             .time_data
             .as_ref()
             .ok_or("generate_model_task: didn't receive time data".to_string())?;
-        let mut input_data = optimization_data
-            .input_data
-            .expand_to_time_series(time_line);
-        let weather_data = optimization_data.weather_data.take().ok_or(
-            "update_model_data_task: weather data missing in optimization data".to_string(),
-        )?;
-        if let Err(e) = update_outside_node(&mut input_data, weather_data) {
-            return Err(format!(
-                "update_model_data_task: failed to update outside node inflow: {}",
-                e
-            ));
+        let mut input_data = optimization_data.input_data.expand_to_time_series(time_line);
+        
+        if let Some(weather_data) = optimization_data.weather_data.take() {
+            if let Err(e) = update_outside_node(&mut input_data, weather_data) {
+                return Err(format!(
+                    "update_model_data_task: failed to update outside node inflow: {}",
+                    e
+                ));
+            }
+        } else {
+            println!("No weather data available; skipping update of outside node inflow.");
         }
-        let electricity_price_data = optimization_data.elec_price_data.take().ok_or(
-            "update_model_data_task: electricity price data missing in optimization data"
-                .to_string(),
-        )?;
-        if let Err(e) = update_npe_market_prices(&mut input_data.markets, electricity_price_data) {
-            return Err(format!(
-                "update_model_data_task: failed to update NPE market prices: {}",
-                e
-            ));
+        
+        if let Some(electricity_price_data) = optimization_data.elec_price_data.take() {
+            if let Err(e) = update_npe_market_prices(&mut input_data.markets, &electricity_price_data) {
+                return Err(format!(
+                    "update_model_data_task: failed to update NPE market prices: {}",
+                    e
+                ));
+            }
+        } else {
+            println!("No electricity price data available; skipping update of market prices.");
         }
+        
         input_data.check_ts_data_against_temporals()?;
         if tx.send(input_data).is_err() {
             return Err("update_model_data_task: failed to send generated input data".to_string());
@@ -647,29 +613,48 @@ async fn generate_model_task(
     Err("update_model_data_task: input channel closed".to_string())
 }
 
+fn scale_ts_data(src: &TimeSeriesData, factor: f64) -> TimeSeriesData {
+    let scaled = src.ts_data
+        .iter()
+        .map(|ts| TimeSeries {
+            scenario: ts.scenario.clone(),
+            series: ts.series
+                .iter()
+                .map(|(ts, v)| (*ts, v * factor))
+                .collect(),
+        })
+        .collect();
+
+    TimeSeriesData { ts_data: scaled }
+}
+
+
+
 fn update_npe_market_prices(
-    markets: &mut BTreeMap<String, Market>,
-    electricity_price_data: ElectricityPriceData,
+    markets: &mut IndexMap<String, Market>,
+    electricity_price_data: &ElectricityPriceData,
 ) -> Result<(), String> {
+    // 1) We must have a base price series to work with.
+    println!("pöö");
+    let base_price = electricity_price_data
+        .price_data
+        .as_ref()
+        .ok_or("ElectricityPriceData::price_data is None")?;
+
+    // 2) Prepare the three flavours once so we can reuse the clones.
+    let price_ts      = base_price.clone();
+    let up_price_ts   = scale_ts_data(base_price, 1.10);
+    let down_price_ts = scale_ts_data(base_price, 0.90);
+
+    // 3) Update every market that still carries a Forecast.
     for market in markets.values_mut() {
-        if let Forecastable::Forecast(_) = market.price {
-            if let Some(price_data) = &electricity_price_data.price_data {
-                market.price = Forecastable::TimeSeriesData(price_data.ts_data.clone().into());
-            }
-        }
-        if let Forecastable::Forecast(_) = market.up_price {
-            if let Some(up_price_data) = &electricity_price_data.up_price_data {
-                market.up_price =
-                    Forecastable::TimeSeriesData(up_price_data.ts_data.clone().into());
-            }
-        }
-        if let Forecastable::Forecast(_) = market.down_price {
-            if let Some(down_price_data) = &electricity_price_data.down_price_data {
-                market.down_price =
-                    Forecastable::TimeSeriesData(down_price_data.ts_data.clone().into());
-            }
+        if matches!(market.price, Forecastable::Forecast(_)) {
+            market.price      = Forecastable::TimeSeriesData(price_ts.clone());
+            market.up_price   = Forecastable::TimeSeriesData(up_price_ts.clone());
+            market.down_price = Forecastable::TimeSeriesData(down_price_ts.clone());
         }
     }
+
     Ok(())
 }
 
@@ -677,51 +662,57 @@ fn update_outside_node(
     input_data: &mut InputData,
     weather_data: WeatherData,
 ) -> Result<(), String> {
-    let nodes = &mut input_data.nodes;
-    for (node_name, node) in nodes {
-        if let Forecastable::Forecast(_) = node.inflow {
-            if !node.is_inflow {
-                return Err(format!("{} node is not marked for inflow", node_name));
+    for (node_name, node) in &mut input_data.nodes {
+        if let Forecastable::Forecast(f) = &node.inflow {
+            if f.name() != "FMI" {
+                continue;
             }
-            let state = match &mut node.state {
-                Some(state) => state,
-                None => return Err(format!("{} node has no state", node_name)),
-            };
-            if !state.is_temp {
-                return Err(format!(
-                    "{} node state is not marked as temperature",
-                    node_name
-                ));
-            }
-            if state.state_min > state.state_max {
-                return Err(format!(
-                    "{} node state has state_min greater than state_max",
-                    node_name
-                ));
-            }
-            let initial_temperature = weather_data
-                .first()
-                .expect("weather data should have at least one time series")
-                .series
-                .values()
-                .next()
-                .expect("weather data should have at least one data point");
-            if state.state_min > *initial_temperature {
-                return Err("forecast temperature is below outside node state_min".to_string());
-            }
-            if state.state_max < *initial_temperature {
-                return Err("forecast temperature is above outside node state_max".to_string());
-            }
-            state.initial_state = *initial_temperature;
-            node.inflow = Forecastable::TimeSeriesData(
-                weather_data
-                    .iter()
-                    .map(|d| time_series_diffs(*initial_temperature, d))
-                    .collect::<Vec<TimeSeries>>()
-                    .into(),
-            );
+        } else {
+            continue;
         }
+
+        if !node.is_inflow {
+            return Err(format!("{} node is not marked for inflow", node_name));
+        }
+
+        let state = node
+            .state
+            .as_mut()
+            .ok_or_else(|| format!("{} node has no state", node_name))?;
+
+        if !state.is_temp {
+            return Err(format!("{} node state is not marked as temperature", node_name));
+        }
+        if state.state_min > state.state_max {
+            return Err(format!(
+                "{} node state has state_min greater than state_max",
+                node_name
+            ));
+        }
+
+        let initial_temperature = weather_data
+            .first()
+            .and_then(|ts| ts.series.values().next())
+            .ok_or_else(|| "weather data should have at least one point".to_string())?;
+
+        if state.state_min > *initial_temperature {
+            return Err("forecast temperature is below outside node state_min".into());
+        }
+        if state.state_max < *initial_temperature {
+            return Err("forecast temperature is above outside node state_max".into());
+        }
+
+        state.initial_state = *initial_temperature;
+
+        node.inflow = Forecastable::TimeSeriesData(
+            weather_data
+                .iter()
+                .map(|d| time_series_diffs(*initial_temperature, d))
+                .collect::<Vec<TimeSeries>>()
+                .into(),
+        );
     }
+
     Ok(())
 }
 
@@ -745,7 +736,6 @@ fn diffs(
     diff_values
 }
 
-// Function to create TimeSeriesData from weather values and update the weather_data field in optimization_data
 fn update_weather_data(
     time_data: &TimeLine,
     values: &[f64],
@@ -755,7 +745,6 @@ fn update_weather_data(
     create_time_series_data_with_scenarios(paired_series, scenarios)
 }
 
-// Function to create TimeSeriesData
 fn create_time_series_data_with_scenarios(
     paired_series: BTreeMap<TimeStamp, f64>,
     scenarios: &Vec<Scenario>,
@@ -784,57 +773,50 @@ pub async fn fetch_weather_data_task(
     python_exec: &String,
     weather_fetcher_script: &String,
     rx: oneshot::Receiver<OptimizationData>,
-    tx: oneshot::Sender<OptimizationData>,
+    tx_elec: oneshot::Sender<OptimizationData>,
 ) -> Result<(), String> {
     if let Ok(mut optimization_data) = rx.await {
-        let time_line = optimization_data
-            .time_data
-            .as_ref()
-            .ok_or("fetch_weather_data_task: did not receive time data".to_string())?;
-        let start_time = time_line.first().ok_or("empty time line".to_string())?;
-        let end_time = time_line.last().ok_or("empty time line".to_string())?;
-        match weather_forecast_job::fetch_weather_data(
-            &location.place,
-            &start_time,
-            &end_time,
-            &time_line_settings.step().to_time_delta(),
-            python_exec,
-            weather_fetcher_script,
-        ) {
-            Ok(weather_values) => {
-                let series = optimization_data
-                    .time_data
-                    .as_ref()
-                    .ok_or("series missing from time data".to_string())?;
-                if let Err(error) =
-                    utilities::check_stamps_match(&weather_values, &time_line, "weather forecast")
-                {
-                    return Err(error);
+        let requires_weather = optimization_data.input_data.nodes.iter().any(|node| {
+            node.inflow.iter().any(|fv| matches!(fv.value, BaseForecastable::Forecast(_)))
+        });        
+
+        if requires_weather {
+            let time_line = optimization_data.time_data
+                .as_ref()
+                .ok_or("fetch_weather_data_task: did not receive time data".to_string())?;
+            let start_time = time_line.first().ok_or("empty time line".to_string())?;
+            let end_time = time_line.last().ok_or("empty time line".to_string())?;
+            match weather_forecast_job::fetch_weather_data(
+                &location.place,
+                &start_time,
+                &end_time,
+                &time_line_settings.step().to_time_delta(),
+                python_exec,
+                weather_fetcher_script,
+            ) {
+                Ok(weather_values) => {
+                    utilities::check_stamps_match(&weather_values, &time_line, "weather forecast")?;
+                    let values = time_series::extract_values_from_pairs_checked(&weather_values, &time_line)
+                        .map_err(|e| format!("fetch_weather_data: {}", e))?;
+                    optimization_data.weather_data = Some(update_weather_data(
+                        time_line,
+                        &values,
+                        &optimization_data.input_data.scenarios,
+                    ));
                 }
-                let values =
-                    time_series::extract_values_from_pairs_checked(&weather_values, &series)
-                        .or_else(|e| Err(format!("fetch_weather_data: {}", e)))?;
-                optimization_data.weather_data = Some(update_weather_data(
-                    series,
-                    &values,
-                    &optimization_data.input_data.scenarios,
-                ));
+                Err(e) => {
+                    return Err(format!("fetch_weather_data_task: failed to fetch weather data: {}", e));
+                }
             }
-            Err(e) => {
-                return Err(format!(
-                    "fetch_weather_data_task: failed to fetch weather data: {}",
-                    e
-                ))
-            }
+        } else {
+            println!("No node requires weather forecast; skipping weather fetch.");
         }
-        return match tx.send(optimization_data) {
-            Ok(..) => Ok(()),
-            Err(..) => {
-                Err("fetch_weather_data_task: failed to forward optimization data".to_string())
-            }
-        };
+        tx_elec.send(optimization_data).map_err(|_| {
+            "fetch_weather_data_task: failed to forward optimization data".to_string()
+        })?;
+        Ok(())
     } else {
-        return Err("fetch_weather_data_task: input channel closed".to_string());
+        Err("fetch_weather_data_task: input channel closed".to_string())
     }
 }
 
@@ -849,20 +831,8 @@ fn create_and_update_elec_price_data(
             1.0,
             scenarios,
         ));
-        let up_price_ts_data = Some(create_modified_price_series_data(
-            price_series,
-            1.1,
-            scenarios,
-        ));
-        let down_price_ts_data = Some(create_modified_price_series_data(
-            price_series,
-            0.9,
-            scenarios,
-        ));
         let electricity_price_data = ElectricityPriceData {
             price_data: original_ts_data,
-            up_price_data: up_price_ts_data,
-            down_price_data: down_price_ts_data,
         };
         optimization_data.elec_price_data = Some(electricity_price_data);
     } else {
@@ -896,52 +866,113 @@ fn create_modified_price_series_data(
 }
 
 async fn fetch_electricity_price_task(
+    api_token: &str,
+    python_exec: &str,
+    price_fetcher_script: &str,
     location: &LocationSettings,
     scenarios: &Vec<Scenario>,
     rx: oneshot::Receiver<OptimizationData>,
     tx: oneshot::Sender<OptimizationData>,
 ) -> Result<(), String> {
     if let Ok(mut optimization_data) = rx.await {
-        let time_line = optimization_data
-            .time_data
-            .as_ref()
-            .ok_or("fetch_electricity_price_task: didn't receive time data")?;
-        let start_time = time_line.first().ok_or("time line is empty")?;
-        let end_time = (*time_line.last().ok_or("time line is empty")? - TimeDelta::hours(1))
-            .duration_trunc(TimeDelta::hours(1))
-            .unwrap();
-        match electricity_price_job::fetch_electricity_prices(
-            &location.country,
-            start_time,
-            &end_time,
-        )
-        .await
-        {
-            Ok(prices) => {
-                let prices = fit_prices_to_time_line(&prices, time_line)?;
-                if let Err(error) =
-                    utilities::check_stamps_match(&prices, time_line, "electricity prices")
-                {
-                    return Err(error);
+        let mut has_elering = false;
+        let mut has_entsoe  = false;
+        let mut invalid     = Vec::<String>::new();
+
+        for market in &optimization_data.input_data.markets {
+            for fv in &market.price {
+                if let BaseForecastable::Forecast(f) = &fv.value {
+                    if f.f_type() == "electricity" {
+                        match f.name() {
+                            "ELERING" => has_elering = true,
+                            "ENTSOE"  => has_entsoe  = true,
+                            other     => invalid.push(other.to_owned()),
+                        }
+                    }
                 }
-                let prices = prices.iter().map(|pair| (pair.0.clone(), pair.1)).collect();
-                create_and_update_elec_price_data(&mut optimization_data, &prices, scenarios)?;
-                if tx.send(optimization_data).is_err() {
-                    return Err("fetch_electricity_price_task: failed to send updated optimization data in electricity prices".to_string());
-                }
-            }
-            Err(e) => {
-                return Err(format!(
-                    "fetch_electricity_price_task: failed to fetch electricity price data: {}",
-                    e
-                ));
             }
         }
-        return Ok(());
+
+        if !invalid.is_empty() {
+            return Err(format!(
+                "fetch_electricity_price_task: unsupported electricity forecast name(s): {}",
+                invalid.join(", ")
+            ));
+        }
+
+        if !(has_elering || has_entsoe) {
+            let _ = tx.send(optimization_data);
+            return Ok(());
+        }
+
+        let time_line_owned = optimization_data
+            .time_data
+            .as_ref()
+            .ok_or("fetch_electricity_price_task: didn't receive time data")?
+            .clone();
+
+        let start_time = time_line_owned
+            .first()
+            .ok_or("time line is empty")?
+            .clone();
+
+        let end_time = (*time_line_owned
+            .last()
+            .ok_or("time line is empty")? - TimeDelta::hours(1))
+            .duration_trunc(TimeDelta::hours(1))
+            .unwrap();
+
+        let mut insert_prices = |prices: Vec<(TimeStamp, f64)>| -> Result<(), String> {
+            let fitted = fit_prices_to_time_line(&prices, &time_line_owned)?;
+            utilities::check_stamps_match(&fitted, &time_line_owned, "electricity prices")?;
+
+            let mut series_map = BTreeMap::new();
+            for (ts, val) in fitted {
+                series_map.insert(ts, val);
+            }
+            create_and_update_elec_price_data(&mut optimization_data, &series_map, scenarios)
+        };
+
+        if has_elering {
+            match electricity_price_job_elering::fetch_electricity_prices_elering(
+                &location.country,
+                &start_time,
+                &end_time,
+            )
+            .await
+            {
+                Ok(prices) => insert_prices(prices)?,
+                Err(e)     => return Err(format!(
+                    "fetch_electricity_price_task: ELERING fetch failed: {}", e)),
+            }
+        }
+
+        if has_entsoe {
+            match electricity_price_job_entsoe::fetch_electricity_prices(
+                location.country.as_str(), 
+                api_token,
+                &start_time,
+                &end_time,
+                python_exec,
+                price_fetcher_script,
+            )
+            .await
+            {
+                Ok(prices) => insert_prices(prices)?,
+                Err(e)     => return Err(format!(
+                    "fetch_electricity_price_task: ENTSO-E fetch failed: {}", e)),
+            }
+        }
+
+        if tx.send(optimization_data).is_err() {
+            return Err("fetch_electricity_price_task: failed to send updated optimization data".into());
+        }
+        Ok(())
     } else {
-        return Err("fetch_electricity_price_task: input channel closed".to_string());
+        Err("fetch_electricity_price_task: input channel closed".into())
     }
 }
+
 
 fn fit_prices_to_time_line(
     prices: &Vec<(TimeStamp, f64)>,
@@ -951,6 +982,11 @@ fn fit_prices_to_time_line(
     if prices.is_empty() {
         return Err("electricity prices should have at least one time stamp".into());
     }
+    eprintln!(
+    "DEBUG  first price stamp = {}, first time-line stamp = {}",
+    prices[0].0.format("%Y-%m-%dT%H:%M:%S"),
+    time_line[0].format("%Y-%m-%dT%H:%M:%S"),
+    );
     if prices[0].0 != time_line[0] {
         return Err("first electricity price time stamp mismatches with time line start".into());
     }
@@ -1217,27 +1253,7 @@ mod tests {
             Ok(())
         }
     }
-    mod processes_and_column_prefixes {
-        use super::*;
-        use crate::input_data_base::{BaseTopology, Conversion};
-        #[test]
-        fn column_prefix_gets_generated() {
-            let mut process = BaseProcess::new("control_process".to_string(), Conversion::Unit);
-            process.topos.push(BaseTopology::new(
-                "input_node".to_string(),
-                "control_process".to_string(),
-            ));
-            let processes = vec![process];
-            let input_node_names = vec!["input_node".to_string()];
-            let process_names = processes_and_column_prefixes(processes.iter(), &input_node_names);
-            assert_eq!(process_names.len(), 1);
-            assert_eq!(process_names[0].0, "control_process");
-            assert_eq!(
-                process_names[0].1,
-                "control_process_input_node_control_process"
-            );
-        }
-    }
+    
     mod fit_prices_to_time_line {
         use chrono::TimeZone;
 

@@ -35,8 +35,12 @@ pub struct Settings {
     #[graphql(ignore)]
     #[serde(skip, default = "default_weather_fetcher_script")]
     pub weather_fetcher_script: String,
+    #[serde(skip, default = "default_entsoe_fetcher_script")]
+    pub price_fetcher_script: String,
     #[graphql(description = "Device location.")]
     pub location: Option<LocationSettings>,
+        #[graphql(description = "ENTSO-E API TOKEN.")]
+    pub entsoe_api_token: Option<String>,
 }
 
 impl Default for Settings {
@@ -49,7 +53,9 @@ impl Default for Settings {
             predicer_port: default_predicer_port(),
             python_exec: String::new(),
             weather_fetcher_script: default_weather_fetcher_script(),
+            price_fetcher_script: default_entsoe_fetcher_script(),
             location: None,
+            entsoe_api_token: None,
         }
     }
 }
@@ -88,6 +94,15 @@ fn default_weather_fetcher_script() -> String {
         .collect::<PathBuf>();
     path.to_str()
         .expect("weather fetcher script path contains unknown characters")
+        .to_string()
+}
+
+fn default_entsoe_fetcher_script() -> String {
+    let path = ["forecasts", "entsoe_forecast.py"]
+        .iter()
+        .collect::<PathBuf>();
+    path.to_str()
+        .expect("electricity price fetcher (entsoe) script path contains unknown characters")
         .to_string()
 }
 

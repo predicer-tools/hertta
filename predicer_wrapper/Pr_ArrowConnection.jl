@@ -61,6 +61,7 @@ function receive_data(socket::Socket)
         send_acknowledgement(socket)
         table = Arrow.Table(IOBuffer(data, read=true, write=false))
         df = DataFrame(table)
+        println(df)
         push!(data_dict, (key => df))
     end
     data_dict
@@ -103,11 +104,9 @@ function split_data_to_system_and_time_series(data::OrderedDict{String, DataFram
         if key in sheetnames_system
             delete!(sheetnames_system, key)
             system_data[key] = df
-            println("Added to system_data: ", key)
         elseif key in sheetnames_timeseries
             delete!(sheetnames_timeseries, key)
             timeseries_data[key] = df
-            println("Added to timeseries_data: ", key)
         else
             println("unknown keyword: ", key)
         end
@@ -154,10 +153,12 @@ function main()
     (system_data, timeseries_data) = split_data_to_system_and_time_series(data_dict)
     result_dataframes = nothing
     try
+        @show methods(Predicer.compile_input_data)
         input_data = Predicer.compile_input_data(system_data, timeseries_data, temporals)
         mc, input_data = Predicer.generate_model(input_data)
         Predicer.solve_model(mc)
         result_dataframes = Predicer.get_all_result_dataframes(mc, input_data)
+        Predicer.dfs_to_xlsx(result_dataframes,"", "all_results")
     catch error
         send_failure(socket)
         rethrow()

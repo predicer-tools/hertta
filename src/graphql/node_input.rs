@@ -4,8 +4,9 @@ use super::{MaybeError, ValidationError, ValidationErrors};
 use crate::input_data::Forecast;
 use crate::input_data_base::{
     BaseForecastable, BaseGenConstraint, BaseInflowBlock, BaseMarket, BaseNode, BaseNodeDiffusion,
-    BaseNodeHistory, BaseProcess, ConstraintFactorType, Delay, NodeGroup,
+    BaseNodeHistory, BaseProcess, ConstraintFactorType, Delay, NodeGroup, ValueInput, Value, ForecastValue, ForecastValueInput
 };
+use crate::scenarios::Scenario;
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
@@ -14,12 +15,12 @@ pub struct NewNode {
     is_commodity: bool,
     is_market: bool,
     is_res: bool,
-    cost: Option<f64>,
-    inflow: Option<f64>,
+    cost: Vec<ValueInput>,
+    inflow: Vec<ForecastValueInput>,
 }
 
 impl NewNode {
-    fn to_node(self) -> BaseNode {
+    fn to_node(self, scenarios: &Vec<Scenario>) -> BaseNode {
         BaseNode {
             name: self.name,
             groups: Vec::new(),
@@ -27,8 +28,13 @@ impl NewNode {
             is_market: self.is_market,
             is_res: self.is_res,
             state: None,
-            cost: self.cost,
-            inflow: forecastable::to_forecastable(self.inflow),
+            cost: self
+            .cost
+            .into_iter()
+            .map(Value::try_from)
+            .collect::<Result<Vec<Value>, _>>()
+            .expect("Could not parse cost values"),
+            inflow: forecastable::convert_forecast_value_inputs(self.inflow, scenarios),
         }
     }
 }
@@ -49,12 +55,13 @@ pub fn create_node(
     node: NewNode,
     nodes: &mut Vec<BaseNode>,
     processes: &mut Vec<BaseProcess>,
+    scenarios: &mut Vec<Scenario>,
 ) -> ValidationErrors {
     let errors = validate_node_creation(&node, nodes, processes);
     if !errors.is_empty() {
         return ValidationErrors::from(errors);
     }
-    nodes.push(node.to_node());
+    nodes.push(node.to_node(scenarios));
     ValidationErrors::default()
 }
 
@@ -85,13 +92,17 @@ fn validate_node_creation(
 pub fn connect_node_inflow_to_temperature_forecast(
     node_name: &str,
     forecast_name: String,
+    forecast_type: String,
     nodes: &mut Vec<BaseNode>,
 ) -> MaybeError {
     let node = match nodes.iter_mut().find(|n| n.name == node_name) {
         Some(node) => node,
         None => return "no such node".into(),
     };
-    node.inflow = Some(BaseForecastable::Forecast(Forecast::new(forecast_name)));
+    node.inflow = vec![ForecastValue {
+        scenario: None,
+        value: BaseForecastable::Forecast(Forecast::new(forecast_name, forecast_type)),
+    }];
     MaybeError::new_ok()
 }
 
@@ -137,3 +148,5 @@ pub fn delete_node(
     }
     MaybeError::new_ok()
 }
+
+

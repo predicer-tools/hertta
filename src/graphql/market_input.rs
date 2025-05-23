@@ -3,49 +3,60 @@ use super::forecastable;
 use super::{MaybeError, ValidationError, ValidationErrors};
 use crate::input_data::Forecast;
 use crate::input_data_base::{
-    BaseForecastable, BaseMarket, BaseNode, MarketDirection, MarketType, ProcessGroup,
+    BaseForecastable, BaseMarket, BaseNode, MarketDirection, MarketType, ProcessGroup, ValueInput, Value, ForecastValueInput, ForecastValue,
 };
+use crate::scenarios::Scenario;
 use juniper::GraphQLInputObject;
 
-#[derive(GraphQLInputObject)]
+#[derive(GraphQLInputObject, Debug)]
 pub struct NewMarket {
     name: String,
     m_type: MarketType,
     node: String,
     process_group: String,
     direction: Option<MarketDirection>,
-    realisation: Option<f64>,
+    realisation: Vec<ValueInput>,
     reserve_type: Option<String>,
     is_bid: bool,
     is_limited: bool,
     min_bid: f64,
     max_bid: f64,
     fee: f64,
-    price: Option<f64>,
-    up_price: Option<f64>,
-    down_price: Option<f64>,
-    reserve_activation_price: Option<f64>,
+    price: Vec<ForecastValueInput>,
+    up_price: Vec<ForecastValueInput>,
+    down_price: Vec<ForecastValueInput>,
+    reserve_activation_price: Vec<ValueInput>,
 }
 
 impl NewMarket {
-    fn to_market(self) -> BaseMarket {
+    fn to_market(self, scenarios: &Vec<Scenario>) -> BaseMarket {
         BaseMarket {
             name: self.name,
             m_type: self.m_type,
             node: self.node,
             process_group: self.process_group,
             direction: self.direction,
-            realisation: self.realisation,
+            realisation: self
+            .realisation
+            .into_iter()
+            .map(Value::try_from)
+            .collect::<Result<Vec<Value>, _>>()
+            .expect("Could not parse reserve activation price values"),
             reserve_type: self.reserve_type,
             is_bid: self.is_bid,
             is_limited: self.is_limited,
             min_bid: self.min_bid,
             max_bid: self.max_bid,
             fee: self.fee,
-            price: forecastable::to_forecastable(self.price),
-            up_price: forecastable::to_forecastable(self.up_price),
-            down_price: forecastable::to_forecastable(self.down_price),
-            reserve_activation_price: self.reserve_activation_price,
+            price: forecastable::convert_forecast_value_inputs(self.price, scenarios),
+            up_price: forecastable::convert_forecast_value_inputs(self.up_price, scenarios),
+            down_price: forecastable::convert_forecast_value_inputs(self.down_price, scenarios),
+            reserve_activation_price: self
+                .reserve_activation_price
+                .into_iter()
+                .map(Value::try_from)
+                .collect::<Result<Vec<Value>, _>>()
+                .expect("Could not parse reserve activation price values"),
             fixed: Vec::new(),
         }
     }
@@ -56,12 +67,13 @@ pub fn create_market(
     markets: &mut Vec<BaseMarket>,
     nodes: &Vec<BaseNode>,
     groups: &Vec<ProcessGroup>,
+    scenarios: &Vec<Scenario>,
 ) -> ValidationErrors {
     let errors = validate_market_creation(&market, nodes, groups);
     if !errors.is_empty() {
         return ValidationErrors::from(errors);
     }
-    markets.push(market.to_market());
+    markets.push(market.to_market(scenarios));
     ValidationErrors::default()
 }
 
@@ -97,19 +109,25 @@ fn validate_market_creation(
 pub fn connect_market_prices_to_forecast(
     market_name: &str,
     forecast_name: String,
+    forecast_type: String,
     markets: &mut Vec<BaseMarket>,
 ) -> MaybeError {
     let market = match markets.iter_mut().find(|m| m.name == market_name) {
         Some(market) => market,
         None => return "no such market".into(),
     };
-    market.price = Some(BaseForecastable::Forecast(Forecast::new(
-        forecast_name.clone(),
-    )));
-    market.up_price = Some(BaseForecastable::Forecast(Forecast::new(
-        forecast_name.clone(),
-    )));
-    market.down_price = Some(BaseForecastable::Forecast(Forecast::new(forecast_name)));
+    market.price = vec![ForecastValue {
+        scenario: None,
+        value: BaseForecastable::Forecast(Forecast::new(forecast_name.clone(), forecast_type.clone())),
+    }];
+    market.up_price = vec![ForecastValue {
+        scenario: None,
+        value: BaseForecastable::Forecast(Forecast::new(forecast_name.clone(),forecast_type.clone())),
+    }];
+    market.down_price = vec![ForecastValue {
+        scenario: None,
+        value: BaseForecastable::Forecast(Forecast::new(forecast_name.clone(),forecast_type.clone())),
+    }];
     MaybeError::new_ok()
 }
 

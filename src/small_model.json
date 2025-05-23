@@ -1,0 +1,514 @@
+{
+    "time_line": {
+      "duration": {
+        "hours": 5,
+        "minutes": 45,
+        "seconds": 0
+      },
+      "step": {
+        "hours": 0,
+        "minutes": 15,
+        "seconds": 0
+      },
+      "start": {
+        "CustomStartTime": {
+          "start_time": "2022-04-20T00:00:00Z"
+        }
+      }
+    },
+    "input_data": {
+      "scenarios": [
+        {
+          "name": "s1",
+          "weight": 0.3
+        },
+        {
+          "name": "s2",
+          "weight": 0.5
+        },
+        {
+          "name": "s3",
+          "weight": 0.2
+        }
+      ],
+      "setup": {
+        "contains_reserves": true,
+        "contains_online": true,
+        "contains_states": true,
+        "contains_piecewise_eff": true,
+        "contains_risk": true,
+        "contains_diffusion": false,
+        "contains_delay": false,
+        "contains_markets": true,
+        "reserve_realisation": true,
+        "use_market_bids": true,
+        "common_timesteps": 0,
+        "common_scenario_name": "",
+        "use_node_dummy_variables": true,
+        "use_ramp_dummy_variables": true,
+        "node_dummy_variable_cost": 10000.0,
+        "ramp_dummy_variable_cost": 10000.0
+      },
+      "processes": [
+        {
+          "name": "ngchp",
+          "groups": [
+            "p1"
+          ],
+          "conversion": "Unit",
+          "is_cf": false,
+          "is_cf_fix": false,
+          "is_online": true,
+          "is_res": true,
+          "eff": 0.9,
+          "load_min": 0.3,
+          "load_max": 1.0,
+          "start_cost": 0.0,
+          "min_online": 4.0,
+          "min_offline": 3.0,
+          "max_online": 0.0,
+          "max_offline": 0.0,
+          "initial_state": true,
+          "is_scenario_independent": true,
+          "topos": [
+            {
+              "source": "ng",
+              "sink": "ngchp",
+              "capacity": 20.0,
+              "vom_cost": 3.0,
+              "ramp_up": 0.5,
+              "ramp_down": 0.5,
+              "initial_load": 0.6,
+              "initial_flow": 0.6,
+              "cap_ts": []
+            },
+            {
+              "source": "ngchp",
+              "sink": "elc",
+              "capacity": 8.0,
+              "vom_cost": 0.0,
+              "ramp_up": 0.5,
+              "ramp_down": 0.5,
+              "initial_load": 0.6,
+              "initial_flow": 0.6,
+              "cap_ts": []
+            }
+          ],
+          "cf": [],
+          "eff_ts": [],
+          "eff_ops": [
+            "op1",
+            "op2",
+            "op3",
+            "op4",
+            "op5"
+          ],
+          "eff_fun": [
+            {
+              "x": 0.4,
+              "y": 0.8
+            },
+            {
+              "x": 0.6,
+              "y": 0.78
+            },
+            {
+              "x": 0.8,
+              "y": 0.75
+            },
+            {
+              "x": 0.9,
+              "y": 0.7
+            },
+            {
+              "x": 1.0,
+              "y": 0.65
+            }
+          ]
+        }
+      ],
+      "nodes": [
+        {
+          "name": "ng",
+          "groups": [],
+          "is_commodity": true,
+          "is_market": false,
+          "is_res": false,
+          "state": null,
+          "cost": [
+            {
+              "scenario": null,
+              "value": {
+                "Constant": {
+                  "value": 12.0
+                }
+              }
+            }
+          ],
+          "inflow": []
+        }
+      ],
+      "node_diffusion": [],
+      "node_delay": [],
+      "node_histories": [],
+      "markets": [
+        {
+          "name": "npe",
+          "m_type": "Energy",
+          "node": "elc",
+          "process_group": "p1",
+          "direction": null,
+          "realisation": [],
+          "reserve_type": null,
+          "is_bid": true,
+          "is_limited": false,
+          "min_bid": 0.0,
+          "max_bid": 0.0,
+          "fee": 0.0,
+          "price": [
+            {
+              "scenario": "s1",
+              "value": {
+                "FloatList": {
+                  "values": [
+                    48.0,
+                    60.0,
+                    58.0,
+                    51.0,
+                    37.0,
+                    34.0,
+                    45.0,
+                    41.0,
+                    55.0,
+                    59.0,
+                    60.0,
+                    41.0,
+                    46.0,
+                    38.0,
+                    46.0,
+                    45.0,
+                    41.0,
+                    46.0,
+                    52.0,
+                    56.0,
+                    33.0,
+                    43.0,
+                    57.0,
+                    32.0
+                  ]
+                }
+              }
+            },
+            {
+              "scenario": "s2",
+              "value": {
+                "FloatList": {
+                  "values": [
+                    72.0,
+                    90.0,
+                    87.0,
+                    76.5,
+                    55.5,
+                    51.0,
+                    67.5,
+                    61.5,
+                    82.5,
+                    88.5,
+                    90.0,
+                    61.5,
+                    69.0,
+                    57.0,
+                    69.0,
+                    67.5,
+                    61.5,
+                    69.0,
+                    78.0,
+                    84.0,
+                    49.5,
+                    64.5,
+                    85.5,
+                    48.0
+                  ]
+                }
+              }
+            },
+            {
+              "scenario": "s3",
+              "value": {
+                "FloatList": {
+                  "values": [
+                    24.0,
+                    30.0,
+                    29.0,
+                    25.5,
+                    18.5,
+                    17.0,
+                    22.5,
+                    20.5,
+                    27.5,
+                    29.5,
+                    30.0,
+                    20.5,
+                    23.0,
+                    19.0,
+                    23.0,
+                    22.5,
+                    20.5,
+                    23.0,
+                    26.0,
+                    28.0,
+                    16.5,
+                    21.5,
+                    28.5,
+                    16.0
+                  ]
+                }
+              }
+            }
+          ],
+          "up_price": [
+            {
+              "scenario": "s1",
+              "value": {
+                "FloatList": {
+                  "values": [
+                    52.8,
+                    66.0,
+                    63.8,
+                    56.1,
+                    40.7,
+                    37.400000000000006,
+                    49.50000000000001,
+                    45.1,
+                    60.50000000000001,
+                    64.9,
+                    66.0,
+                    45.1,
+                    50.6,
+                    41.8,
+                    50.6,
+                    49.50000000000001,
+                    45.1,
+                    50.6,
+                    57.2,
+                    61.60000000000001,
+                    36.3,
+                    47.3,
+                    62.7,
+                    35.2
+                  ]
+                }
+              }
+            },
+            {
+              "scenario": "s2",
+              "value": {
+                "FloatList": {
+                  "values": [
+                    79.2,
+                    99.0,
+                    95.7,
+                    84.15,
+                    61.05,
+                    56.1,
+                    74.25,
+                    67.65,
+                    90.75,
+                    97.35,
+                    99.0,
+                    67.65,
+                    75.9,
+                    62.7,
+                    75.9,
+                    74.25,
+                    67.65,
+                    75.9,
+                    85.80000000000001,
+                    92.4,
+                    54.45,
+                    70.95,
+                    94.05,
+                    52.8
+                  ]
+                }
+              }
+            },
+            {
+              "scenario": "s3",
+              "value": {
+                "FloatList": {
+                  "values": [
+                    26.4,
+                    33.0,
+                    31.9,
+                    28.05,
+                    20.35,
+                    18.700000000000003,
+                    24.750000000000004,
+                    22.55,
+                    30.250000000000004,
+                    32.45,
+                    33.0,
+                    22.55,
+                    25.3,
+                    20.9,
+                    25.3,
+                    24.750000000000004,
+                    22.55,
+                    25.3,
+                    28.6,
+                    30.800000000000004,
+                    18.15,
+                    23.65,
+                    31.35,
+                    17.6
+                  ]
+                }
+              }
+            }
+          ],
+          "down_price": [
+            {
+              "scenario": "s1",
+              "value": {
+                "FloatList": {
+                  "values": [
+                    43.2,
+                    54.0,
+                    52.2,
+                    45.9,
+                    33.300000000000004,
+                    30.6,
+                    40.5,
+                    36.9,
+                    49.5,
+                    53.1,
+                    54.0,
+                    36.9,
+                    41.4,
+                    34.2,
+                    41.4,
+                    40.5,
+                    36.9,
+                    41.4,
+                    46.8,
+                    50.4,
+                    29.7,
+                    38.7,
+                    51.3,
+                    28.8
+                  ]
+                }
+              }
+            },
+            {
+              "scenario": "s2",
+              "value": {
+                "FloatList": {
+                  "values": [
+                    64.8,
+                    81.0,
+                    78.3,
+                    68.85000000000001,
+                    49.95,
+                    45.9,
+                    60.75,
+                    55.35,
+                    74.25,
+                    79.65,
+                    81.0,
+                    55.35,
+                    62.1,
+                    51.3,
+                    62.1,
+                    60.75,
+                    55.35,
+                    62.1,
+                    70.2,
+                    75.60000000000001,
+                    44.55,
+                    58.05,
+                    76.95,
+                    43.2
+                  ]
+                }
+              }
+            },
+            {
+              "scenario": "s3",
+              "value": {
+                "FloatList": {
+                  "values": [
+                    21.6,
+                    27.0,
+                    26.1,
+                    22.95,
+                    16.650000000000002,
+                    15.3,
+                    20.25,
+                    18.45,
+                    24.75,
+                    26.55,
+                    27.0,
+                    18.45,
+                    20.7,
+                    17.1,
+                    20.7,
+                    20.25,
+                    18.45,
+                    20.7,
+                    23.4,
+                    25.2,
+                    14.85,
+                    19.35,
+                    25.65,
+                    14.4
+                  ]
+                }
+              }
+            }
+          ],
+          "reserve_activation_price": [],
+          "fixed": []
+        }
+      ],
+      "node_groups": [
+        {
+          "name": "elc_res",
+          "members": [
+            "ng"
+          ]
+        }
+      ],
+      "process_groups": [
+        {
+          "name": "p1",
+          "members": [
+            "ngchp"
+          ]
+        }
+      ],
+      "reserve_type": [
+        {
+          "name": "fast",
+          "ramp_rate": 4.0
+        },
+        {
+          "name": "slow",
+          "ramp_rate": 1.0
+        }
+      ],
+      "risk": [
+        {
+          "parameter": "alfa",
+          "value": 0.1
+        },
+        {
+          "parameter": "beta",
+          "value": 0.2
+        }
+      ],
+      "inflow_blocks": [],
+      "gen_constraints": []
+    }
+  }

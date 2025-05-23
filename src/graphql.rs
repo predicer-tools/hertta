@@ -23,13 +23,13 @@ use crate::event_loop::jobs::{self, Job, JobOutcome, JobStatus, NewJob};
 use crate::input_data::Name;
 use crate::input_data_base::{
     BaseConFactor, BaseGenConstraint, BaseInputData, BaseMarket, BaseNode, BaseNodeDiffusion,
-    BaseProcess, GroupMember, Members, NodeGroup, ProcessGroup, TypeName,
+    BaseProcess, GroupMember, Members, NodeGroup, ProcessGroup, TypeName, ValueInput
 };
 use crate::model::{self, Model};
 use crate::scenarios::Scenario;
 use crate::settings::{LocationSettings, Settings};
 use gen_constraint_input::NewGenConstraint;
-use input_data_setup_input::InputDataSetupUpdate;
+use input_data_setup_input::InputDataSetupInput;
 use juniper::{
     graphql_object, Context, EmptySubscription, FieldResult, GraphQLInputObject, GraphQLObject,
     GraphQLUnion, Nullable, RootNode,
@@ -41,6 +41,7 @@ use node_input::NewNode;
 use process_input::NewProcess;
 use risk_input::NewRisk;
 use state_input::{StateInput, StateUpdate};
+use node_diffusion_input::NewNodeDiffusion;
 use std::ops::DerefMut;
 use std::sync::Arc;
 use time_line_input::TimeLineUpdate;
@@ -250,6 +251,7 @@ impl Query {
     }
     async fn market(name: String, context: &HerttaContext) -> FieldResult<BaseMarket> {
         let model = context.model.lock().await;
+        println!("DEBUG: Market input data: {:?}", model.input_data.markets);
         model
             .input_data
             .markets
@@ -502,7 +504,7 @@ impl Mutation {
 
     #[graphql(description = "Update input data setup.")]
     async fn update_input_data_setup(
-        setup_update: InputDataSetupUpdate,
+        setup_update: InputDataSetupInput,
         context: &HerttaContext,
     ) -> ValidationErrors {
         let mut model = context.model.lock().await;
@@ -622,6 +624,7 @@ impl Mutation {
             node,
             &mut model.input_data.nodes,
             &mut model.input_data.processes,
+            &mut model.input_data.scenarios,
         )
     }
 
@@ -666,12 +669,14 @@ impl Mutation {
     async fn connect_node_inflow_to_temperature_forecast(
         node_name: String,
         forecast_name: String,
+        forecast_type: String,
         context: &HerttaContext,
     ) -> MaybeError {
         let mut model = context.model.lock().await;
         node_input::connect_node_inflow_to_temperature_forecast(
             &node_name,
             forecast_name,
+            forecast_type,
             &mut model.input_data.nodes,
         )
     }
@@ -695,17 +700,13 @@ impl Mutation {
     }
     #[graphql(description = "Create new diffusion between nodes.")]
     async fn create_node_diffusion(
-        from_node: String,
-        to_node: String,
-        coefficient: f64,
+        new_diffusion: NewNodeDiffusion,
         context: &HerttaContext,
     ) -> ValidationErrors {
         let mut model_ref = context.model.lock().await;
         let model = model_ref.deref_mut();
         node_diffusion_input::create_node_diffusion(
-            from_node,
-            to_node,
-            coefficient,
+            new_diffusion,
             &mut model.input_data.node_diffusion,
             &model.input_data.nodes,
         )
@@ -786,11 +787,13 @@ impl Mutation {
     async fn create_market(market: NewMarket, context: &HerttaContext) -> ValidationErrors {
         let mut model_ref = context.model.lock().await;
         let model = model_ref.deref_mut();
+        println!("DEBUG: New market input: {:?}", market);
         market_input::create_market(
             market,
             &mut model.input_data.markets,
             &model.input_data.nodes,
             &model.input_data.process_groups,
+            &model.input_data.scenarios,
         )
     }
 
@@ -800,12 +803,14 @@ impl Mutation {
     async fn connect_market_prices_to_forecast(
         market_name: String,
         forecast_name: String,
+        forecast_type: String,
         context: &HerttaContext,
     ) -> MaybeError {
         let mut model = context.model.lock().await;
         market_input::connect_market_prices_to_forecast(
             &market_name,
             forecast_name,
+            forecast_type,
             &mut model.input_data.markets,
         )
     }
@@ -842,10 +847,9 @@ impl Mutation {
         let mut model = context.model.lock().await;
         gen_constraint_input::delete_gen_constraint(&name, &mut model.input_data.gen_constraints)
     }
-
     #[graphql(description = "Create new flow constraint factor and add it to generic constraint.")]
     async fn create_flow_con_factor(
-        factor: f64,
+        factor: Vec<ValueInput>,
         constraint_name: String,
         process_name: String,
         source_or_sink_node_name: String,
@@ -880,7 +884,7 @@ impl Mutation {
 
     #[graphql(description = "Create new state constraint factor and add it to generic constraint.")]
     async fn create_state_con_factor(
-        factor: f64,
+        factor: Vec<ValueInput>,
         constraint_name: String,
         node_name: String,
         context: &HerttaContext,
@@ -888,7 +892,7 @@ impl Mutation {
         let mut model_ref = context.model.lock().await;
         let model = model_ref.deref_mut();
         con_factor_input::create_state_con_factor(
-            factor,
+            factor, 
             constraint_name,
             node_name,
             &mut model.input_data.gen_constraints,
@@ -909,11 +913,9 @@ impl Mutation {
         )
     }
 
-    #[graphql(
-        description = "Create new online constraint factor and add it to generic constraint."
-    )]
+    #[graphql(description = "Create new online constraint factor and add it to generic constraint.")]
     async fn create_online_con_factor(
-        factor: f64,
+        factor: Vec<ValueInput>,
         constraint_name: String,
         process_name: String,
         context: &HerttaContext,
@@ -927,7 +929,7 @@ impl Mutation {
             &mut model.input_data.gen_constraints,
             &model.input_data.processes,
         )
-    }
+    }    
 
     async fn delete_online_con_factor(
         constraint_name: String,

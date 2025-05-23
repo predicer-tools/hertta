@@ -6,6 +6,7 @@ use serde::de::{self, MapAccess, Visitor};
 use serde::{self, Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
 use std::fmt::{self, Display};
+use indexmap::IndexMap;
 
 pub trait Name {
     fn name(&self) -> &String;
@@ -15,19 +16,19 @@ pub trait Name {
 pub struct InputData {
     pub temporals: Temporals,
     pub setup: InputDataSetup,
-    pub processes: BTreeMap<String, Process>,
-    pub nodes: BTreeMap<String, Node>,
+    pub processes: IndexMap<String, Process>,
+    pub nodes: IndexMap<String, Node>,
     pub node_diffusion: Vec<NodeDiffusion>,
     pub node_delay: Vec<(String, String, f64, f64, f64)>,
-    pub node_histories: BTreeMap<String, NodeHistory>,
-    pub markets: BTreeMap<String, Market>,
-    pub groups: BTreeMap<String, Group>,
-    pub scenarios: BTreeMap<String, f64>,
-    pub reserve_type: BTreeMap<String, f64>,
-    pub risk: BTreeMap<String, f64>,
-    pub inflow_blocks: BTreeMap<String, InflowBlock>,
-    pub bid_slots: BTreeMap<String, BidSlot>,
-    pub gen_constraints: BTreeMap<String, GenConstraint>,
+    pub node_histories: IndexMap<String, NodeHistory>,
+    pub markets: IndexMap<String, Market>,
+    pub groups: IndexMap<String, Group>,
+    pub scenarios: IndexMap<String, f64>,
+    pub reserve_type: IndexMap<String, f64>,
+    pub risk: IndexMap<String, f64>,
+    pub inflow_blocks: IndexMap<String, InflowBlock>,
+    pub bid_slots: IndexMap<String, BidSlot>,
+    pub gen_constraints: IndexMap<String, GenConstraint>,
 }
 
 fn check_forecastable_series(
@@ -174,11 +175,20 @@ pub struct Process {
 #[derive(Clone, Debug, Deserialize, GraphQLObject, Name, PartialEq, Serialize)]
 pub struct Forecast {
     name: String,
+    f_type: String,
 }
 
 impl Forecast {
-    pub fn new(name: String) -> Self {
-        Forecast { name }
+    pub fn new(name: String, f_type: String) -> Self {
+        Forecast { name, f_type }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn f_type(&self) -> &str {
+        &self.f_type
     }
 }
 
@@ -435,12 +445,6 @@ impl From<Vec<TimeSeries>> for TimeSeriesData {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct TimeSeries {
-    pub scenario: String,
-    pub series: BTreeMap<TimeStamp, f64>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
-pub struct ScenarioSeries {
     pub scenario: String,
     pub series: BTreeMap<TimeStamp, f64>,
 }

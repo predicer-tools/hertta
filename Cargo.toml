@@ -24,6 +24,9 @@ config = "0.14"
 toml = "0.8"
 juniper = { version = "0.16", features = ["chrono", "schema-language"] }
 juniper_warp = "0.8"
+indexmap = "2.8.0"
+quick-xml = "0.37.5"
+dotenvy = "0.15.7"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "rt", "time", "sync"]}
