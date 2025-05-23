@@ -2350,7 +2350,7 @@ mod tests {
     fn test_groups_to_arrow() {
         let input_data = load_test_data();
 
-        // Print all groups in the BTreeMap
+        // Print all groups in the IndexMap
         for (group_name, group) in &input_data.groups {
             println!("Group Name: {}", group_name);
             println!("Group: {:?}", group);
@@ -2364,9 +2364,9 @@ mod tests {
         print_batches(&batches);
 
         // Expected result DataFrame
-        let expected_types = vec!["node", "process", "process", "process"];
-        let expected_entities = vec!["elc", "ngchp", "hp1", "p2x1"];
-        let expected_group_names = vec!["elc_res", "p1", "p1", "p1"];
+        let expected_types       = vec!["process", "process", "process", "node"];
+        let expected_entities    = vec!["ngchp",   "hp1",    "p2x1",    "elc"];
+        let expected_group_names = vec!["p1",      "p1",     "p1",      "elc_res"];
 
         // Helper function to assert string column values
         fn assert_string_column(array: &StringArray, expected_values: &[&str], column_name: &str) {
@@ -2418,46 +2418,71 @@ mod tests {
 
         // Expected values
         let expected_processes = vec![
-            "dh_source_out",
-            "dh_sto_charge",
-            "dh_sto_charge",
-            "dh_sto_discharge",
-            "dh_sto_discharge",
-            "dh_tra",
-            "dh_tra",
-            "hp1",
-            "hp1",
-            "ngchp",
-            "ngchp",
-            "ngchp",
-            "p2x1",
-            "p2x1",
+            "ngchp", "ngchp", "ngchp",
+            "hp1",   "hp1",
+            "p2x1",  "p2x1",
             "pv1",
+            "dh_tra","dh_tra",
+            "dh_sto_charge","dh_sto_charge",
+            "dh_sto_discharge","dh_sto_discharge",
+            "dh_source_out",
         ];
 
         let expected_source_sinks = vec![
-            "sink", "source", "sink", "source", "sink", "source", "sink", "source", "sink",
-            "source", "sink", "sink", "source", "sink", "sink",
+            "source","sink","sink",
+            "source","sink",
+            "source","sink",
+            "sink",
+            "source","sink",
+            "source","sink",
+            "source","sink",
+            "sink",
         ];
 
         let expected_nodes = vec![
-            "dh", "dh", "dh_sto", "dh_sto", "dh", "dh", "dh2", "elc", "dh", "ng", "dh", "elc",
-            "elc", "h2", "elc",
+            "ng","dh","elc",
+            "elc","dh",
+            "elc","h2",
+            "elc",
+            "dh","dh2",
+            "dh","dh_sto",
+            "dh_sto","dh",
+            "dh",
         ];
 
         let expected_conversion_coeffs = vec![1.0; 15];
         let expected_capacities = vec![
-            1000.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 5.0, 15.0, 20.0, 10.0, 8.0, 10.0, 7.0, 5.0,
+            20.0, 10.0,  8.0,
+            5.0, 15.0,
+            10.0,  7.0,
+            5.0,
+            20.0, 20.0,
+            20.0, 20.0,
+            20.0, 20.0,
+        1000.0,
         ];
+
         let expected_vom_costs = vec![
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 15.0, 0.5, 3.0, 0.0, 0.0, 15.0, 1.0, 0.5,
+            3.0,  0.0, 0.0,
+            15.0, 0.5,
+            15.0, 1.0,
+            0.5,
+            0.0, 0.0,
+            0.0, 0.0,
+            0.0, 0.0,
+            0.0,
         ];
         let expected_ramp_ups = vec![
-            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0,
+            0.5,0.5,0.5,
+            0.5,0.5,
+            1.0,1.0,
+            1.0,
+            1.0,1.0,
+            1.0,1.0,
+            1.0,1.0,
+            1.0,
         ];
-        let expected_ramp_downs = vec![
-            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0,
-        ];
+        let expected_ramp_downs = expected_ramp_ups.clone();
         let expected_initial_loads = vec![0.6; 15];
         let expected_initial_flows = vec![0.6; 15];
 
