@@ -4,28 +4,28 @@ use juniper::GraphQLInputObject;
 use super::ValidationErrors;
 
 #[derive(GraphQLInputObject)]
-pub struct InputDataSetupUpdate {
-    contains_reserves: Option<bool>,
-    contains_online: Option<bool>,
-    contains_states: Option<bool>,
-    contains_piecewise_eff: Option<bool>,
-    contains_risk: Option<bool>,
-    contains_diffusion: Option<bool>,
-    contains_delay: Option<bool>,
-    contains_markets: Option<bool>,
-    reserve_realization: Option<bool>,
+pub struct InputDataSetupInput {
+    use_reserves: Option<bool>,
+    contains_online: Option<bool>, //will be removed
+    contains_states: Option<bool>, //will be removed
+    contains_piecewise_eff: Option<bool>, //will be removed
+    contains_risk: Option<bool>, //will be removed
+    contains_diffusion: Option<bool>, //will be removed
+    contains_delay: Option<bool>, //will be removed
+    contains_markets: Option<bool>, //will be removed
+    use_reserve_realisation: Option<bool>,
     use_market_bids: Option<bool>,
     common_timesteps: Option<i32>,
     common_scenario_name: Option<String>,
     use_node_dummy_variables: Option<bool>,
     use_ramp_dummy_variables: Option<bool>,
-    node_dummy_variable_cost: Option<f64>,
-    ramp_dummy_variable_cost: Option<f64>,
+    node_dummy_variable_cost: Option<f64>, //check what to do with these
+    ramp_dummy_variable_cost: Option<f64>, //ceheck what to do with these
 }
 
-impl InputDataSetupUpdate {
+impl InputDataSetupInput {
     fn update_input_data_setup(self, setup: &mut BaseInputDataSetup) {
-        if let Some(flag) = self.contains_reserves {
+        if let Some(flag) = self.use_reserves {
             setup.contains_reserves = flag;
         }
         if let Some(flag) = self.contains_online {
@@ -49,7 +49,7 @@ impl InputDataSetupUpdate {
         if let Some(flag) = self.contains_markets {
             setup.contains_markets = flag;
         }
-        if let Some(flag) = self.reserve_realization {
+        if let Some(flag) = self.use_reserve_realisation {
             setup.reserve_realisation = flag;
         }
         if let Some(flag) = self.use_market_bids {
@@ -77,7 +77,7 @@ impl InputDataSetupUpdate {
 }
 
 pub fn update_input_data_setup(
-    setup_update: InputDataSetupUpdate,
+    setup_update: InputDataSetupInput,
     setup: &mut BaseInputDataSetup,
 ) -> ValidationErrors {
     setup_update.update_input_data_setup(setup);

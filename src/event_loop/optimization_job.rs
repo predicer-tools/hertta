@@ -1,5 +1,5 @@
 use super::arrow_input;
-use super::electricity_price_job;
+use super::electricity_price_job_elering;
 use super::electricity_price_job_entsoe;
 use super::job_store::JobStore;
 use super::jobs::{JobOutcome, JobStatus, OptimizationOutcome};
@@ -872,62 +872,107 @@ async fn fetch_electricity_price_task(
     location: &LocationSettings,
     scenarios: &Vec<Scenario>,
     rx: oneshot::Receiver<OptimizationData>,
-    tx: oneshot::Sender<OptimizationData>) -> Result<(), String> {
+    tx: oneshot::Sender<OptimizationData>,
+) -> Result<(), String> {
     if let Ok(mut optimization_data) = rx.await {
-        let should_fetch = optimization_data.input_data.markets.iter().any(|market| {
-            market.price.iter().any(|fv| matches!(fv.value, BaseForecastable::Forecast(_)))
-        });               
-        
-        if should_fetch {
-            let time_line = optimization_data
-                .time_data
-                .as_ref()
-                .ok_or("fetch_electricity_price_task: didn't receive time data")?;
-            let start_time = time_line.first().ok_or("time line is empty")?;
-            let end_time = (*time_line.last().ok_or("time line is empty")? - TimeDelta::hours(1))
-                .duration_trunc(TimeDelta::hours(1))
-                .unwrap();
-            let bidding_zone = match location.country.as_str() {
-                "Finland"   => "FI",
-                "Estonia"   => "EE",
-                "Lithuania" => "LT",
-                "Latvia"    => "LV",
-                other => {
-                    return Err(format!("unsupported country for ENTSO-E fetcher: {other}"));
-                }
-            };
-            match electricity_price_job_entsoe::fetch_electricity_prices(
-                bidding_zone,
-                &api_token,
-                start_time,
-                &end_time,
-                &python_exec, 
-                &price_fetcher_script,
-            )
-            .await
-            {
-                Ok(prices) => {
-                    let prices = fit_prices_to_time_line(&prices, time_line)?;
-                    utilities::check_stamps_match(&prices, time_line, "electricity prices")?;
-                    let prices = prices.iter().map(|pair| (pair.0.clone(), pair.1)).collect();
-                    create_and_update_elec_price_data(&mut optimization_data, &prices, scenarios)?;
-                }
-                Err(e) => {
-                    return Err(format!(
-                        "fetch_electricity_price_task: failed to fetch electricity price data: {}",
-                        e
-                    ));
+        let mut has_elering = false;
+        let mut has_entsoe  = false;
+        let mut invalid     = Vec::<String>::new();
+
+        for market in &optimization_data.input_data.markets {
+            for fv in &market.price {
+                if let BaseForecastable::Forecast(f) = &fv.value {
+                    if f.f_type() == "electricity" {
+                        match f.name() {
+                            "ELERING" => has_elering = true,
+                            "ENTSOE"  => has_entsoe  = true,
+                            other     => invalid.push(other.to_owned()),
+                        }
+                    }
                 }
             }
         }
+
+        if !invalid.is_empty() {
+            return Err(format!(
+                "fetch_electricity_price_task: unsupported electricity forecast name(s): {}",
+                invalid.join(", ")
+            ));
+        }
+
+        if !(has_elering || has_entsoe) {
+            let _ = tx.send(optimization_data);
+            return Ok(());
+        }
+
+        let time_line_owned = optimization_data
+            .time_data
+            .as_ref()
+            .ok_or("fetch_electricity_price_task: didn't receive time data")?
+            .clone();
+
+        let start_time = time_line_owned
+            .first()
+            .ok_or("time line is empty")?
+            .clone();
+
+        let end_time = (*time_line_owned
+            .last()
+            .ok_or("time line is empty")? - TimeDelta::hours(1))
+            .duration_trunc(TimeDelta::hours(1))
+            .unwrap();
+
+        let mut insert_prices = |prices: Vec<(TimeStamp, f64)>| -> Result<(), String> {
+            let fitted = fit_prices_to_time_line(&prices, &time_line_owned)?;
+            utilities::check_stamps_match(&fitted, &time_line_owned, "electricity prices")?;
+
+            let mut series_map = BTreeMap::new();
+            for (ts, val) in fitted {
+                series_map.insert(ts, val);
+            }
+            create_and_update_elec_price_data(&mut optimization_data, &series_map, scenarios)
+        };
+
+        if has_elering {
+            match electricity_price_job_elering::fetch_electricity_prices_elering(
+                &location.country,
+                &start_time,
+                &end_time,
+            )
+            .await
+            {
+                Ok(prices) => insert_prices(prices)?,
+                Err(e)     => return Err(format!(
+                    "fetch_electricity_price_task: ELERING fetch failed: {}", e)),
+            }
+        }
+
+        if has_entsoe {
+            match electricity_price_job_entsoe::fetch_electricity_prices(
+                location.country.as_str(), 
+                api_token,
+                &start_time,
+                &end_time,
+                python_exec,
+                price_fetcher_script,
+            )
+            .await
+            {
+                Ok(prices) => insert_prices(prices)?,
+                Err(e)     => return Err(format!(
+                    "fetch_electricity_price_task: ENTSO-E fetch failed: {}", e)),
+            }
+        }
+
         if tx.send(optimization_data).is_err() {
-            return Err("fetch_electricity_price_task: failed to send updated optimization data".to_string());
+            return Err("fetch_electricity_price_task: failed to send updated optimization data".into());
         }
         Ok(())
     } else {
-        Err("fetch_electricity_price_task: input channel closed".to_string())
+        Err("fetch_electricity_price_task: input channel closed".into())
     }
 }
+
 
 fn fit_prices_to_time_line(
     prices: &Vec<(TimeStamp, f64)>,

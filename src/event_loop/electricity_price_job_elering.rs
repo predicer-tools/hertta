@@ -40,7 +40,7 @@ pub async fn start(
     };
     let start_time = compute_timeline_start(&time_line_settings);
     let end_time = start_time + time_line_settings.duration().to_time_delta();
-    match fetch_electricity_prices(&country, &start_time, &end_time).await {
+    match fetch_electricity_prices_elering(&country, &start_time, &end_time).await {
         Ok(forecast) => {
             if job_store
                 .set_job_status(
@@ -78,7 +78,7 @@ fn forecast_to_outcome(forecast: Vec<(TimeStamp, f64)>) -> ElectricityPriceOutco
     ElectricityPriceOutcome::new(time_line, prices)
 }
 
-pub async fn fetch_electricity_prices(
+pub async fn fetch_electricity_prices_elering(
     country: &String,
     start_time: &DateTime<Utc>,
     end_time: &DateTime<Utc>,

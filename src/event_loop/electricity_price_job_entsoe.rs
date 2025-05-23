@@ -142,6 +142,22 @@ fn parse_price_fetcher_output(output: &str) -> Result<Vec<(TimeStamp, f64)>, Str
         _ => Err("failed to parse array from output".into()),
     }
 }
+pub fn to_entsoe_bidding_zone(country: &str) -> Result<String, String> {
+    match country.trim().to_ascii_uppercase().as_str() {
+        "FINLAND"   | "FI" => Ok("FI".to_string()),
+        "ESTONIA"   | "EE" => Ok("EE".to_string()),
+        "LATVIA"    | "LV" => Ok("LV".to_string()),
+        "LITHUANIA" | "LT" => Ok("LT".to_string()),
+
+        "SWEDEN" | "SE" => Ok("SE3".to_string()),
+        "SE1" => Ok("SE1".to_string()),
+        "SE2" => Ok("SE2".to_string()),
+        "SE3" => Ok("SE3".to_string()),
+        "SE4" => Ok("SE4".to_string()),
+
+        other => Err(format!("unsupported country for ENTSO-E fetcher: {other}")),
+    }
+}
 
 pub async fn fetch_electricity_prices(
     country_code: &str,
@@ -153,12 +169,13 @@ pub async fn fetch_electricity_prices(
 ) -> Result<Vec<(TimeStamp, f64)>, String> {
     // helper expects "YYYY-MM-DD HH:MM" in UTC
     let cli_time_format = "%Y-%m-%d %H:%M";
+    let bidding_zone = to_entsoe_bidding_zone(country_code)?;
 
     let output = Command::new(python_exec)
         .arg(price_script)
         .arg(start_time.format(cli_time_format).to_string())
         .arg(end_time.format(cli_time_format).to_string())
-        .arg(country_code)
+        .arg(bidding_zone)
         .arg(api_token)
         .output()
         .await

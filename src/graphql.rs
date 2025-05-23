@@ -29,7 +29,7 @@ use crate::model::{self, Model};
 use crate::scenarios::Scenario;
 use crate::settings::{LocationSettings, Settings};
 use gen_constraint_input::NewGenConstraint;
-use input_data_setup_input::InputDataSetupUpdate;
+use input_data_setup_input::InputDataSetupInput;
 use juniper::{
     graphql_object, Context, EmptySubscription, FieldResult, GraphQLInputObject, GraphQLObject,
     GraphQLUnion, Nullable, RootNode,
@@ -504,7 +504,7 @@ impl Mutation {
 
     #[graphql(description = "Update input data setup.")]
     async fn update_input_data_setup(
-        setup_update: InputDataSetupUpdate,
+        setup_update: InputDataSetupInput,
         context: &HerttaContext,
     ) -> ValidationErrors {
         let mut model = context.model.lock().await;

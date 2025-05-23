@@ -1,5 +1,5 @@
 mod arrow_input;
-mod electricity_price_job;
+mod electricity_price_job_elering;
 mod electricity_price_job_entsoe;
 pub mod job_store;
 pub mod jobs;
@@ -68,17 +68,17 @@ pub async fn event_loop(
         match new_job.job() {
             Job::ElectricityPrice => {
                 let (mut found_valid, mut invalid_names) = (false, Vec::<String>::new());
-
+                let (mut has_elering, mut has_entsoe) = (false, false);
                 {
                     let model_guard = model.lock().await;
                     for market in &model_guard.input_data.markets {
                         for fv in &market.price {
                             if let BaseForecastable::Forecast(f) = &fv.value {
                                 if f.f_type() == "electricity" {
-                                    if f.name() == "ELERING" || f.name() == "ENTSOE" {
-                                        found_valid = true;
-                                    } else {
-                                        invalid_names.push(f.name().to_owned());
+                                    match f.name() {
+                                        "ELERING" => { has_elering = true; found_valid = true; }
+                                        "ENTSOE"  => { has_entsoe  = true; found_valid = true; }
+                                        other     => invalid_names.push(other.to_owned()),
                                     }
                                 }
                             }
@@ -120,6 +120,8 @@ pub async fn event_loop(
                     Arc::clone(&settings),
                     job_store.clone(),
                     model.lock().await.time_line.clone(),
+                    has_elering,
+                    has_entsoe,
                 )
                 .await;
             }
@@ -180,10 +182,29 @@ async fn start_electricity_price_fetch(
     settings: Arc<Mutex<Settings>>,
     job_store: JobStore,
     time_line_settings: TimeLineSettings,
+    fetch_elering: bool,
+    fetch_entsoe: bool,
 ) {
     tokio::spawn(async move {
-        //electricity_price_job::start(job_id, settings, job_store, time_line_settings).await elering
-        electricity_price_job_entsoe::start(job_id, settings, job_store, time_line_settings).await
+        if fetch_elering {
+            electricity_price_job_elering::start(
+                job_id,
+                Arc::clone(&settings),
+                job_store.clone(),
+                time_line_settings.clone(),
+            )
+            .await;
+        }
+
+        if fetch_entsoe {
+            electricity_price_job_entsoe::start(
+                job_id,
+                settings,
+                job_store,
+                time_line_settings,
+            )
+            .await;
+        }
     });
 }
 
