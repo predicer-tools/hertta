@@ -438,10 +438,10 @@ fn processes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError>
         max_offlines.push(process.max_offline);
         initial_states.push(process.initial_state);
         scenario_independent_onlines.push(process.is_scenario_independent);
-        delays.push(contains_delay); // Set delay value based on input_data.setup.contains_delay
+        delays.push(contains_delay); 
     }
 
-    // Create arrays from the vectors
+
     let names_array = Arc::new(StringArray::from(names)) as ArrayRef;
     let is_cfs_array = Arc::new(BooleanArray::from(is_cfs)) as ArrayRef;
     let is_cf_fixes_array = Arc::new(BooleanArray::from(is_cf_fixes)) as ArrayRef;
@@ -480,7 +480,7 @@ fn processes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError>
             max_offlines_array,
             initial_states_array,
             scenario_independent_onlines_array,
-            delays_array, // Add delays array to the record batch
+            delays_array, 
         ],
     )?;
 
@@ -2136,55 +2136,41 @@ mod tests {
             );
         }
     }
-
     #[test]
     fn test_processes_to_arrow() {
         let input_data = load_test_data();
 
-        // Print all processes in the BTreeMap
-        for (process_name, process) in &input_data.processes {
-            println!("Process Name: {}", process_name);
-            println!("Process: {:?}", process);
-        }
-
-        // Convert processes to Arrow RecordBatch
         let record_batch =
             processes_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
-        // Print the RecordBatch for debugging
-        let batches = vec![record_batch.clone()];
-        print_batches(&batches);
-
-        // Expected result DataFrame
         let expected_process_names = vec![
-            "dh_source_out",
-            "dh_sto_charge",
-            "dh_sto_discharge",
-            "dh_tra",
-            "hp1",
             "ngchp",
+            "hp1",
             "p2x1",
             "pv1",
+            "dh_tra",
+            "dh_sto_charge",
+            "dh_sto_discharge",
+            "dh_source_out",
         ];
-        let expected_is_cf = vec![false, false, false, false, false, false, false, true];
-        let expected_is_cf_fix = vec![false, false, false, false, false, false, false, true];
-        let expected_is_online = vec![false, false, false, false, false, true, false, false];
-        let expected_is_res = vec![false, false, false, false, true, true, true, false];
-        let expected_conversion = vec![2, 1, 1, 2, 1, 1, 1, 1];
-        let expected_eff = vec![1.0, 0.99, 0.99, 0.99, 3.0, 0.9, 0.7, 1.0];
-        let expected_load_min = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.0, 0.0];
-        let expected_load_max = vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
-        let expected_start_cost = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        let expected_min_online = vec![0.0, 0.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0];
-        let expected_min_offline = vec![0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0];
-        let expected_max_online = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        let expected_max_offline = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        let expected_initial_state = vec![false, false, false, false, false, true, false, false];
-        let expected_scenario_independent_online =
-            vec![false, false, false, false, false, true, false, false];
-        let expected_delay = vec![false, false, false, false, false, false, false, false];
 
-        // Assert process names
+        let expected_is_cf                      = vec![false, false, false,  true, false, false, false, false];
+        let expected_is_cf_fix                  = vec![false, false, false,  true, false, false, false, false];
+        let expected_is_online                  = vec![ true, false, false, false, false, false, false, false];
+        let expected_is_res                     = vec![ true,  true,  true, false, false, false, false, false];
+        let expected_conversion                 = vec![1,     1,     1,     1,     2,    1,    1,    2];
+        let expected_eff                        = vec![0.9,   3.0,   0.7,   1.0,   0.99, 0.99, 0.99, 1.0];
+        let expected_load_min                   = vec![0.3,   0.0,   0.0,   0.0,   0.0,  0.0,  0.0,  0.0];
+        let expected_load_max                   = vec![1.0; 8];                
+        let expected_start_cost                 = vec![0.0; 8];                
+        let expected_min_online                 = vec![4.0,   0.0,   0.0,   0.0,   0.0,  0.0,  0.0,  0.0];
+        let expected_min_offline                = vec![3.0,   0.0,   0.0,   0.0,   0.0,  0.0,  0.0,  0.0];
+        let expected_max_online                 = vec![0.0; 8];
+        let expected_max_offline                = vec![0.0; 8];
+        let expected_initial_state              = vec![ true, false, false, false, false, false, false, false];
+        let expected_scenario_independent_online= vec![ true, false, false, false, false, false, false, false];
+        let expected_delay                      = vec![false; 8];              
+
         let process_names_array = record_batch
             .column(0)
             .as_any()
@@ -2199,176 +2185,107 @@ mod tests {
             );
         }
 
-        // Assert other columns
         assert_boolean_column(
-            record_batch
-                .column(1)
-                .as_any()
-                .downcast_ref::<BooleanArray>()
-                .unwrap(),
+            record_batch.column(1).as_any().downcast_ref::<BooleanArray>().unwrap(),
             &expected_is_cf,
             "is_cf",
         );
         assert_boolean_column(
-            record_batch
-                .column(2)
-                .as_any()
-                .downcast_ref::<BooleanArray>()
-                .unwrap(),
+            record_batch.column(2).as_any().downcast_ref::<BooleanArray>().unwrap(),
             &expected_is_cf_fix,
             "is_cf_fix",
         );
         assert_boolean_column(
-            record_batch
-                .column(3)
-                .as_any()
-                .downcast_ref::<BooleanArray>()
-                .unwrap(),
+            record_batch.column(3).as_any().downcast_ref::<BooleanArray>().unwrap(),
             &expected_is_online,
             "is_online",
         );
         assert_boolean_column(
-            record_batch
-                .column(4)
-                .as_any()
-                .downcast_ref::<BooleanArray>()
-                .unwrap(),
+            record_batch.column(4).as_any().downcast_ref::<BooleanArray>().unwrap(),
             &expected_is_res,
             "is_res",
         );
         assert_int64_column(
-            record_batch
-                .column(5)
-                .as_any()
-                .downcast_ref::<Int64Array>()
-                .unwrap(),
+            record_batch.column(5).as_any().downcast_ref::<Int64Array>().unwrap(),
             &expected_conversion,
             "conversion",
         );
         assert_float64_column(
-            record_batch
-                .column(6)
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap(),
+            record_batch.column(6).as_any().downcast_ref::<Float64Array>().unwrap(),
             &expected_eff,
             "eff",
         );
         assert_float64_column(
-            record_batch
-                .column(7)
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap(),
+            record_batch.column(7).as_any().downcast_ref::<Float64Array>().unwrap(),
             &expected_load_min,
             "load_min",
         );
         assert_float64_column(
-            record_batch
-                .column(8)
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap(),
+            record_batch.column(8).as_any().downcast_ref::<Float64Array>().unwrap(),
             &expected_load_max,
             "load_max",
         );
         assert_float64_column(
-            record_batch
-                .column(9)
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap(),
+            record_batch.column(9).as_any().downcast_ref::<Float64Array>().unwrap(),
             &expected_start_cost,
             "start_cost",
         );
         assert_float64_column(
-            record_batch
-                .column(10)
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap(),
+            record_batch.column(10).as_any().downcast_ref::<Float64Array>().unwrap(),
             &expected_min_online,
             "min_online",
         );
         assert_float64_column(
-            record_batch
-                .column(11)
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap(),
+            record_batch.column(11).as_any().downcast_ref::<Float64Array>().unwrap(),
             &expected_min_offline,
             "min_offline",
         );
         assert_float64_column(
-            record_batch
-                .column(12)
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap(),
+            record_batch.column(12).as_any().downcast_ref::<Float64Array>().unwrap(),
             &expected_max_online,
             "max_online",
         );
         assert_float64_column(
-            record_batch
-                .column(13)
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap(),
+            record_batch.column(13).as_any().downcast_ref::<Float64Array>().unwrap(),
             &expected_max_offline,
             "max_offline",
         );
         assert_boolean_column(
-            record_batch
-                .column(14)
-                .as_any()
-                .downcast_ref::<BooleanArray>()
-                .unwrap(),
+            record_batch.column(14).as_any().downcast_ref::<BooleanArray>().unwrap(),
             &expected_initial_state,
             "initial_state",
         );
         assert_boolean_column(
-            record_batch
-                .column(15)
-                .as_any()
-                .downcast_ref::<BooleanArray>()
-                .unwrap(),
+            record_batch.column(15).as_any().downcast_ref::<BooleanArray>().unwrap(),
             &expected_scenario_independent_online,
             "scenario_independent_online",
         );
         assert_boolean_column(
-            record_batch
-                .column(16)
-                .as_any()
-                .downcast_ref::<BooleanArray>()
-                .unwrap(),
+            record_batch.column(16).as_any().downcast_ref::<BooleanArray>().unwrap(),
             &expected_delay,
             "delay",
         );
     }
 
+
     #[test]
     fn test_groups_to_arrow() {
         let input_data = load_test_data();
 
-        // Print all groups in the IndexMap
         for (group_name, group) in &input_data.groups {
             println!("Group Name: {}", group_name);
             println!("Group: {:?}", group);
         }
 
-        // Convert groups to Arrow RecordBatch
         let record_batch = groups_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
-        // Print the RecordBatch for debugging
         let batches = vec![record_batch.clone()];
         print_batches(&batches);
 
-        // Expected result DataFrame
         let expected_types       = vec!["process", "process", "process", "node"];
         let expected_entities    = vec!["ngchp",   "hp1",    "p2x1",    "elc"];
         let expected_group_names = vec!["p1",      "p1",     "p1",      "elc_res"];
 
-        // Helper function to assert string column values
         fn assert_string_column(array: &StringArray, expected_values: &[&str], column_name: &str) {
             for (i, expected) in expected_values.iter().enumerate() {
                 assert_eq!(
@@ -2381,7 +2298,6 @@ mod tests {
             }
         }
 
-        // Assert columns
         let types_array = record_batch
             .column(0)
             .as_any()
@@ -2406,17 +2322,14 @@ mod tests {
 
     #[test]
     fn test_process_topos_to_arrow() {
-        // Load the test input data
+
         let input_data = load_test_data();
 
-        // Convert the input data to a RecordBatch
         let record_batch =
             process_topos_to_arrow(&input_data).expect("Failed to create RecordBatch");
 
-        // Use the existing print_batches function to print the generated Arrow table
         print_batches(&[record_batch.clone()]);
 
-        // Expected values
         let expected_processes = vec![
             "ngchp", "ngchp", "ngchp",
             "hp1",   "hp1",
@@ -2486,7 +2399,6 @@ mod tests {
         let expected_initial_loads = vec![0.6; 15];
         let expected_initial_flows = vec![0.6; 15];
 
-        // Get columns from RecordBatch
         let processes_array = record_batch
             .column(0)
             .as_any()
@@ -2538,7 +2450,6 @@ mod tests {
             .downcast_ref::<Float64Array>()
             .unwrap();
 
-        // Assertions for each column
         assert_eq!(processes_array.len(), expected_processes.len());
         for (i, expected_value) in expected_processes.iter().enumerate() {
             assert_eq!(
@@ -2910,34 +2821,23 @@ mod tests {
 
     #[test]
     fn test_markets_to_arrow() {
-        let input_data = load_test_data(); // Load the test data from the provided JSON file.
+        let input_data = load_test_data();
 
-        // Print all markets for debugging
-        for market in &input_data.markets {
-            println!("Market: {:?}", market);
-        }
+        let record_batch =
+            markets_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
 
-        // Convert markets to Arrow RecordBatch
-        let record_batch = markets_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+        let expected_market         = vec!["npe",    "fcr_up"];
+        let expected_market_type    = vec!["energy", "reserve"];
+        let expected_node           = vec!["elc",    "elc_res"];
+        let expected_processgroup   = vec!["p1",     "p1"];
+        let expected_direction      = vec!["none",   "res_up"];
+        let expected_reserve_type   = vec!["none",   "slow"];
+        let expected_is_bid         = vec![true,     true];
+        let expected_is_limited     = vec![false,    false];
+        let expected_min_bid        = vec![0.0,      0.0];
+        let expected_max_bid        = vec![0.0,      0.0];
+        let expected_fee            = vec![0.0,      0.0];
 
-        // Print the RecordBatch for debugging
-        let batches = vec![record_batch.clone()];
-        print_batches(&batches);
-
-        // Expected result DataFrame based on the lexicographical order from BTreeMap
-        let expected_market = vec!["fcr_up", "npe"];
-        let expected_market_type = vec!["reserve", "energy"];
-        let expected_node = vec!["elc_res", "elc"];
-        let expected_processgroup = vec!["p1", "p1"];
-        let expected_direction = vec!["res_up", "none"];
-        let expected_reserve_type = vec!["slow", "none"];
-        let expected_is_bid = vec![true, true];
-        let expected_is_limited = vec![false, false];
-        let expected_min_bid = vec![0.0, 0.0];
-        let expected_max_bid = vec![0.0, 0.0];
-        let expected_fee = vec![0.0, 0.0];
-
-        // Assert columns in the correct order
         let market_array = record_batch
             .column(0)
             .as_any()
@@ -3899,82 +3799,129 @@ mod tests {
 
     #[test]
     fn test_inputdatasetup_to_arrow() {
-        let input_data = load_test_data();
-        let record_batch =
-            inputdatasetup_to_arrow(&input_data).expect("Failed to convert to RecordBatch");
+        let input_data   = load_test_data();
+        let record_batch = inputdatasetup_to_arrow(&input_data)
+            .expect("Failed to convert to RecordBatch");
 
-        // Expected result DataFrame
         let expected_parameters = vec![
-            "use_market_bids",
             "use_reserves",
+            "contains_online",
+            "contains_states",
+            "contains_piecewise_eff",
+            "contains_risk",
+            "contains_diffusion",
+            "contains_delay",
+            "contains_markets",
             "use_reserve_realisation",
+            "use_market_bids",
+            "common_timesteps",
+            "common_scenario_name",
             "use_node_dummy_variables",
             "use_ramp_dummy_variables",
             "node_dummy_variable_cost",
             "ramp_dummy_variable_cost",
-            "common_timesteps",
-            "common_scenario_name",
         ];
-        // Assert parameter values
-        let batches = vec![record_batch];
-        let parameter_array = batches[0]
+
+        let param_array = record_batch
             .column(0)
             .as_any()
             .downcast_ref::<StringArray>()
             .unwrap();
-        for (i, expected) in expected_parameters.iter().enumerate() {
-            assert_eq!(parameter_array.value(i), *expected);
+
+        for (idx, expected) in expected_parameters.iter().enumerate() {
+            assert_eq!(
+                param_array.value(idx),
+                *expected,
+                "parameter name mismatch at index {}",
+                idx
+            );
         }
 
-        // Assert value values
-        let expected_bools = vec![true, true, true, true, true];
-        let expected_floats = vec![10000.0, 10000.0];
-        let expected_ints = vec![2];
-        let expected_strings = vec!["s_all".to_string()];
-        let value_array = batches[0]
+        let expected_bools = vec![
+            true,  // use_reserves  (contains_reserves)
+            true,  // contains_online
+            true,  // contains_states
+            true,  // contains_piecewise_eff
+            true,  // contains_risk
+            true,  // contains_diffusion
+            false, // contains_delay
+            true,  // contains_markets
+            true,  // use_reserve_realisation
+            true,  // use_market_bids
+            // indices 12‥=13
+            true,  // use_node_dummy_variables
+            true,  // use_ramp_dummy_variables
+        ];
+
+        let expected_int   = 2_i64;                    
+        let expected_str   = "s_all";                 
+        let expected_floats= vec![10_000.0_f64, 10_000.0_f64]; 
+
+        let union = record_batch
             .column(1)
             .as_any()
             .downcast_ref::<UnionArray>()
             .unwrap();
-        let mut base = 0;
-        for (i, expected) in expected_bools.iter().enumerate() {
-            let value = value_array
-                .value(base + i)
+
+        for i in 0..10 {
+            let bool_val = union
+                .value(i)
                 .as_any()
                 .downcast_ref::<BooleanArray>()
                 .unwrap()
                 .value(0);
-            assert_eq!(value, *expected);
+            assert_eq!(
+                bool_val, expected_bools[i],
+                "boolean mismatch at union index {}",
+                i
+            );
         }
-        base += expected_bools.len();
-        for (i, expected) in expected_floats.iter().enumerate() {
-            let value = value_array
-                .value(base + i)
+
+        let int_val = union
+            .value(10)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap()
+            .value(0);
+        assert_eq!(int_val, expected_int, "int value mismatch");
+
+        let str_array = union.value(11);                       
+        let str_val = str_array
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap()
+            .value(0);
+        assert_eq!(str_val, expected_str, "string value mismatch");
+
+        for (offset, idx) in (12..=13).enumerate() {
+            let bool_val = union
+                .value(idx)
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .unwrap()
+                .value(0);
+            assert_eq!(
+                bool_val, expected_bools[10 + offset],
+                "boolean mismatch at union index {}",
+                idx
+            );
+        }
+
+        for (offset, idx) in (14..=15).enumerate() {
+            let float_val = union
+                .value(idx)
                 .as_any()
                 .downcast_ref::<Float64Array>()
                 .unwrap()
                 .value(0);
-            assert_eq!(value, *expected);
-        }
-        base += expected_floats.len();
-        for (i, expected) in expected_ints.iter().enumerate() {
-            let value = value_array
-                .value(base + i)
-                .as_any()
-                .downcast_ref::<Int64Array>()
-                .unwrap()
-                .value(0);
-            assert_eq!(value, *expected);
-        }
-        base += expected_ints.len();
-        for (i, expected) in expected_strings.iter().enumerate() {
-            let inner_array = value_array.value(base + i);
-            let value = inner_array
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .unwrap()
-                .value(0);
-            assert_eq!(value, *expected);
+            assert!(
+                (float_val - expected_floats[offset]).abs() < f64::EPSILON,
+                "float mismatch at union index {} (got {}, expected {})",
+                idx,
+                float_val,
+                expected_floats[offset]
+            );
         }
     }
+
 }

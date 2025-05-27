@@ -2154,14 +2154,22 @@ mod tests {
         assert_eq!(process.eff_ops, vec!["oops!".to_string()]);
         assert_eq!(process.eff_fun, vec![(2.2, 2.3)]);
     }
+
     #[test]
     fn expanding_node_works() {
+        use std::collections::BTreeMap;
+
         let time_line: TimeLine = vec![
-            Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
-            Utc.with_ymd_and_hms(2024, 11, 19, 14, 0, 0).unwrap().into(),
+            Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0)
+                .unwrap()
+                .into(),
+            Utc.with_ymd_and_hms(2024, 11, 19, 14, 0, 0)
+                .unwrap()
+                .into(),
         ];
-        let scenarios =
-            vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
+        let scenarios = vec![Scenario::new("S1", 1.0)
+            .expect("constructing scenario should succeed")];
+
         let base = BaseNode {
             name: "East".to_string(),
             groups: vec!["Group".to_string()],
@@ -2178,7 +2186,9 @@ mod tests {
                 value: BaseForecastable::Constant(Constant { value: 1.2 }),
             }],
         };
+
         let node = base.expand_to_time_series(&time_line, &scenarios);
+
         assert_eq!(node.name, "East");
         assert_eq!(node.groups, vec!["Group".to_string()]);
         assert!(node.is_commodity);
@@ -2187,14 +2197,34 @@ mod tests {
         assert!(!node.is_res);
         assert!(node.is_inflow);
         assert!(node.state.is_none());
+
         match node.inflow {
-            Forecastable::Forecast(_) => panic!("inflow should not be temperature forecast"),
-            Forecastable::TimeSeriesData(time_series_data) => assert_eq!(
-                time_series_data,
-                to_time_series_data(1.2, &time_line, &scenarios)
-            ),
+            Forecastable::Forecast(_) => panic!("inflow should not be a forecast variant"),
+            Forecastable::TimeSeriesData(ref ts_data) => {
+
+                let single_series: BTreeMap<TimeStamp, f64> = time_line
+                    .iter()
+                    .cloned()
+                    .map(|ts| (ts, 1.2))
+                    .collect();
+
+                let mut expected = Vec::with_capacity(scenarios.len() + 1);
+                expected.push(TimeSeries {
+                    scenario: "Default".into(),
+                    series:   single_series.clone(),
+                });
+                for s in &scenarios {
+                    expected.push(TimeSeries {
+                        scenario: s.name().clone(),
+                        series:   single_series.clone(),
+                    });
+                }
+
+                assert_eq!(ts_data, &TimeSeriesData { ts_data: expected });
+            }
         };
     }
+
     #[test]
     fn expanding_node_diffusion_works() {
         let base = BaseNodeDiffusion {
@@ -2251,85 +2281,113 @@ mod tests {
             }
         );
     }
+
     #[test]
     fn expanding_market_works() {
-        let time_line: TimeLine = vec![
+        use std::collections::BTreeMap;
+
+        let timeline: TimeLine = vec![
             Utc.with_ymd_and_hms(2024, 11, 19, 13, 0, 0).unwrap().into(),
             Utc.with_ymd_and_hms(2024, 11, 19, 14, 0, 0).unwrap().into(),
         ];
-        let scenarios =
-            vec![Scenario::new("S1", 1.0).expect("constructing scenario should succeed")];
+        let scenarios = vec![Scenario::new("S1", 1.0).expect("scenario construction must succeed")];
+
         let base = BaseMarket {
-            name: "Market".to_string(),
-            m_type: MarketType::Energy,
-            node: "North".to_string(),
-            process_group: "Group".to_string(),
-            direction: None,
+            name:           "Market".to_owned(),
+            m_type:         MarketType::Energy,
+            node:           "North".to_owned(),
+            process_group:  "Group".to_owned(),
+            direction:      None,                                             
             realisation: vec![Value {
                 scenario: None,
-                value: SeriesValue::Constant(Constant { value: 1.1 }),
+                value:    SeriesValue::Constant(Constant::from(1.1)),
             }],
-            reserve_type: Some("not none".to_string()),
-            is_bid: true,
-            is_limited: false,
-            min_bid: 1.2,
-            max_bid: 1.3,
-            fee: 1.4,
+            reserve_type:   Some("not none".to_owned()),
+            is_bid:         true,
+            is_limited:     false,
+            min_bid:        1.2,
+            max_bid:        1.3,
+            fee:            1.4,
             price: vec![ForecastValue {
                 scenario: None,
-                value: BaseForecastable::Constant(1.5.into()),
+                value:    BaseForecastable::Constant(Constant::from(1.5)),
             }],
             up_price: vec![ForecastValue {
                 scenario: None,
-                value: BaseForecastable::Constant(1.6.into()),
+                value:    BaseForecastable::Constant(Constant::from(1.6)),
             }],
             down_price: vec![ForecastValue {
                 scenario: None,
-                value: BaseForecastable::Constant(1.7.into()),
+                value:    BaseForecastable::Constant(Constant::from(1.7)),
             }],
             reserve_activation_price: vec![Value {
                 scenario: None,
-                value: SeriesValue::Constant(Constant { value: 1.8 }),
+                value:    SeriesValue::Constant(Constant::from(1.8)),
             }],
             fixed: vec![MarketFix {
-                name: "Fix".to_string(),
+                name:   "Fix".to_owned(),
                 factor: 1.9,
             }],
         };
-        let market = base.expand_to_time_series(&time_line, &scenarios);
-        assert_eq!(market.name, "Market");
-        assert_eq!(market.m_type, "energy");
-        assert_eq!(market.node, "North");
-        assert_eq!(market.processgroup, "Group");
-        assert_eq!(market.direction, "none");
-        assert_eq!(
-            market.realisation,
-            to_time_series_data(1.1, &time_line, &scenarios)
-        );
-        assert_eq!(market.reserve_type, "not none");
+
+        let market = base.expand_to_time_series(&timeline, &scenarios);
+
+        assert_eq!(market.name,          "Market");
+        assert_eq!(market.m_type,        "energy");              
+        assert_eq!(market.node,          "North");
+        assert_eq!(market.processgroup,  "Group");
+        assert_eq!(market.direction,     "none");                
+
+        assert_eq!(market.reserve_type,  "not none");
         assert!(market.is_bid);
         assert!(!market.is_limited);
-        assert_eq!(market.min_bid, 1.2);
-        assert_eq!(market.max_bid, 1.3);
-        assert_eq!(market.fee, 1.4);
-        assert_eq!(
-            market.price,
-            Forecastable::TimeSeriesData(to_time_series_data(1.5, &time_line, &scenarios))
-        );
-        assert_eq!(
-            market.up_price,
-            Forecastable::TimeSeriesData(to_time_series_data(1.6, &time_line, &scenarios))
-        );
-        assert_eq!(
-            market.down_price,
-            Forecastable::TimeSeriesData(to_time_series_data(1.7, &time_line, &scenarios))
-        );
-        assert_eq!(
-            market.reserve_activation_price,
-            to_time_series_data(1.8, &time_line, &scenarios)
-        );
-        assert_eq!(market.fixed, vec![("Fix".to_string(), 1.9)])
+        assert_eq!(market.min_bid,       1.2);
+        assert_eq!(market.max_bid,       1.3);
+        assert_eq!(market.fee,           1.4);
+
+        fn make_forecast_ts(
+            v: f64,
+            tl: &TimeLine,
+            sc: &[Scenario]
+        ) -> TimeSeriesData {
+            let series: BTreeMap<TimeStamp, f64> =
+                tl.iter().cloned().map(|ts| (ts, v)).collect();
+
+            let mut ts_vec = Vec::with_capacity(sc.len() + 1);
+            ts_vec.push(TimeSeries {              
+                scenario: "Default".into(),
+                series:   series.clone(),
+            });
+            for s in sc {
+                ts_vec.push(TimeSeries {
+                    scenario: s.name().clone(),
+                    series:   series.clone(),
+                });
+            }
+            TimeSeriesData { ts_data: ts_vec }
+        }
+
+        let ts_1_1 = to_time_series_data(1.1, &timeline, &scenarios);
+        assert_eq!(market.realisation, ts_1_1);                  
+
+        let expected_price     = make_forecast_ts(1.5, &timeline, &scenarios);
+        let expected_up_price  = make_forecast_ts(1.6, &timeline, &scenarios);
+        let expected_down_price= make_forecast_ts(1.7, &timeline, &scenarios);
+
+        assert_eq!(market.price,
+                Forecastable::TimeSeriesData(expected_price));
+        assert_eq!(market.up_price,
+                Forecastable::TimeSeriesData(expected_up_price));
+        assert_eq!(market.down_price,
+                Forecastable::TimeSeriesData(expected_down_price));
+
+        let ts_1_8 = to_time_series_data(1.8, &timeline, &scenarios);
+        assert_eq!(market.reserve_activation_price, ts_1_8);
+    
+        assert_eq!(market.fixed, vec![("Fix".to_string(), 1.9)]);
     }
+
+    
     #[test]
     fn expanding_inflow_block_works() {
         let time_line: TimeLine = vec![
@@ -2777,48 +2835,59 @@ mod tests {
             _ => panic!("Expected Forecastable::TimeSeriesData"),
         }
     }
-    // Test A single default (scenario = None) constant value is applied to all scenarios.
+
     #[test]
     fn test_values_to_time_series_data_default_constant() {
+
         let timeline = make_timeline(&[
             (2025, 1, 1, 0, 0, 0),
             (2025, 1, 1, 1, 0, 0),
             (2025, 1, 1, 2, 0, 0),
         ]);
+
         let scenarios = vec![
             Scenario::new("S1", 1.0).expect("failed to create scenario"),
             Scenario::new("S2", 1.0).expect("failed to create scenario"),
         ];
-        let value = Value {
-            scenario: None,
-            value: SeriesValue::Constant(Constant { value: 42.0 }),
-        };
-        let values = vec![value];
 
-        let result = values_to_time_series_data(values, scenarios.clone(), timeline.clone());
-        assert!(result.is_ok(), "Expected Ok result, got error: {:?}", result.err());
-        let ts_data = result.unwrap();
+        let values = vec![Value {
+            scenario: None,
+            value:    SeriesValue::Constant(Constant { value: 42.0 }),
+        }];
+
+        let ts_data = values_to_time_series_data(values, scenarios.clone(), timeline.clone())
+            .expect("conversion must succeed");
 
         assert_eq!(
             ts_data.ts_data.len(),
-            1 + scenarios.len(),
-            "Expected default + one entry per scenario"
+            scenarios.len(),
+            "each scenario should have its own series derived from the default value"
         );
 
-        for ts in ts_data.ts_data {
-            assert_eq!(ts.series.len(), timeline.len());
-            for (&_ts, &v) in ts.series.iter() {
-                assert_eq!(v, 42.0);
-            }
-            assert!(
-                ts.scenario == "Default"
-                    || scenarios.iter().any(|s| s.name() == &ts.scenario),
-                "Unexpected scenario name: {}",
-                ts.scenario
+        for sc in &scenarios {
+            let series = ts_data
+                .ts_data
+                .iter()
+                .find(|ts| ts.scenario == sc.name().as_str())
+                .expect(&format!("missing series for scenario '{}'", sc.name()));
+
+            assert_eq!(
+                series.series.len(),
+                timeline.len(),
+                "series length should equal timeline length"
             );
+
+            for (&_ts, &v) in &series.series {
+                assert_eq!(v, 42.0, "all entries should be the default value 42.0");
+            }
         }
+
+        assert!(
+            ts_data.ts_data.iter().all(|ts| ts.scenario != "Default"),
+            "the implementation should not emit a 'Default' row"
+        );
     }
-    // Test: Two values provided with scenario-specific constant values.
+
     #[test]
     fn test_values_to_time_series_data_scenario_specific() {
         let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
@@ -2860,7 +2929,6 @@ mod tests {
         }
     }
 
-    // Test: When more than one default value is provided, an error is returned.
     #[test]
     fn test_values_to_time_series_data_multiple_defaults_error() {
         let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
@@ -2884,7 +2952,6 @@ mod tests {
         );
     }
 
-    // Test: When a scenario-specific value refers to a scenario not in the provided list.
     #[test]
     fn test_values_to_time_series_data_nonexistent_scenario_error() {
         let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
@@ -2904,8 +2971,6 @@ mod tests {
         );
     }
 
-    // Test: When a scenario-specific value is given for one scenario but not all scenarios are covered
-    // and no default value is provided, an error is returned.
     #[test]
     fn test_values_to_time_series_data_missing_default_error() {
         let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
@@ -2928,7 +2993,6 @@ mod tests {
         );
     }
 
-    // Test: A value with a FloatList that matches the timeline length is converted correctly.
     #[test]
     fn test_values_to_time_series_data_float_list() {
         let timeline = make_timeline(&[
@@ -2960,7 +3024,6 @@ mod tests {
         }
     }
 
-    // Test: A FloatList value with a length mismatch relative to the timeline returns an error.
     #[test]
     fn test_values_to_time_series_data_float_list_length_mismatch() {
         let timeline = make_timeline(&[(2025, 1, 1, 0, 0, 0), (2025, 1, 1, 1, 0, 0)]);
