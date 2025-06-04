@@ -581,6 +581,7 @@ async fn generate_model_task(
             .as_ref()
             .ok_or("generate_model_task: didn't receive time data".to_string())?;
         let mut input_data = optimization_data.input_data.expand_to_time_series(time_line);
+        input_data.infer_feature_flags();
         
         if let Some(weather_data) = optimization_data.weather_data.take() {
             if let Err(e) = update_outside_node(&mut input_data, weather_data) {

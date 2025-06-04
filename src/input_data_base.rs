@@ -543,6 +543,7 @@ impl Risk {
 }
 
 impl BaseInputData {
+
     pub fn expand_to_time_series(&self, time_line: &TimeLine) -> InputData {
         let mut groups = Vec::with_capacity(self.node_groups.len() + self.process_groups.len());
         groups.extend(self.node_groups.iter().map(|g| Group::from(g)));
@@ -603,16 +604,9 @@ impl BaseInputData {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct BaseInputDataSetup {
-    pub contains_reserves: bool,
-    pub contains_online: bool,
-    pub contains_states: bool,
-    pub contains_piecewise_eff: bool,
-    pub contains_risk: bool,
-    pub contains_diffusion: bool,
-    pub contains_delay: bool,
-    pub contains_markets: bool,
     pub reserve_realisation: bool,
     pub use_market_bids: bool,
+    pub use_reserves: bool,
     pub common_timesteps: i32,
     pub common_scenario_name: String,
     pub use_node_dummy_variables: bool,
@@ -629,16 +623,17 @@ impl ExpandToTimeSeries for BaseInputDataSetup {
         _scenarios: &Vec<Scenario>,
     ) -> Self::Expanded {
         InputDataSetup {
-            contains_reserves: self.contains_reserves,
-            contains_online: self.contains_online,
-            contains_states: self.contains_states,
-            contains_piecewise_eff: self.contains_piecewise_eff,
-            contains_risk: self.contains_risk,
-            contains_diffusion: self.contains_diffusion,
-            contains_delay: self.contains_delay,
-            contains_markets: self.contains_markets,
+            contains_reserves: false,
+            contains_online: false,
+            contains_states: false,
+            contains_piecewise_eff: false,
+            contains_risk: false,
+            contains_diffusion: false,
+            contains_delay: false,
+            contains_markets: false,
             reserve_realisation: self.reserve_realisation,
             use_market_bids: self.use_market_bids,
+            use_reserves: self.use_reserves,
             common_timesteps: self.common_timesteps as i64,
             common_scenario_name: self.common_scenario_name.clone(),
             use_node_dummy_variables: self.use_node_dummy_variables,
@@ -652,35 +647,14 @@ impl ExpandToTimeSeries for BaseInputDataSetup {
 #[graphql_object]
 #[graphql(name = "InputDataSetup", context = HerttaContext)]
 impl BaseInputDataSetup {
-    fn contains_reserves(&self) -> bool {
-        self.contains_reserves
-    }
-    fn contain_online(&self) -> bool {
-        self.contains_online
-    }
-    fn contains_states(&self) -> bool {
-        self.contains_states
-    }
-    fn contains_piecewise_eff(&self) -> bool {
-        self.contains_piecewise_eff
-    }
-    fn contains_risk(&self) -> bool {
-        self.contains_risk
-    }
-    fn contains_diffusion(&self) -> bool {
-        self.contains_diffusion
-    }
-    fn contains_delay(&self) -> bool {
-        self.contains_delay
-    }
-    fn contains_markets(&self) -> bool {
-        self.contains_markets
-    }
     fn reserve_realisation(&self) -> bool {
         self.reserve_realisation
     }
     fn use_market_bids(&self) -> bool {
         self.use_market_bids
+    }
+    fn use_reserves(&self) -> bool {
+        self.use_reserves
     }
     fn common_time_steps(&self) -> i32 {
         self.common_timesteps
@@ -2521,44 +2495,6 @@ mod tests {
             values_to_time_series_data(base.data.clone(), scenarios.clone(), time_line.clone()).unwrap()
         );
     }
-    /* 
-    mod find_input_node_names {
-        use super::*;
-        #[test]
-        fn no_nodes_means_no_names() {
-            let names = find_input_node_names(Vec::<BaseNode>::new().iter());
-            assert!(names.is_empty());
-        }
-        #[test]
-        fn test_non_input_nodes_are_filtered() {
-            let mut commodity_nodes = vec![BaseNode::new("commodity".to_string())];
-            commodity_nodes[0].is_commodity = true;
-            assert!(find_input_node_names(commodity_nodes.iter()).is_empty());
-            let mut market_nodes = vec![BaseNode::new("market".to_string())];
-            market_nodes[0].is_market = true;
-            assert!(find_input_node_names(market_nodes.iter()).is_empty());
-            let mut state_nodes = vec![BaseNode::new("state".to_string())];
-            state_nodes[0].state = Some(State::default());
-            assert!(find_input_node_names(state_nodes.iter()).is_empty());
-            let mut res_nodes = vec![BaseNode::new("res".to_string())];
-            res_nodes[0].is_res = true;
-            assert!(find_input_node_names(res_nodes.iter()).is_empty());
-            let mut inflow_nodes = vec![BaseNode::new("inflow".to_string())];
-            inflow_nodes[0].inflow = vec![ForecastValue {
-                scenario: None,
-                value: BaseForecastable::Constant(Constant { value: 2.3 }),
-            }];
-            assert!(find_input_node_names(inflow_nodes.iter()).is_empty());
-        }
-        #[test]
-        fn true_input_node_gets_found() {
-            let input_nodes = vec![BaseNode::new("input".to_string())];
-            let input_nodes = find_input_node_names(input_nodes.iter());
-            assert_eq!(input_nodes.len(), 1);
-            assert_eq!(input_nodes[0], "input");
-        }
-    }
-    */
     #[test]
     fn make_temporals_works() {
         let time_line: TimeLine = vec![

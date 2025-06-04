@@ -502,8 +502,8 @@ impl Mutation {
         MaybeError::new_ok()
     }
 
-    #[graphql(description = "Update input data setup.")]
-    async fn update_input_data_setup(
+    #[graphql(description = "Create or Update input data setup.")]
+    async fn create_input_data_setup(
         setup_update: InputDataSetupInput,
         context: &HerttaContext,
     ) -> ValidationErrors {

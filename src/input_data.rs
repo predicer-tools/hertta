@@ -31,6 +31,25 @@ pub struct InputData {
     pub gen_constraints: IndexMap<String, GenConstraint>,
 }
 
+impl InputData {
+    pub fn infer_feature_flags(&mut self) {
+        let s = &mut self.setup;
+
+        s.contains_reserves      = s.use_reserves && self.nodes.values().any(|n| n.is_res);
+        s.contains_online        = self.processes.values().any(|p| p.is_online);
+        s.contains_states        = self.nodes.values().any(|n| n.is_state);
+        s.contains_piecewise_eff = self.processes.values().any(|p| !p.eff_ops.is_empty());
+        s.contains_risk = self.risk.get("beta").map_or(false, |v| *v > 0.0);
+        s.contains_diffusion     = !self.node_diffusion.is_empty();
+        s.contains_delay         = !self.node_delay.is_empty();
+        s.contains_markets       = !self.markets.is_empty();
+    }
+    pub fn with_inferred_flags(mut self) -> Self {
+        self.infer_feature_flags();
+        self
+    }
+}
+
 fn check_forecastable_series(
     forecastable: &Forecastable,
     temporals_t: &[TimeStamp],
@@ -138,6 +157,7 @@ pub struct InputDataSetup {
     pub contains_markets: bool,
     pub reserve_realisation: bool,
     pub use_market_bids: bool,
+    pub use_reserves: bool,
     pub common_timesteps: i64,
     pub common_scenario_name: String,
     pub use_node_dummy_variables: bool,
@@ -146,7 +166,7 @@ pub struct InputDataSetup {
     pub ramp_dummy_variable_cost: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Name)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Name, Default)]
 pub struct Process {
     pub name: String,
     pub groups: Vec<String>,
@@ -455,3 +475,247 @@ pub struct ConFactor {
     pub var_tuple: (String, String),
     pub data: TimeSeriesData,
 }
+
+#[cfg(test)]
+mod infer_feature_flags {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+    use indexmap::IndexMap;
+
+    fn ts() -> TimeSeriesData {   
+        TimeSeriesData { ts_data: Vec::new() }
+    }
+    /// A helper that builds a fully-populated `InputData` structure whose
+    /// feature flags are **all** false.  Individual tests mutate just the
+    /// fields they need before calling `infer_feature_flags()`.
+    fn blank_input_data() -> InputData {
+
+        let temporals = Temporals {
+            t: vec![Utc.timestamp_opt(0, 0).unwrap()],
+            dtf: 1.0,
+            variable_dt: None,
+        };
+
+        let setup = InputDataSetup {
+            contains_reserves:      false,
+            contains_online:        false,
+            contains_states:        false,
+            contains_piecewise_eff: false,
+            contains_risk:          false,
+            contains_diffusion:     false,
+            contains_delay:         false,
+            contains_markets:       false,
+            reserve_realisation:    false,
+            use_market_bids:        false,
+            use_reserves:           false,
+            common_timesteps:       0,
+            common_scenario_name:   "".into(),
+            use_node_dummy_variables:false,
+            use_ramp_dummy_variables:false,
+            node_dummy_variable_cost: 0.0,
+            ramp_dummy_variable_cost: 0.0,
+        };
+
+        InputData {
+            temporals,
+            setup,
+            processes:        IndexMap::new(),
+            nodes:            IndexMap::new(),
+            node_diffusion:   Vec::new(),
+            node_delay:       Vec::new(),
+            node_histories:   IndexMap::new(),
+            markets:          IndexMap::new(),
+            groups:           IndexMap::new(),
+            scenarios:        IndexMap::new(),
+            reserve_type:     IndexMap::new(),
+            risk:             IndexMap::new(),
+            inflow_blocks:    IndexMap::new(),
+            bid_slots:        IndexMap::new(),
+            gen_constraints:  IndexMap::new(),
+        }
+    }
+
+    fn flags(s: &InputDataSetup) -> (bool, bool, bool, bool, bool, bool, bool, bool) {
+        (
+            s.contains_reserves,
+            s.contains_online,
+            s.contains_states,
+            s.contains_piecewise_eff,
+            s.contains_risk,
+            s.contains_diffusion,
+            s.contains_delay,
+            s.contains_markets,
+        )
+    }
+
+    #[test]
+    fn contains_reserves_requires_use_reserves_and_res_node() {
+        let mut id = blank_input_data();
+        id.setup.use_reserves = true;
+
+        // add one node with is_res = true
+        id.nodes.insert("n".into(), Node {
+            name: "n".into(),
+            groups: Vec::new(),
+            is_commodity: false,
+            is_market: false,
+            is_state: false,
+            is_res: true,
+            is_inflow: false,
+            state: None,
+            cost: ts(),
+            inflow: Forecastable::TimeSeriesData(ts()),
+        });
+
+        id.infer_feature_flags();
+        assert_eq!(
+            flags(&id.setup),
+            (true,false,false,false,false,false,false,false)
+        );
+    }
+
+    #[test]
+    fn contains_online_when_any_process_online() {
+        let mut id = blank_input_data();
+        id.processes.insert("p".into(), Process {
+            name: "p".into(),
+            groups: Vec::new(),
+            conversion: 0,
+            is_cf: false,
+            is_cf_fix: false,
+            is_online: true,
+            is_res: false,
+            eff: 0.0,
+            load_min: 0.0,
+            load_max: 0.0,
+            start_cost: 0.0,
+            min_online: 0.0,
+            min_offline: 0.0,
+            max_online: 0.0,
+            max_offline: 0.0,
+            initial_state: false,
+            is_scenario_independent: false,
+            topos: Vec::new(),
+            cf: ts(),
+            eff_ts: ts(),
+            eff_ops: Vec::new(),
+            eff_fun: Vec::new(),
+        });
+
+        id.infer_feature_flags();
+        assert_eq!(
+            flags(&id.setup),
+            (false,true,false,false,false,false,false,false)
+        );
+    }
+
+    #[test]
+    fn contains_states_turns_true_if_any_node_has_state() {
+        let mut id = blank_input_data();
+        id.nodes.insert("n".into(), Node {
+            name: "n".into(),
+            groups: Vec::new(),
+            is_commodity: false,
+            is_market: false,
+            is_state: true,
+            is_res: false,
+            is_inflow: false,
+            state: Some(State::default()),
+            cost: ts(),
+            inflow: Forecastable::TimeSeriesData(ts()),
+        });
+
+        id.infer_feature_flags();
+        assert_eq!(
+            flags(&id.setup),
+            (false,false,true,false,false,false,false,false)
+        );
+    }
+
+    #[test]
+    fn contains_piecewise_eff_when_eff_ops_not_empty() {
+        let mut id = blank_input_data();
+        let mut p = Process {
+            name: "p".into(), ..Process::default()
+        };
+        p.eff_ops.push("pw1".into());
+        id.processes.insert("p".into(), p);
+
+        id.infer_feature_flags();
+        assert_eq!(
+            flags(&id.setup),
+            (false,false,false,true,false,false,false,false)
+        );
+    }
+
+    #[test]
+    fn contains_risk_if_beta_positive() {
+        let mut id = blank_input_data();
+        id.risk.insert("beta".into(), 0.5);
+
+        id.infer_feature_flags();
+        assert_eq!(
+            flags(&id.setup),
+            (false,false,false,false,true,false,false,false)
+        );
+    }
+
+    #[test]
+    fn contains_diffusion_if_any_diffusion_row() {
+        let mut id = blank_input_data();
+        id.node_diffusion.push(NodeDiffusion {
+            node1: "a".into(),
+            node2: "b".into(),
+            coefficient: ts(),
+        });
+
+        id.infer_feature_flags();
+        assert_eq!(
+            flags(&id.setup),
+            (false,false,false,false,false,true,false,false)
+        );
+    }
+
+    #[test]
+    fn contains_delay_if_any_delay_tuple() {
+        let mut id = blank_input_data();
+        id.node_delay.push(("a".into(), "b".into(), 1.0, 0.0, 0.0));
+
+        id.infer_feature_flags();
+        assert_eq!(
+            flags(&id.setup),
+            (false,false,false,false,false,false,true,false)
+        );
+    }
+
+    #[test]
+    fn contains_markets_if_non_empty_market_list() {
+        let mut id = blank_input_data();
+        id.markets.insert("m".into(), Market {
+            name: "m".into(),
+            m_type: "energy".into(),
+            node: "n".into(),
+            processgroup: "pg".into(),
+            direction: "none".into(),
+            realisation: ts(),
+            reserve_type: "none".into(),
+            is_bid: false,
+            is_limited: false,
+            min_bid: 0.0,
+            max_bid: 0.0,
+            fee: 0.0,
+            price: Forecastable::TimeSeriesData(ts()),
+            up_price: Forecastable::TimeSeriesData(ts()),
+            down_price: Forecastable::TimeSeriesData(ts()),
+            reserve_activation_price: ts(),
+            fixed: Vec::new(),
+        });
+
+        id.infer_feature_flags();
+        assert_eq!(
+            flags(&id.setup),
+            (false,false,false,false,false,false,false,true)
+        );
+    }
+}
+

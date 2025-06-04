@@ -21,6 +21,7 @@
     "contains_markets": true,
     "reserve_realisation": true,
     "use_market_bids": true,
+    "use_reserves": true,
     "common_timesteps": 2,
     "common_scenario_name": "s_all",
     "use_node_dummy_variables": true,
