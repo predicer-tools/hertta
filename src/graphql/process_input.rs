@@ -8,22 +8,39 @@ use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
 pub struct NewProcess {
+    #[graphql(description = "Name of the process.")]
     name: String,
+   #[graphql(description = "Indicates the type of the process. Options: Unit, Transfer, Market")]
     conversion: Conversion,
+    #[graphql(description = "Indicates if the process has to match the capacity factor time series.")]
     is_cf_fix: bool,
+    #[graphql(description = "Indicates if the process is an online/offline unit.")]
     is_online: bool,
+    #[graphql(description = "Indicates if the process participates in reserve markets")]
     is_res: bool,
+    #[graphql(description = "Process efficiency (total output / total input)")]
     eff: f64,
+    #[graphql(description = "Minimum load of the process as a fraction of total capacity. Only for online processes")]
     load_min: f64,
+    #[graphql(description = "Maximum load of the process as a fraction of total capacity. Only for online processes")]
     load_max: f64,
+    #[graphql(description = "Cost of starting the unit, only for online processes.")]
     start_cost: f64,
+    #[graphql(description = "Minimum time the process has to be online after start up.")]
     min_online: f64,
+    #[graphql(description = "Maximum time the process can be online.")]
     max_online: f64,
+    #[graphql(description = "Minimum time the process has to be offline during shut down.")]
     min_offline: f64,
+    #[graphql(description = "Maximum time the process can be offline.")]
     max_offline: f64,
+    #[graphql(description = "Initial state of the online unit (0 = offline, 1 = online).")]
     initial_state: bool,
+    #[graphql(description = "If true, forces the online variable of the process to be equal in all scenarios.")]
     is_scenario_independent: bool,
+    #[graphql(description = "Capacity factor time series for processes with cf functionality.")]
     cf: Vec<ValueInput>,
+    #[graphql(description = "Value time series of the efficiency of processes")]
     eff_ts: Vec<ValueInput>,
 }
 

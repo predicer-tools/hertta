@@ -155,6 +155,19 @@ impl TimeLineSettings {
         self.step = step;
         Ok(())
     }
+    pub fn set_start(&mut self, start: TimeLineStart) -> Result<(), String> {
+        match &start {
+            TimeLineStart::CustomStartTime(custom_start) => {
+                if custom_start.start_time < Utc::now() {
+                    return Err("custom start time cannot be in the past.".to_string());
+                }
+            }
+            _ => {}
+        }
+        self.start = start;
+        Ok(())
+    }
+
 }
 
 pub fn compute_timeline_start(time_line_settings: &TimeLineSettings) -> TimeStamp {

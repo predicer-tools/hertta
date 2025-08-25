@@ -5,7 +5,8 @@ use super::ValidationErrors;
 
 #[derive(GraphQLInputObject)]
 pub struct InputDataSetupInput {
-    #[graphql(description = "Flag indicating whether market bids are used in the model")]
+    
+    #[graphql(description = "Flag indicating whether market bids are used in the model.")]
     use_market_bids: Option<bool>,
     #[graphql(description = "Flag indicating whether reserves are used in the model. If set to false, no reserve functionalities are used.")]
     use_reserves: Option<bool>,
@@ -29,7 +30,7 @@ impl InputDataSetupInput {
             setup.use_reserves = flag;
         }
         if let Some(flag) = self.use_reserve_realisation {
-            setup.reserve_realisation = flag;
+            setup.use_reserve_realisation = flag;
         }
         if let Some(flag) = self.use_market_bids {
             setup.use_market_bids = flag;

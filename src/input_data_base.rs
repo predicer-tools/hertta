@@ -506,6 +506,18 @@ pub struct ReserveType {
     pub ramp_rate: f64,
 }
 
+impl Name for ReserveType {
+    fn name(&self) -> &String {
+        &self.name
+    }
+}
+
+impl TypeName for ReserveType {
+    fn type_name() -> &'static str {
+        "reserve"
+    }
+}
+
 impl ReserveType {
     fn to_indexmap(reserve_types: &Vec<Self>) -> IndexMap<String, f64> {
         reserve_types
@@ -604,7 +616,7 @@ impl BaseInputData {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct BaseInputDataSetup {
-    pub reserve_realisation: bool,
+    pub use_reserve_realisation: bool,
     pub use_market_bids: bool,
     pub use_reserves: bool,
     pub common_timesteps: i32,
@@ -631,7 +643,7 @@ impl ExpandToTimeSeries for BaseInputDataSetup {
             contains_diffusion: false,
             contains_delay: false,
             contains_markets: false,
-            reserve_realisation: self.reserve_realisation,
+            reserve_realisation: self.use_reserve_realisation,
             use_market_bids: self.use_market_bids,
             use_reserves: self.use_reserves,
             common_timesteps: self.common_timesteps as i64,
@@ -648,7 +660,7 @@ impl ExpandToTimeSeries for BaseInputDataSetup {
 #[graphql(name = "InputDataSetup", context = HerttaContext)]
 impl BaseInputDataSetup {
     fn reserve_realisation(&self) -> bool {
-        self.reserve_realisation
+        self.use_reserve_realisation
     }
     fn use_market_bids(&self) -> bool {
         self.use_market_bids

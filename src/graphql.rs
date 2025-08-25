@@ -16,6 +16,7 @@ mod scenario_input;
 mod state_input;
 mod time_line_input;
 mod topology_input;
+mod reserve_type_input;
 
 use crate::event_loop;
 use crate::event_loop::job_store::JobStore;
@@ -40,6 +41,7 @@ use node_history_input::NewSeries;
 use node_input::NewNode;
 use process_input::NewProcess;
 use risk_input::NewRisk;
+use reserve_type_input::NewReserveType;
 use state_input::{StateInput, StateUpdate};
 use node_diffusion_input::NewNodeDiffusion;
 use std::ops::DerefMut;
@@ -829,6 +831,16 @@ impl Mutation {
     async fn delete_risk(parameter: String, context: &HerttaContext) -> MaybeError {
         let mut model = context.model.lock().await;
         risk_input::delete_risk(&parameter, &mut model.input_data.risk)
+    }
+
+    #[graphql(description = "Create new reserve type.")]
+    async fn create_reserve_type(reserve_type: NewReserveType, context: &HerttaContext) -> ValidationErrors {
+        let mut model_ref = context.model.lock().await;
+        let model = model_ref.deref_mut();
+        reserve_type_input::create_reserve_type(
+            reserve_type,
+            &mut model.input_data.reserve_type,
+        )
     }
 
     #[graphql(description = "Create new generic constraint.")]
