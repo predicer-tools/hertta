@@ -17,6 +17,7 @@ mod state_input;
 mod time_line_input;
 mod topology_input;
 mod reserve_type_input;
+mod inflow_block_input;
 
 use crate::event_loop;
 use crate::event_loop::job_store::JobStore;
@@ -42,6 +43,7 @@ use node_input::NewNode;
 use process_input::NewProcess;
 use risk_input::NewRisk;
 use reserve_type_input::NewReserveType;
+use inflow_block_input::NewInflowBlock;
 use state_input::{StateInput, StateUpdate};
 use node_diffusion_input::NewNodeDiffusion;
 use std::ops::DerefMut;
@@ -840,6 +842,16 @@ impl Mutation {
         reserve_type_input::create_reserve_type(
             reserve_type,
             &mut model.input_data.reserve_type,
+        )
+    }
+
+    #[graphql(description = "Create new inflow block.")]
+    async fn create_inflow_block(inflow_block: NewInflowBlock, context: &HerttaContext) -> ValidationErrors {
+        let mut model_ref = context.model.lock().await;
+        let model = model_ref.deref_mut();
+        inflow_block_input::create_inflow_block(
+            inflow_block,
+            &mut model.input_data.inflow_blocks,
         )
     }
 

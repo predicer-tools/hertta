@@ -1460,6 +1460,11 @@ pub struct BaseInflowBlock {
     pub node: String,
     pub data: Vec<Value>,
 }
+impl TypeName for BaseInflowBlock {
+    fn type_name() -> &'static str {
+        "inflow block"
+    }
+}
 
 impl ExpandToTimeSeries for BaseInflowBlock {
     type Expanded = InflowBlock;
