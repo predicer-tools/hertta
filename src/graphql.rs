@@ -44,7 +44,7 @@ use process_input::NewProcess;
 use risk_input::NewRisk;
 use reserve_type_input::NewReserveType;
 use inflow_block_input::NewInflowBlock;
-use state_input::{StateInput, StateUpdate};
+use state_input::{NewState, StateUpdate};
 use node_diffusion_input::NewNodeDiffusion;
 use std::ops::DerefMut;
 use std::sync::Arc;
@@ -650,7 +650,7 @@ impl Mutation {
 
     #[graphql(description = "Set state for node. Null clears the state.")]
     async fn set_node_state(
-        state: Option<StateInput>,
+        state: Option<NewState>,
         node_name: String,
         context: &HerttaContext,
     ) -> ValidationErrors {

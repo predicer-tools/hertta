@@ -6,7 +6,7 @@ use crate::input_data_base::BaseNode;
 use juniper::GraphQLInputObject;
 
 #[derive(GraphQLInputObject)]
-pub struct StateInput {
+pub struct NewState {
     in_max: f64,
     out_max: f64,
     state_loss_proportional: f64,
@@ -19,7 +19,7 @@ pub struct StateInput {
     residual_value: f64,
 }
 
-impl StateInput {
+impl NewState {
     fn to_state(self) -> State {
         State {
             in_max: self.in_max,
@@ -38,7 +38,8 @@ impl StateInput {
 
 pub fn set_state_for_node(
     node_name: &str,
-    state: Option<StateInput>,
+    state: Option<NewState
+>,
     nodes: &mut Vec<BaseNode>,
 ) -> ValidationErrors {
     if let Some(ref real_state) = state {
@@ -60,7 +61,7 @@ pub fn set_state_for_node(
     ValidationErrors::from(Vec::new())
 }
 
-fn validate_state_to_set(state: &StateInput) -> Vec<ValidationError> {
+fn validate_state_to_set(state: &NewState) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     validate_state_min(state.state_min, state.state_max, &mut errors);
     validate_state_loss_proportional(state.state_loss_proportional, &mut errors);
