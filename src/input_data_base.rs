@@ -755,10 +755,24 @@ impl TypeName for BaseProcess {
     }
 }
 
+
+#[derive(GraphQLInputObject)]
+#[graphql(description = "Point input.")]
+pub struct PointInput {
+    pub x: f64,
+    pub y: f64,
+}
+
 #[derive(Clone, Debug, Deserialize, GraphQLObject, Serialize)]
 pub struct Point {
     pub x: f64,
     pub y: f64,
+}
+
+impl From<PointInput> for Point {
+    fn from(p: PointInput) -> Self {
+        Point { x: p.x, y: p.y }
+    }
 }
 
 impl ExpandToTimeSeries for BaseProcess {
