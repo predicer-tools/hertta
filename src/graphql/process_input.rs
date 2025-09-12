@@ -43,9 +43,7 @@ pub struct NewProcess {
     #[graphql(description = "Value time series of the efficiency of processes")]
     eff_ts: Vec<ValueInput>,
     #[graphql(description = "Value time series of the efficiency of processes")]
-    eff_ops: Vec<String>,
-    #[graphql(description = "Value time series of the efficiency of processes")]
-    eff_fun: Vec<PointInput>,
+    eff_ops_fun: Vec<PointInput>,
 }
 
 impl NewProcess {
@@ -81,8 +79,7 @@ impl NewProcess {
             .map(Value::try_from)
             .collect::<Result<Vec<Value>, _>>()
             .expect("Could not parse cost values"),
-            eff_ops: self.eff_ops,
-            eff_fun: self.eff_fun.into_iter().map(Into::into).collect(),
+            eff_ops_fun: self.eff_ops_fun.into_iter().map(Into::into).collect(),
         }
     }
 }

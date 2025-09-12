@@ -736,8 +736,7 @@ pub struct BaseProcess {
     pub topos: Vec<BaseTopology>,
     pub cf: Vec<Value>,
     pub eff_ts: Vec<Value>,
-    pub eff_ops: Vec<String>,
-    pub eff_fun: Vec<Point>,
+    pub eff_ops_fun: Vec<Point>,
 }
 
 impl GroupMember for BaseProcess {
@@ -775,6 +774,28 @@ impl From<PointInput> for Point {
     }
 }
 
+pub fn build_piecewise_eff(points: &[Point]) -> (Vec<String>, Vec<(f64, f64)>) {
+    const EPS: f64 = 1e-12;
+
+    let mut filtered: Vec<(f64, f64)> = Vec::with_capacity(points.len());
+    for i in 0..points.len() {
+        let p = &points[i];
+        let last = i + 1 == points.len();
+        if last {
+            filtered.push((p.x, p.y));
+        } else {
+            let next = &points[i + 1];
+            if (p.y - next.y).abs() > EPS {
+                filtered.push((p.x, p.y));
+            }
+        }
+    }
+
+    let eff_ops: Vec<String> = (1..=filtered.len()).map(|k| format!("op{}", k)).collect();
+
+    (eff_ops, filtered)
+}
+
 impl ExpandToTimeSeries for BaseProcess {
     type Expanded = Process;
     fn expand_to_time_series(
@@ -782,6 +803,9 @@ impl ExpandToTimeSeries for BaseProcess {
         time_line: &TimeLine,
         scenarios: &Vec<Scenario>,
     ) -> Self::Expanded {
+
+        let (eff_ops, eff_fun) = build_piecewise_eff(&self.eff_ops_fun);
+
         Process {
             name: self.name.clone(),
             groups: self.groups.clone(),
@@ -819,12 +843,8 @@ impl ExpandToTimeSeries for BaseProcess {
                     self.name, err
                 )
             }),
-            eff_ops: self.eff_ops.clone(),
-            eff_fun: self
-                .eff_fun
-                .iter()
-                .map(|point| (point.x, point.y))
-                .collect(),
+            eff_ops: eff_ops,
+            eff_fun: eff_fun,
         }
     }
 }
@@ -896,11 +916,8 @@ impl BaseProcess {
     fn eff_ts(&self) -> &Vec<Value> {
         &self.eff_ts
     }
-    fn eff_ops(&self) -> &Vec<String> {
-        &self.eff_ops
-    }
-    fn eff_fun(&self) -> &Vec<Point> {
-        &self.eff_fun
+    fn eff_ops_fun(&self) -> &Vec<Point> {
+        &self.eff_ops_fun
     }
 }
 
@@ -927,8 +944,7 @@ impl BaseProcess {
             topos: Vec::new(),
             cf: Vec::new(),
             eff_ts: Vec::new(),
-            eff_ops: Vec::new(),
-            eff_fun: Vec::new(),
+            eff_ops_fun: Vec::new(),
         }
     }
 }
@@ -1885,8 +1901,7 @@ mod tests {
                 scenario: None,
                 value: SeriesValue::Constant(Constant { value: 2.1 }),
             }],
-            eff_ops: vec!["oops!".to_string()],
-            eff_fun: vec![Point { x: 2.2, y: 2.3 }],
+            eff_ops_fun: vec![Point { x: 2.2, y: 2.3 }],
         };
         let process = base_process.expand_to_time_series(&time_line, &scenarios);
         let base_node = BaseNode {
@@ -2129,8 +2144,12 @@ mod tests {
                 scenario: None,
                 value: SeriesValue::Constant(Constant { value: 2.1 }),
             }],
-            eff_ops: vec!["oops!".to_string()],
-            eff_fun: vec![Point { x: 2.2, y: 2.3 }],
+            eff_ops_fun: vec![
+                Point { x: 0.0, y: 0.4 },
+                Point { x: 1.0, y: 0.4 }, 
+                Point { x: 3.0, y: 0.5 },
+                Point { x: 4.0, y: 0.5 },
+            ],
         };
         let process = base.expand_to_time_series(&time_line, &scenarios);
         assert_eq!(process.name, "Conversion");
@@ -2156,8 +2175,23 @@ mod tests {
             process.eff_ts,
             to_time_series_data(2.1, &time_line, &scenarios)
         );
-        assert_eq!(process.eff_ops, vec!["oops!".to_string()]);
-        assert_eq!(process.eff_fun, vec![(2.2, 2.3)]);
+        assert_eq!(process.eff_ops, vec!["op1".to_string(), "op2".to_string()]);
+        assert_eq!(process.eff_fun, vec![(1.0, 0.4), (4.0, 0.5)]);
+    }
+
+    #[test]
+    fn build_piecewise_eff_keeps_last_of_equal_runs() {
+        let points = vec![
+            Point { x: 5.0,  y: 0.90 },
+            Point { x: 6.0,  y: 0.90 },
+            Point { x: 7.0,  y: 0.90 }, // last of first run -> keep (7.0, 0.90)
+            Point { x: 8.0,  y: 0.85 },
+            Point { x: 9.0,  y: 0.85 }, // last of second run -> keep (9.0, 0.85)
+            Point { x: 10.0, y: 0.80 }, // single -> keep (10.0, 0.80)
+        ];
+        let (ops, fun) = build_piecewise_eff(&points);
+        assert_eq!(ops, vec!["op1".to_string(), "op2".to_string(), "op3".to_string()]);
+        assert_eq!(fun, vec![(7.0, 0.90), (9.0, 0.85), (10.0, 0.80)]);
     }
 
     #[test]

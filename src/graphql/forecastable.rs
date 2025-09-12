@@ -5,6 +5,11 @@ pub fn convert_forecast_value_inputs(
     inputs: Vec<ForecastValueInput>,
     scenarios: &Vec<Scenario>,
 ) -> Vec<ForecastValue> {
+    // ✔ Allow empty: no values, no default => just return empty (no panic)
+    if inputs.is_empty() {
+        return Vec::new();
+    }
+
     let mut converted: Vec<ForecastValue> = inputs
         .into_iter()
         .map(|inp| {
@@ -55,4 +60,3 @@ pub fn convert_forecast_value_inputs(
 
     converted
 }
-

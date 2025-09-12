@@ -103,6 +103,13 @@ fn validate_market_creation(
     if market.min_bid > market.max_bid {
         errors.push(ValidationError::new("min_bid", "greater than max_bid"));
     }
+    
+    if market.price.is_empty() {
+        errors.push(ValidationError::new(
+            "price",
+            "price is empty: provide per-scenario values or connect a forecast",
+        ));
+    }
     errors
 }
 
