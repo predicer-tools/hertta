@@ -797,6 +797,7 @@ impl Mutation {
             &mut model.input_data.markets,
             &model.input_data.nodes,
             &model.input_data.process_groups,
+            &model.input_data.node_groups,
             &model.input_data.scenarios,
         )
     }

@@ -3,7 +3,7 @@ use super::forecastable;
 use super::{MaybeError, ValidationError, ValidationErrors};
 use crate::input_data::Forecast;
 use crate::input_data_base::{
-    BaseForecastable, BaseMarket, BaseNode, MarketDirection, MarketType, ProcessGroup, ValueInput, Value, ForecastValueInput, ForecastValue,
+    BaseForecastable, BaseMarket, BaseNode, MarketDirection, MarketType, ProcessGroup, NodeGroup, ValueInput, Value, ForecastValueInput, ForecastValue,
 };
 use crate::scenarios::Scenario;
 use juniper::GraphQLInputObject;
@@ -66,10 +66,11 @@ pub fn create_market(
     market: NewMarket,
     markets: &mut Vec<BaseMarket>,
     nodes: &Vec<BaseNode>,
-    groups: &Vec<ProcessGroup>,
+    process_groups: &Vec<ProcessGroup>,
+    node_groups: &Vec<NodeGroup>,
     scenarios: &Vec<Scenario>,
 ) -> ValidationErrors {
-    let errors = validate_market_creation(&market, nodes, groups);
+    let errors = validate_market_creation(&market, nodes, process_groups, node_groups);
     if !errors.is_empty() {
         return ValidationErrors::from(errors);
     }
@@ -81,13 +82,31 @@ fn validate_market_creation(
     market: &NewMarket,
     nodes: &Vec<BaseNode>,
     groups: &Vec<ProcessGroup>,
+    node_groups: &Vec<NodeGroup>,
 ) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     if market.name.is_empty() {
         errors.push(ValidationError::new("name", "name is empty"));
     }
-    if !nodes.iter().any(|n| n.name == market.node) {
-        errors.push(ValidationError::new("node", "no such node"));
+    match market.m_type {
+        MarketType::Reserve => {
+            let node_group_exists = node_groups.iter().any(|ng| ng.name == market.node);
+            if !node_group_exists {
+                errors.push(ValidationError::new(
+                    "node",
+                    "for RESERVE markets, 'node' must be an existing nodegroup name",
+                ));
+            }
+        }
+        _ => {
+            let node_exists = nodes.iter().any(|n| n.name == market.node);
+            if !node_exists {
+                errors.push(ValidationError::new(
+                    "node",
+                    "no such node",
+                ));
+            }
+        }
     }
     if !groups.iter().any(|g| g.name == market.process_group) {
         errors.push(ValidationError::new("processgroup", "no such group"));
