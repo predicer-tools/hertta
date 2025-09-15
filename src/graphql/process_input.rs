@@ -127,16 +127,22 @@ fn validate_process_creation(
     if process.load_max < 0.0 || process.load_max > 1.0 {
         errors.push(ValidationError::new("load_max", "should be in [0, 1]"));
     }
-    if process.min_offline > process.max_offline {
-        errors.push(ValidationError::new(
-            "min_offline",
-            "greater than max_offline",
-        ));
-    }
-    if process.min_online > process.max_online {
+    if process.min_online > process.max_online
+    && process.min_online > 0.0
+    && process.max_online > 0.0
+    {
         errors.push(ValidationError::new(
             "min_online",
             "greater than max_online",
+        ));
+    }
+    if process.min_offline > process.max_offline
+    && process.min_offline > 0.0
+    && process.max_offline > 0.0
+    {
+        errors.push(ValidationError::new(
+            "min_offline",
+            "greater than max_offline",
         ));
     }
     errors
