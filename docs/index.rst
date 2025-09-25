@@ -11,4 +11,3 @@ and usage of the Hertta GraphQL server and its integration with Predicer.
    installation
    running
    graphql_api
-   advanced
