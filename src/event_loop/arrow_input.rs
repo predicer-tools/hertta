@@ -490,7 +490,6 @@ fn processes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError>
 // Function to convert HashMap<String, Group> to RecordBatch
 fn groups_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let groups = &input_data.groups;
-
     let schema = Schema::new(vec![
         Field::new("group_type", DataType::Utf8, false),
         Field::new("entity", DataType::Utf8, false),
@@ -1754,10 +1753,6 @@ fn market_balance_price_to_arrow(input_data: &InputData) -> Result<RecordBatch, 
     // Iterate over **all** markets – removed the m_type == "energy" filter
     // -----------------------------------------------------------------
     for market in input_data.markets.values() {
-        println!(
-            "[market_balance_price_to_arrow] Converting market '{}' (up & down prices)",
-            market.name
-        );
         for (label, forecastable_price) in
             [("up", &market.up_price), ("dw", &market.down_price)].iter()
         {
