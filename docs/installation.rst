@@ -118,9 +118,9 @@ Install Julia
 ----------------------------
 The recommended way to install Julia is to install juliaup which is a small, self-contained binary that will automatically install the latest stable julia binary and help keep it up to date. It also supports installing and using different versions of Julia simultaneously.
 
-**Windows (via Microsoft Store with juliaup)**::
+**Windows (via Microsoft Store with juliaup)**
 
-Install juliaup from the Microsoft Store by running this in the command prompt:
+Install juliaup from the Microsoft Store by running this in the command prompt::
 
     winget install --name Julia --id 9NJNWW8PVKMN -e -s msstore
 
