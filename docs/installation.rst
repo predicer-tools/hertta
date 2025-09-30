@@ -25,41 +25,6 @@ Before cloning the project, you need a few tools installed:
 
 Each section below explains how to install these dependencies on both Windows and Unix systems.
 
-Install Python 3
-----------------
-Hertta uses Python scripts to fetch weather and price data. First check whether Python is already
-installed::
-
-    python --version
-    # or
-    python3 --version
-
-If the command prints a version (e.g. ``Python 3.11.4``), you can skip ahead.
-If Python is missing, follow the instructions for your system.
-
-**Windows**
-
-- Download the latest stable Python 3 installer from the official website: https://www.python.org/downloads/
-- Run the installer and check *"Add Python to PATH"* during installation.
-- After installation, open a new command prompt and verify the installation::
-
-    python --version
-
-**Linux or macOS**
-
-On Debian/Ubuntu based distributions you can install Python 3 using the package manager::
-
-    sudo apt-get update
-    sudo apt-get install python3 python3-dev
-
-On macOS you can install Python via the official installer or Homebrew::
-
-    brew install python3
-
-Verify with::
-
-    python3 --version
-
 Install Rust and Cargo
 ----------------------
 Hertta is a Rust project, so you need the Rust compiler (``rustc``) and package manager (``cargo``).
@@ -94,6 +59,47 @@ When finished, restart your terminal or run ``source $HOME/.cargo/env`` and veri
 
 If you get a *command not found* error, add ``$HOME/.cargo/bin`` to your PATH.
 
+Install Python 3
+----------------
+Hertta uses Python scripts to fetch weather and price data. First check whether Python is already
+installed::
+
+    python --version
+    # or
+    python3 --version
+
+If the command prints a version (e.g. ``Python 3.11.4``), you can skip ahead.
+If Python is missing, follow the instructions for your system.
+
+**Windows**
+
+- Download the latest stable Python 3 installer from the official website: https://www.python.org/downloads/
+- Run the installer and check *"Add Python to PATH"* during installation.
+- After installation, open a new command prompt and verify the installation::
+
+    python --version
+
+**Linux or macOS**
+
+On Debian/Ubuntu based distributions you can install Python 3 using the package manager::
+
+    sudo apt-get update
+    sudo apt-get install python3 python3-dev
+
+Verify with::
+
+    python3 --version
+
+**macOS**
+
+On macOS you can install Python via the official installer or Homebrew::
+
+    brew install python3
+
+Verify with::
+
+    python3 --version
+
 Install Python packages
 -----------------------
 Hertta's scripts depend on several Python packages. It is recommended to use a virtual
@@ -108,13 +114,19 @@ Install the required packages::
 
     pip install pandas numpy fmiopendata entsoe-py
 
-Install Julia (for Predicer)
+Install Julia
 ----------------------------
-If you want to run optimisation jobs using Predicer, install Julia.
+The recommended way to install Julia is to install juliaup which is a small, self-contained binary that will automatically install the latest stable julia binary and help keep it up to date. It also supports installing and using different versions of Julia simultaneously.
 
 **Windows (via Microsoft Store with juliaup)**::
 
+Install juliaup from the Microsoft Store by running this in the command prompt:
+
     winget install --name Julia --id 9NJNWW8PVKMN -e -s msstore
+
+If you cannot access the Microsoft Store, try the experimental `MSIX App Installer <https://install.julialang.org/Julia.appinstaller>`_
+
+
 
 **Linux/macOS (via installer script with juliaup)**::
 
@@ -123,11 +135,3 @@ If you want to run optimisation jobs using Predicer, install Julia.
 Verify with::
 
     julia --version
-
-Notes & Troubleshooting
------------------------
-- **Permissions:** On Linux/macOS you may need to prefix commands with ``sudo`` when installing packages.
-- **PATH issues:** If ``rustc`` or ``cargo`` are not found after installation, open a new terminal or add
-  the relevant paths to your environment.
-- **ENTSO-e API token:** To fetch electricity price forecasts you need an ENTSO-e Transparency Platform token.
-  Register at https://transparency.entsoe.eu and set ``entsoe_api_token`` in your settings file.
