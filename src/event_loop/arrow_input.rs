@@ -61,15 +61,7 @@ fn create_record_batches(
         inflow_blocks_to_arrow(&input_data)?,
     ));
     batches.push(("markets".to_string(), markets_to_arrow(&input_data)?));
-    batches.push((
-        "reserve_realisation".to_string(),
-        market_realisation_to_arrow(&input_data)?,
-    ));
-    batches.push((
-        "reserve_activation_price".to_string(),
-        market_reserve_activation_price_to_arrow(&input_data)?,
-    ));
-    batches.push(("scenarios".to_string(), scenarios_to_arrow(&input_data)?));
+        batches.push(("scenarios".to_string(), scenarios_to_arrow(&input_data)?));
     batches.push((
         "efficiencies".to_string(),
         processes_eff_fun_to_arrow(&input_data)?,
@@ -89,11 +81,21 @@ fn create_record_batches(
         constraints_to_arrow(&input_data)?,
     ));
     batches.push(("bid_slots".to_string(), bid_slots_to_arrow(&input_data)?));
+
+    //timeseries
     batches.push(("cf".to_string(), processes_cf_to_arrow(&input_data)?));
     batches.push(("inflow".to_string(), nodes_inflow_to_arrow(&input_data)?));
     batches.push((
         "market_prices".to_string(),
         market_price_to_arrow(&input_data)?,
+    ));
+    batches.push((
+        "reserve_realisation".to_string(),
+        market_realisation_to_arrow(&input_data)?,
+    ));
+    batches.push((
+        "reserve_activation_price".to_string(),
+        market_reserve_activation_price_to_arrow(&input_data)?,
     ));
     batches.push((
         "price".to_string(),

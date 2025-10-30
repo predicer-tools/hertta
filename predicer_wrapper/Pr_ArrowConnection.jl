@@ -116,14 +116,6 @@ function split_data_to_system_and_time_series(data::OrderedDict{String, DataFram
     end
     system_data, timeseries_data
 
-    # Debug: show what was received and what is missing
-    println("system_data keys:      ", collect(keys(system_data)))
-    println("timeseries_data keys:  ", collect(keys(timeseries_data)))
-    if !isempty(sheetnames_system) || !isempty(sheetnames_timeseries)
-        println(stderr, "missing system sheets:     ", collect(sheetnames_system))
-        println(stderr, "missing timeseries sheets: ", collect(sheetnames_timeseries))
-    end
-
 end
 
 function send_results(socket::Socket, results::Dict{Any, Any})
