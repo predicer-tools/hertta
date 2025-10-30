@@ -555,12 +555,13 @@ impl Risk {
 }
 
 impl BaseInputData {
-
     pub fn expand_to_time_series(&self, time_line: &TimeLine) -> InputData {
+
         let mut groups = Vec::with_capacity(self.node_groups.len() + self.process_groups.len());
         groups.extend(self.node_groups.iter().map(|g| Group::from(g)));
         groups.extend(self.process_groups.iter().map(|g| Group::from(g)));
-        InputData {
+
+        let input_data = InputData {
             temporals: make_temporals(time_line),
             setup: self.setup.expand_to_time_series(time_line, &self.scenarios),
             processes: self
@@ -578,11 +579,7 @@ impl BaseInputData {
                 .iter()
                 .map(|diffusion| diffusion.expand_to_time_series(time_line, &self.scenarios))
                 .collect(),
-            node_delay: self
-                .node_delay
-                .iter()
-                .map(|delay| delay.to_tuple())
-                .collect(),
+            node_delay: self.node_delay.iter().map(|delay| delay.to_tuple()).collect(),
             node_histories: self
                 .node_histories
                 .iter()
@@ -606,13 +603,14 @@ impl BaseInputData {
             gen_constraints: self
                 .gen_constraints
                 .iter()
-                .map(|constraint| {
-                    expand_and_use_name_as_key(constraint, time_line, &self.scenarios)
-                })
+                .map(|constraint| expand_and_use_name_as_key(constraint, time_line, &self.scenarios))
                 .collect(),
-        }
+        };
+
+        input_data
     }
 }
+
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct BaseInputDataSetup {

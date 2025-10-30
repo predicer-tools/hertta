@@ -121,6 +121,12 @@ fn parse_elering_response(
         Value::Object(object) => object,
         _ => return Err("unexpected response content".to_string()),
     };
+    // Debug: print top-level keys
+    println!(
+        "[price-fetch] response keys: {:?}",
+        response_object.keys().collect::<Vec<_>>()
+    );
+
     let success = match response_object
         .get("success")
         .ok_or("'success' field missing in response".to_string())?

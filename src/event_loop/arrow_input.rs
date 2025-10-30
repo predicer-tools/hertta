@@ -143,7 +143,7 @@ fn temps_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
 fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, DataConversionError> {
     let setup = &input_data.setup;
     let parameters = vec![
-        "use_reserves",        // boolean index 0
+        "contains_reserves",        // boolean index 0
         "contains_online",          // boolean index 1
         "contains_states",          // boolean index 2
         "contains_piecewise_eff",   // boolean index 3
@@ -151,7 +151,7 @@ fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, DataCo
         "contains_diffusion",       // boolean index 5
         "contains_delay",           // boolean index 6
         "contains_markets",         // boolean index 7
-        "use_reserve_realisation",  // boolean index 8
+        "reserve_realisation",  // boolean index 8
         "use_market_bids",          // boolean index 9
         "common_timesteps",         // int index 0
         "common_scenario_name",     // string index 0
@@ -201,7 +201,7 @@ fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, DataCo
 
     // Booleans: 0, Floats: 1, Int: 2, String: 3.
     let type_ids = vec![
-        0, // use_reserves
+        0, // contains_reserves
         0, // contains_online
         0, // contains_states
         0, // contains_piecewise_eff
@@ -219,7 +219,7 @@ fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, DataCo
         1, // ramp_dummy_variable_cost
     ];
     let offsets = vec![
-        0,  // use_reserves -> bool[0]
+        0,  // contains_reserves -> bool[0]
         1,  // contains_online -> bool[1]
         2,  // contains_states -> bool[2]
         3,  // contains_piecewise_eff -> bool[3]
@@ -651,25 +651,42 @@ fn node_diffusion_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowE
     RecordBatch::try_new(schema, columns)
 }
 
-// Function to convert node histories to Arrow RecordBatch
 fn node_histories_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let node_histories = &input_data.node_histories;
+
+    // If there are no node histories, build a single timestamp column ("t") from the model temporals
+    if node_histories.is_empty() {
+        let mut fields = Vec::new();
+        let mut columns: Vec<ArrayRef> = Vec::new();
+
+        fields.push(Field::new("t", DataType::Timestamp(TimeUnit::Millisecond, None), false));
+        let timestamps: TimeLine = input_data.temporals.t.clone();
+        columns.push(times_stamp_array_from_temporal_stamps(&timestamps) as ArrayRef);
+
+        let schema = Arc::new(Schema::new(fields));
+        let record_batch = RecordBatch::try_new(schema, columns)?;
+        return Ok(record_batch);
+    }
+
     let mut fields = vec![Field::new("t", DataType::Int32, false)];
     let mut columns: Vec<ArrayRef> = Vec::new();
     let mut time_stamp_columns_data: BTreeMap<String, TimeLine> = BTreeMap::new();
     let mut float_columns_data: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     let mut total_rows = 0;
+
     for node_history in node_histories.values() {
         for ts in &node_history.steps.ts_data {
             let series_len = ts.series.len();
             total_rows = total_rows.max(series_len);
         }
     }
+
     let mut running_number = Vec::with_capacity(total_rows);
     for i in 0..total_rows {
         running_number.push(i as i32 + 1);
     }
     columns.push(Arc::new(Int32Array::from(running_number)) as ArrayRef);
+
     for node_history in node_histories.values() {
         for ts in &node_history.steps.ts_data {
             let column_name_time_stamp = format!("{},t,{}", node_history.node, ts.scenario);
@@ -690,6 +707,7 @@ fn node_histories_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowE
             float_columns_data.insert(column_name_float, values);
         }
     }
+
     for node_history in node_histories.values() {
         for ts in &node_history.steps.ts_data {
             let column_name_time_stamp = format!("{},t,{}", node_history.node, ts.scenario);
@@ -702,6 +720,7 @@ fn node_histories_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowE
             }
         }
     }
+
     let schema = Arc::new(Schema::new(fields));
     let record_batch = RecordBatch::try_new(schema, columns)?;
     Ok(record_batch)
@@ -1199,60 +1218,59 @@ fn scenarios_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError>
 fn processes_eff_fun_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let processes = &input_data.processes;
 
-    // Determine the maximum length of eff_fun across all processes that actually have data
-    let max_length = processes
+    // Longest eff_fun length across processes that actually have data
+    let actual_max = processes
         .values()
-        .filter(|p| !p.eff_fun.is_empty()) // Only consider processes with actual efficiency data
+        .filter(|p| !p.eff_fun.is_empty())
         .map(|p| p.eff_fun.len())
         .max()
         .unwrap_or(0);
 
-    // Create the schema with dynamic columns based on the maximum length
+    // Ensure at least 10 columns (1..=10) even when empty
+    let max_length = actual_max.max(10);
+
+    // Schema: "process" + numeric columns "1".."max_length"
     let mut fields: Vec<Field> = vec![Field::new("process", DataType::Utf8, false)];
     for i in 1..=max_length {
-        fields.push(Field::new(&format!("{}", i), DataType::Float64, true));
+        fields.push(Field::new(&i.to_string(), DataType::Float64, true));
     }
 
-    // Initialize the column data
+    // Column vectors
     let mut process_column: Vec<String> = Vec::new();
+    // One Vec per numeric column; each inner Vec holds Option<f64> for all rows
     let mut column_data: Vec<Vec<Option<f64>>> = vec![Vec::new(); max_length];
 
-    if max_length > 0 {
-        // Construct columns for operation points and efficiency values
-        for (process_name, process) in processes {
-            // Only add rows for processes that have data in `eff_fun`
-            if !process.eff_fun.is_empty() {
-                process_column.push(format!("{},op", process_name));
-                process_column.push(format!("{},eff", process_name));
+    // Build rows: for each process with data, add two rows: "<name>,op" and "<name>,eff"
+    for (process_name, process) in processes {
+        if !process.eff_fun.is_empty() {
+            process_column.push(format!("{},op", process_name));
+            process_column.push(format!("{},eff", process_name));
 
-                for i in 0..max_length {
-                    if i < process.eff_fun.len() {
-                        let (op_point, eff_value) = process.eff_fun[i];
-                        column_data[i].push(Some(op_point));
-                        column_data[i].push(Some(eff_value));
-                    } else {
-                        column_data[i].push(None); // For op
-                        column_data[i].push(None); // For eff
-                    }
+            // For each column i: push op and eff (or None if missing)
+            for i in 0..max_length {
+                if i < process.eff_fun.len() {
+                    let (op_point, eff_value) = process.eff_fun[i];
+                    column_data[i].push(Some(op_point));   // row: "<name>,op"
+                    column_data[i].push(Some(eff_value));  // row: "<name>,eff"
+                } else {
+                    column_data[i].push(None); // "<name>,op"
+                    column_data[i].push(None); // "<name>,eff"
                 }
             }
         }
     }
 
-    // Create an Arrow column for the 'process' field
+    // Arrow arrays (will be length 0 if no processes had eff_fun)
     let process_array = Arc::new(StringArray::from(process_column)) as ArrayRef;
-    let mut columns: Vec<ArrayRef> = vec![process_array];
 
-    // Create Arrow columns for each tuple index in eff_fun
+    let mut columns: Vec<ArrayRef> = vec![process_array];
     for col in column_data {
+        // OK for `col` to be empty -> empty Float64Array
         let arrow_col = Arc::new(Float64Array::from(col)) as ArrayRef;
         columns.push(arrow_col);
     }
 
-    // Create the schema from the fields
     let schema = Arc::new(Schema::new(fields));
-
-    // Construct and return the RecordBatch
     RecordBatch::try_new(schema, columns)
 }
 

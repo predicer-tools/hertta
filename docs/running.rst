@@ -31,9 +31,8 @@ Adjust the settings file
 Open ``settings.toml`` and set the following fields appropriately:
 
 - ``python_exec``: path to the Python interpreter (your virtualenv python is recommended).
-- ``weather_fetcher_script``: path to ``forecasts/weather_forecast.py``.
-- ``price_fetcher_script``: path to ``forecasts/entsoe_forecast.py``.
-- ``location``: country and place fields (used for default forecasts).
+- ``weather_fetcher_script``: is path to ``forecasts/weather_forecast.py``, dont change
+- ``price_fetcher_script``: is path to ``forecasts/entsoe_forecast.py``, dont change
 - ``entsoe_api_token``: your ENTSO-e token for price forecasts.
 - Optional: ``julia_exec``, ``predicer_runner_project``, ``predicer_project`` if using Julia/Predicer.
 

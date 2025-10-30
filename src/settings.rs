@@ -37,6 +37,7 @@ pub struct Settings {
     pub weather_fetcher_script: String,
     #[serde(skip, default = "default_entsoe_fetcher_script")]
     pub price_fetcher_script: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[graphql(description = "Device location.")]
     pub location: Option<LocationSettings>,
         #[graphql(description = "ENTSO-E API TOKEN.")]

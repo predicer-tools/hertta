@@ -15,6 +15,7 @@ pub fn create_scenario(name: String, weight: f64, scenarios: &mut Vec<Scenario>)
         Err(error) => return error.into(),
     };
     scenarios.push(scenario);
+
     MaybeError::new_ok()
 }
 

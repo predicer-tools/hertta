@@ -115,6 +115,15 @@ function split_data_to_system_and_time_series(data::OrderedDict{String, DataFram
         println(stderr, "did not receive all data frames")
     end
     system_data, timeseries_data
+
+    # Debug: show what was received and what is missing
+    println("system_data keys:      ", collect(keys(system_data)))
+    println("timeseries_data keys:  ", collect(keys(timeseries_data)))
+    if !isempty(sheetnames_system) || !isempty(sheetnames_timeseries)
+        println(stderr, "missing system sheets:     ", collect(sheetnames_system))
+        println(stderr, "missing timeseries sheets: ", collect(sheetnames_timeseries))
+    end
+
 end
 
 function send_results(socket::Socket, results::Dict{Any, Any})
@@ -155,6 +164,7 @@ function main()
     try
         @show methods(Predicer.compile_input_data)
         input_data = Predicer.compile_input_data(system_data, timeseries_data, temporals)
+        @show typeof(input_data)   # DEBUG
         mc, input_data = Predicer.generate_model(input_data)
         Predicer.solve_model(mc)
         result_dataframes = Predicer.get_all_result_dataframes(mc, input_data)

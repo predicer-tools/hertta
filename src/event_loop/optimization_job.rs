@@ -636,7 +636,6 @@ fn update_npe_market_prices(
     electricity_price_data: &ElectricityPriceData,
 ) -> Result<(), String> {
     // 1) We must have a base price series to work with.
-    println!("pöö");
     let base_price = electricity_price_data
         .price_data
         .as_ref()
