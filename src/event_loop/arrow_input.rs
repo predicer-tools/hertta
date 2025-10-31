@@ -145,7 +145,7 @@ fn temps_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
 fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, DataConversionError> {
     let setup = &input_data.setup;
     let parameters = vec![
-        "contains_reserves",        // boolean index 0
+        "use_reserves",        // boolean index 0
         "contains_online",          // boolean index 1
         "contains_states",          // boolean index 2
         "contains_piecewise_eff",   // boolean index 3
@@ -153,7 +153,7 @@ fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, DataCo
         "contains_diffusion",       // boolean index 5
         "contains_delay",           // boolean index 6
         "contains_markets",         // boolean index 7
-        "reserve_realisation",  // boolean index 8
+        "use_reserve_realisation",  // boolean index 8
         "use_market_bids",          // boolean index 9
         "common_timesteps",         // int index 0
         "common_scenario_name",     // string index 0
@@ -164,7 +164,7 @@ fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, DataCo
     ];
 
     let bool_array = BooleanArray::from(vec![
-        setup.contains_reserves,
+        setup.use_reserves,
         setup.contains_online,
         setup.contains_states,
         setup.contains_piecewise_eff,
@@ -203,7 +203,7 @@ fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, DataCo
 
     // Booleans: 0, Floats: 1, Int: 2, String: 3.
     let type_ids = vec![
-        0, // contains_reserves
+        0, // use_reserves
         0, // contains_online
         0, // contains_states
         0, // contains_piecewise_eff
@@ -211,7 +211,7 @@ fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, DataCo
         0, // contains_diffusion
         0, // contains_delay
         0, // contains_markets
-        0, // reserve_realisation
+        0, // use_reserve_realisation
         0, // use_market_bids
         2, // common_timesteps
         3, // common_scenario_name
@@ -221,7 +221,7 @@ fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, DataCo
         1, // ramp_dummy_variable_cost
     ];
     let offsets = vec![
-        0,  // contains_reserves -> bool[0]
+        0,  // use_reserves -> bool[0]
         1,  // contains_online -> bool[1]
         2,  // contains_states -> bool[2]
         3,  // contains_piecewise_eff -> bool[3]
@@ -229,7 +229,7 @@ fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, DataCo
         5,  // contains_diffusion -> bool[5]
         6,  // contains_delay -> bool[6]
         7,  // contains_markets -> bool[7]
-        8,  // reserve_realisation -> bool[8]
+        8,  // use_reserve_realisation -> bool[8]
         9,  // use_market_bids -> bool[9]
         0,  // common_timesteps -> int[0]
         0,  // common_scenario_name -> str[0]
