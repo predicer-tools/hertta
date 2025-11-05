@@ -9,6 +9,7 @@ Pkg.add("DataFrames")
 Pkg.add("ZMQ")
 Pkg.add("OrderedCollections")
 Pkg.add("TimeZones")
+
 println("Running Julia script with all dependencies activated and instantiated.")
 
 using Arrow
@@ -17,6 +18,7 @@ using ZMQ
 using OrderedCollections
 using TimeZones
 using Dates
+
 
 cd(predicer_project_path)
 Pkg.activate(".")
@@ -154,9 +156,7 @@ function main()
     (system_data, timeseries_data) = split_data_to_system_and_time_series(data_dict)
     result_dataframes = nothing
     try
-        @show methods(Predicer.compile_input_data)
         input_data = Predicer.compile_input_data(system_data, timeseries_data, temporals)
-        @show typeof(input_data)   # DEBUG
         mc, input_data = Predicer.generate_model(input_data)
         Predicer.solve_model(mc)
         result_dataframes = Predicer.get_all_result_dataframes(mc, input_data)
