@@ -19,12 +19,6 @@ pub fn to_reserve_type(self) -> ReserveType {
     }
 }
 
-#[derive(GraphQLInputObject, Debug, Clone)]
-pub struct ReserveTypeUpdate {
-    pub name: Option<String>,
-    pub ramp_rate: Option<f64>,
-}
-
 pub fn create_reserve_type(reserve_type: NewReserveType, reserve_types: &mut Vec<ReserveType>) -> ValidationErrors {
     let errors = validate_reserve_type_creation(&reserve_type);
     if !errors.is_empty() {
@@ -42,7 +36,7 @@ fn validate_reserve_type_creation(reserve_type: &NewReserveType) -> Vec<Validati
     errors
 }
 
-pub fn delete_reserve_type(parameter: &str, reserve_types: &mut Vec<ReserveType>) -> MaybeError {
+pub fn _delete_reserve_type(parameter: &str, reserve_types: &mut Vec<ReserveType>) -> MaybeError {
     delete::delete_named(parameter, reserve_types)
 }
 

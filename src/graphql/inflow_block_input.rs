@@ -47,7 +47,7 @@ fn validate_inflow_block_creation(inflow_block: &NewInflowBlock) -> Vec<Validati
     errors
 }
 
-pub fn delete_inflow_block(parameter: &str, inflow_blocks: &mut Vec<BaseInflowBlock>) -> MaybeError {
+pub fn _delete_inflow_block(parameter: &str, inflow_blocks: &mut Vec<BaseInflowBlock>) -> MaybeError {
     delete::delete_named(parameter, inflow_blocks)
 }
 

@@ -32,6 +32,7 @@ pub struct ForecastValueInput {
     pub series: Option<Vec<f64>>,
     pub forecast: Option<String>,
     pub f_type: Option<String>,
+    pub api_key: Option<String>,
 }
 
 #[derive(GraphQLObject, Clone, Debug, Deserialize, Serialize)]
@@ -46,25 +47,31 @@ impl TryFrom<ForecastValueInput> for ForecastValue {
     fn try_from(input: ForecastValueInput) -> Result<Self, Self::Error> {
         let scenario = input.scenario;
 
-        match (input.forecast, input.f_type, input.constant, input.series) {
-            (Some(name), Some(f_type), None, None) => Ok(ForecastValue {
+        match (input.forecast, input.f_type, input.constant, input.series, input.api_key) {
+            (Some(name), Some(f_type), None, None, api_key) => Ok(ForecastValue {
                 scenario,
-                value: BaseForecastable::Forecast(Forecast::new(name, f_type)),
+                value: BaseForecastable::Forecast(Forecast::new(name, f_type, api_key)),
             }),
-            (None, None, Some(c), None) => Ok(ForecastValue {
+
+            (None, None, Some(c), None, None) => Ok(ForecastValue {
                 scenario,
                 value: BaseForecastable::Constant(Constant { value: c }),
             }),
-            (None, None, None, Some(series)) => Ok(ForecastValue {
+            (None, None, None, Some(series), None) => Ok(ForecastValue {
                 scenario,
                 value: BaseForecastable::FloatList(FloatList { values: series }),
             }),
-            (Some(_), None, _, _) | (None, Some(_), _, _) => Err(
-                "`forecast` and `f_type` must be provided **together**.".into(),
+
+            // Error: only one of forecast / f_type given
+            (Some(_), None, _, _, _) | (None, Some(_), _, _, _) => Err(
+                "`forecast`, `f_type`, and optionally `api_key` must be provided **together**."
+                    .into(),
             ),
+
+            // Error: invalid combination
             _ => Err(
                 "Provide **exactly one** of the following:\n\
-                 • `forecast` + `f_type`\n\
+                 • `forecast` + `f_type` (+ optional `api_key`)\n\
                  • `constant`\n\
                  • `series`"
                     .into(),

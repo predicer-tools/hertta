@@ -196,11 +196,12 @@ pub struct Process {
 pub struct Forecast {
     name: String,
     f_type: String,
+    api_key: Option<String>,
 }
 
 impl Forecast {
-    pub fn new(name: String, f_type: String) -> Self {
-        Forecast { name, f_type }
+    pub fn new(name: String, f_type: String, api_key: Option<String>) -> Self {
+        Forecast { name, f_type, api_key }
     }
 
     pub fn name(&self) -> &str {

@@ -136,26 +136,44 @@ pub fn connect_market_prices_to_forecast(
     market_name: &str,
     forecast_name: String,
     forecast_type: String,
+    api_key: Option<String>,
     markets: &mut Vec<BaseMarket>,
 ) -> MaybeError {
     let market = match markets.iter_mut().find(|m| m.name == market_name) {
         Some(market) => market,
         None => return "no such market".into(),
     };
+
     market.price = vec![ForecastValue {
         scenario: None,
-        value: BaseForecastable::Forecast(Forecast::new(forecast_name.clone(), forecast_type.clone())),
+        value: BaseForecastable::Forecast(Forecast::new(
+            forecast_name.clone(),
+            forecast_type.clone(),
+            api_key.clone(),
+        )),
     }];
+
     market.up_price = vec![ForecastValue {
         scenario: None,
-        value: BaseForecastable::Forecast(Forecast::new(forecast_name.clone(),forecast_type.clone())),
+        value: BaseForecastable::Forecast(Forecast::new(
+            forecast_name.clone(),
+            forecast_type.clone(),
+            api_key.clone(),
+        )),
     }];
+
     market.down_price = vec![ForecastValue {
         scenario: None,
-        value: BaseForecastable::Forecast(Forecast::new(forecast_name.clone(),forecast_type.clone())),
+        value: BaseForecastable::Forecast(Forecast::new(
+            forecast_name.clone(),
+            forecast_type.clone(),
+            api_key,
+        )),
     }];
+
     MaybeError::new_ok()
 }
+
 
 pub fn delete_market(name: &str, markets: &mut Vec<BaseMarket>) -> MaybeError {
     delete::delete_named(name, markets)

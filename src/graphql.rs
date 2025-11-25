@@ -108,25 +108,6 @@ enum SettingsResult {
 }
 
 #[derive(GraphQLObject)]
-struct Error {
-    message: String,
-}
-
-impl From<&str> for Error {
-    fn from(value: &str) -> Self {
-        Error {
-            message: String::from(value),
-        }
-    }
-}
-
-impl From<String> for Error {
-    fn from(value: String) -> Self {
-        Error { message: value }
-    }
-}
-
-#[derive(GraphQLObject)]
 struct MaybeError {
     #[graphql(description = "Error message; if null, the operation succeeded.")]
     message: Option<String>,
@@ -674,13 +655,16 @@ impl Mutation {
         node_name: String,
         forecast_name: String,
         forecast_type: String,
+        api_key: Option<String>,
         context: &HerttaContext,
     ) -> MaybeError {
         let mut model = context.model.lock().await;
+
         node_input::connect_node_inflow_to_temperature_forecast(
             &node_name,
             forecast_name,
             forecast_type,
+            api_key,
             &mut model.input_data.nodes,
         )
     }
@@ -808,6 +792,7 @@ impl Mutation {
         market_name: String,
         forecast_name: String,
         forecast_type: String,
+        api_key: Option<String>,
         context: &HerttaContext,
     ) -> MaybeError {
         let mut model = context.model.lock().await;
@@ -815,6 +800,7 @@ impl Mutation {
             &market_name,
             forecast_name,
             forecast_type,
+            api_key,
             &mut model.input_data.markets,
         )
     }

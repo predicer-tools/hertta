@@ -39,18 +39,6 @@ impl NewNode {
     }
 }
 
-#[derive(GraphQLInputObject)]
-pub struct NodeUpdate {
-    name: Option<String>,
-    is_commodity: Option<bool>,
-    is_market: Option<bool>,
-    is_state: Option<bool>,
-    is_res: Option<bool>,
-    is_inflow: Option<bool>,
-    cost: Option<f64>,
-    inflow: Option<f64>,
-}
-
 pub fn create_node(
     node: NewNode,
     nodes: &mut Vec<BaseNode>,
@@ -93,16 +81,23 @@ pub fn connect_node_inflow_to_temperature_forecast(
     node_name: &str,
     forecast_name: String,
     forecast_type: String,
+    api_key: Option<String>,
     nodes: &mut Vec<BaseNode>,
 ) -> MaybeError {
     let node = match nodes.iter_mut().find(|n| n.name == node_name) {
         Some(node) => node,
         None => return "no such node".into(),
     };
+
     node.inflow = vec![ForecastValue {
         scenario: None,
-        value: BaseForecastable::Forecast(Forecast::new(forecast_name, forecast_type)),
+        value: BaseForecastable::Forecast(Forecast::new(
+            forecast_name,
+            forecast_type,
+            api_key,
+        )),
     }];
+
     MaybeError::new_ok()
 }
 
