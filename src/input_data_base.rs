@@ -2747,7 +2747,7 @@ mod tests {
     fn forecast_values_to_forecastable_returns_forecast_variant() {
         let fv = ForecastValue {
             scenario: None,
-            value: BaseForecastable::Forecast(Forecast::new("MyForecast".to_string(),"Energy".to_string())),
+            value: BaseForecastable::Forecast(Forecast::new("MyForecast".to_string(),"Energy".to_string(), None)),
         };
         let forecast_values = vec![fv];
         let scenarios = vec![Scenario::new("S1", 1.0).unwrap()];
@@ -2765,7 +2765,7 @@ mod tests {
     fn forecast_values_to_time_series_data_errors_on_forecast_variant() {
         let fv = ForecastValue {
             scenario: Some("S1".to_string()),
-            value: BaseForecastable::Forecast(Forecast::new("BadForecast".to_string(),"Energy".to_string())),
+            value: BaseForecastable::Forecast(Forecast::new("BadForecast".to_string(),"Energy".to_string(), None)),
         };
         let forecast_values = vec![fv];
         let scenarios = vec![Scenario::new("S1", 1.0).unwrap()];
