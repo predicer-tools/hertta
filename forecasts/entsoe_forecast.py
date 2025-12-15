@@ -1,3 +1,9 @@
+# /// script
+# dependencies = [
+#   "entsoe-py",
+#   "pandas",
+# ]
+# ///
 import argparse
 import json
 import pandas as pd
