@@ -34,7 +34,7 @@ use gen_constraint_input::NewGenConstraint;
 use input_data_setup_input::InputDataSetupInput;
 use juniper::{
     graphql_object, Context, EmptySubscription, FieldResult, GraphQLInputObject, GraphQLObject,
-    GraphQLUnion, Nullable, RootNode,
+    GraphQLUnion, Nullable, RootNode
 };
 use market_input::NewMarket;
 use node_delay_input::NewNodeDelay;
@@ -52,6 +52,7 @@ use time_line_input::TimeLineUpdate;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use topology_input::NewTopology;
+
 
 #[derive(Debug, GraphQLObject)]
 struct ValidationError {

@@ -124,11 +124,6 @@ impl TimeLineSettings {
         if step > duration {
             return Err("time line step should not exceed duration".to_string());
         }
-        if let TimeLineStart::CustomStartTime(ref custom_start) = self.start {
-            if custom_start.start_time < Utc::now() {
-                return Err("custom start time cannot be in the past.".to_string());
-            }
-        }
         Ok(())
     }
     pub fn start(&self) -> &TimeLineStart {
@@ -156,14 +151,6 @@ impl TimeLineSettings {
         Ok(())
     }
     pub fn set_start(&mut self, start: TimeLineStart) -> Result<(), String> {
-        match &start {
-            TimeLineStart::CustomStartTime(custom_start) => {
-                if custom_start.start_time < Utc::now() {
-                    return Err("custom start time cannot be in the past.".to_string());
-                }
-            }
-            _ => {}
-        }
         self.start = start;
         Ok(())
     }
@@ -185,7 +172,6 @@ pub fn compute_timeline_start(time_line_settings: &TimeLineSettings) -> TimeStam
 mod tests {
     use super::*;
     use std::error::Error;
-    use chrono::{Utc, TimeZone};
     
     #[test]
     fn constructs_time_line_correctly_with_current_hour() {
@@ -202,21 +188,6 @@ mod tests {
             assert_eq!(clock_choice.choice, Clock::CurrentHour);
         } else {
             panic!("Expected ClockChoice for start.");
-        }
-    }
-
-    #[test]
-    fn rejects_past_custom_start_time() {
-        let duration = Duration::try_new(4, 0, 0).expect("constructing duration should succeed");
-        let step = Duration::try_new(0, 15, 0).expect("constructing step should succeed");
-        let custom_start_time = CustomStartTime {
-            start_time: Utc.with_ymd_and_hms(2020, 1, 1, 12, 0, 0).unwrap(),
-        };
-        let start = TimeLineStart::CustomStartTime(custom_start_time);
-        if let Err(message) = TimeLineSettings::try_new(duration, step, start) {
-            assert_eq!(message, "custom start time cannot be in the past.");
-        } else {
-            panic!("Validation should have failed for past custom start time.");
         }
     }
 
