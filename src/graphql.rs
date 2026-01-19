@@ -52,6 +52,7 @@ use time_line_input::TimeLineUpdate;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use topology_input::NewTopology;
+use serde_json;
 
 
 #[derive(Debug, GraphQLObject)]
@@ -478,6 +479,30 @@ impl Mutation {
         let model = context.model.lock().await;
         let result = model::write_model_to_file(&model, &file_path).err();
         MaybeError { message: result }
+    }
+
+    #[graphql(description = "Replace the current model with a model provided in JSON form and save it to disk.")]
+    async fn load_model_json(
+        model_json: String,
+        context: &HerttaContext,
+    ) -> MaybeError {
+        match serde_json::from_str::<Model>(&model_json) {
+            Ok(new_model) => {
+                let mut model_guard = context.model.lock().await;
+                *model_guard = new_model;
+
+                let file_path = model::make_model_file_path();
+                if let Err(err) = model::write_model_to_file(&model_guard, &file_path) {
+                    return MaybeError { message: Some(err) };
+                }
+                MaybeError::new_ok()
+            }
+            Err(err) => {
+                MaybeError {
+                    message: Some(format!("Failed to parse JSON: {}", err)),
+                }
+            }
+        }
     }
 
     #[graphql(description = "Clear input data from model.")]
