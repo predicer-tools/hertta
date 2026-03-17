@@ -1,5 +1,5 @@
 use config::builder::{ConfigBuilder, DefaultState};
-use config::{Config, ConfigError};
+use config::{Config, ConfigError, Environment};
 use juniper::GraphQLObject;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -25,7 +25,7 @@ pub struct Settings {
     #[serde(default = "default_predicer_project")]
     pub predicer_project: String,
     #[graphql(ignore)]
-    #[serde(skip, default = "default_predicer_runner_script")]
+    #[serde(default = "default_predicer_runner_script")]
     pub predicer_runner_script: String,
     #[graphql(ignore)]
     #[serde(default = "default_predicer_port")]
@@ -33,9 +33,9 @@ pub struct Settings {
     #[graphql(ignore)]
     pub python_exec: String,
     #[graphql(ignore)]
-    #[serde(skip, default = "default_weather_fetcher_script")]
+    #[serde(default = "default_weather_fetcher_script")]
     pub weather_fetcher_script: String,
-    #[serde(skip, default = "default_entsoe_fetcher_script")]
+    #[serde(default = "default_entsoe_fetcher_script")]
     pub price_fetcher_script: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[graphql(description = "Device location.")]
@@ -62,7 +62,7 @@ impl Default for Settings {
 }
 
 fn default_predicer_project_path() -> PathBuf {
-    PathBuf::from("Predicer")
+    ["hertta", "Predicer"].iter().collect()
 }
 
 fn default_predicer_project() -> String {
@@ -73,9 +73,9 @@ fn default_predicer_project() -> String {
 }
 
 fn default_predicer_runner_path() -> PathBuf {
-    ["predicer_wrapper", "Pr_ArrowConnection.jl"]
+    ["hertta", "predicer_wrapper", "Pr_ArrowConnection.jl"]
         .iter()
-        .collect::<PathBuf>()
+        .collect()
 }
 
 fn default_predicer_runner_script() -> String {
@@ -90,7 +90,7 @@ fn default_predicer_port() -> u16 {
 }
 
 fn default_weather_fetcher_script() -> String {
-    let path = ["forecasts", "weather_forecast.py"]
+    let path = ["hertta", "forecasts", "weather_forecast.py"]
         .iter()
         .collect::<PathBuf>();
     path.to_str()
@@ -99,7 +99,7 @@ fn default_weather_fetcher_script() -> String {
 }
 
 fn default_entsoe_fetcher_script() -> String {
-    let path = ["forecasts", "entsoe_forecast.py"]
+    let path = ["hertta", "forecasts", "entsoe_forecast.py"]
         .iter()
         .collect::<PathBuf>();
     path.to_str()
@@ -162,6 +162,13 @@ fn make_config_builder(
     config
         .set_default(PYTHON_EXEC_FIELD, python_exec_from_path)
         .expect("failed to add default Julia executable to config builder")
+        .set_default("predicer_runner_script", default_predicer_runner_script())
+        .expect("failed to add default Predicer runner script to config builder")
+        .set_default("weather_fetcher_script", default_weather_fetcher_script())
+        .expect("failed to add default weather fetcher script to config builder")
+        .set_default("price_fetcher_script", default_entsoe_fetcher_script())
+        .expect("failed to add default price fetcher script to config builder")
+        .add_source(Environment::default())
 }
 
 pub fn make_settings(
