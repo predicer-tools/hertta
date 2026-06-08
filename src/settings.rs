@@ -132,6 +132,20 @@ pub fn make_settings_file_path() -> PathBuf {
     config_path().join("settings.toml")
 }
 
+pub fn write_settings_to_file(settings: &Settings) -> Result<(), String> {
+    let file_path = make_settings_file_path();
+    let parent = file_path
+        .parent()
+        .ok_or_else(|| "settings file should have a parent directory".to_string())?;
+
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("failed to create settings directory: {error}"))?;
+    let serialized = toml::to_string_pretty(settings)
+        .map_err(|error| format!("failed to serialize settings: {error}"))?;
+    std::fs::write(&file_path, serialized)
+        .map_err(|error| format!("failed to write settings file: {error}"))
+}
+
 fn make_config_builder(
     environment_variables: &HashMap<String, String>,
 ) -> ConfigBuilder<DefaultState> {

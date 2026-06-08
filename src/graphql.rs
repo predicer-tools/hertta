@@ -991,6 +991,12 @@ impl Mutation {
             Nullable::ExplicitNull => settings.location = None,
             Nullable::ImplicitNull => (),
         }
+        if let Err(error) = crate::settings::write_settings_to_file(&settings) {
+            return SettingsResult::Err(ValidationErrors::from(ValidationError::new(
+                "settings",
+                &error,
+            )));
+        }
         if !errors.is_empty() {
             return SettingsResult::Err(ValidationErrors::from(errors));
         }
