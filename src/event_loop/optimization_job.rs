@@ -12,7 +12,7 @@ use crate::input_data_base::BaseForecastable;
 use crate::model::Model;
 use crate::scenarios::Scenario;
 use crate::settings::{LocationSettings, Settings};
-use crate::time_line_settings::{TimeLineSettings, compute_timeline_start};
+use crate::time_line_settings::{compute_timeline_start, TimeLineSettings};
 use crate::{TimeLine, TimeStamp};
 use arrow::array::timezone::Tz;
 use arrow::array::{self, Array};
@@ -20,6 +20,7 @@ use arrow::datatypes::{DataType, Float64Type, TimeUnit, TimestampMillisecondType
 use arrow::record_batch::RecordBatch;
 use arrow_ipc::reader::StreamReader;
 use chrono::{DateTime, DurationRound, TimeDelta, Utc};
+use indexmap::IndexMap;
 use juniper::GraphQLObject;
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -31,7 +32,6 @@ use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use zmq::{Context, Socket};
-use indexmap::IndexMap;
 
 const PREDICER_SEND_FLAGS: i32 = 0;
 const PREDICER_RECEIVE_FLAGS: i32 = 0;
@@ -55,7 +55,7 @@ pub async fn start(
     {
         return;
     }
-    
+
     let settings_snapshot = settings.lock().await.clone();
     let model_snapshot = model.lock().await.clone();
     let optimization_data = OptimizationData::with_input_data(model_snapshot.input_data);
@@ -128,21 +128,18 @@ pub async fn start(
     let scenarios_clone = optimization_data.input_data.scenarios.clone();
     let python_exec_clone = settings_snapshot.python_exec.clone();
     let price_fetcher_script_clone = settings_snapshot.price_fetcher_script.clone();
-    let api_token = settings_snapshot
-        .entsoe_api_token
-        .clone()                               // Option<String>
-        .expect("ENTSO-E token must be configured");
+    let api_token = settings_snapshot.entsoe_api_token.clone();
     let fetch_electricity_price_handle = tokio::spawn(async move {
-    fetch_electricity_price_task(
-        &api_token,
-        &python_exec_clone,
-        &price_fetcher_script_clone,
-        &location_clone,
-        &scenarios_clone,
-        rx_elec,
-        tx_update,
-    )
-    .await
+        fetch_electricity_price_task(
+            api_token.as_deref(),
+            &python_exec_clone,
+            &price_fetcher_script_clone,
+            &location_clone,
+            &scenarios_clone,
+            rx_elec,
+            tx_update,
+        )
+        .await
     });
     let update_model_data_handle =
         tokio::spawn(async move { generate_model_task(rx_update, tx_batches).await });
@@ -211,19 +208,18 @@ pub async fn start(
                             .expect("setting job status should not fail");
                         return;
                     }
-                };               
-                let control_data =
-                    match controls_from_result_batch(&result_batch) {
-                        Ok(d) => d,
-                        Err(error) => {
-                            job_store
-                                .set_job_status(job_id, Arc::new(JobStatus::Failed(error.into())))
-                                .await
-                                .expect("setting job status should not fail");
-                            return;
-                        }
-                    };
-                
+                };
+                let control_data = match controls_from_result_batch(&result_batch) {
+                    Ok(d) => d,
+                    Err(error) => {
+                        job_store
+                            .set_job_status(job_id, Arc::new(JobStatus::Failed(error.into())))
+                            .await
+                            .expect("setting job status should not fail");
+                        return;
+                    }
+                };
+
                 let result_data = OptimizationOutcome::new(time_stamps, control_data);
                 job_store
                     .set_job_status(
@@ -265,7 +261,6 @@ async fn find_available_port() -> Result<u16, io::Error> {
     Ok(port)
 }
 
-
 fn time_stamps_from_result_batch(batch: &RecordBatch) -> Result<Vec<DateTime<Utc>>, String> {
     match batch.column_by_name("t") {
         Some(time_stamp_column) => match time_stamp_column.data_type() {
@@ -297,9 +292,7 @@ fn convert_time_stamp_column_to_vec(column: &dyn Array, time_zone: &str) -> Vec<
     }
     time_stamps_in_vec
 }
-fn controls_from_result_batch(
-    batch: &RecordBatch,
-) -> Result<Vec<ControlSignal>, String> {
+fn controls_from_result_batch(batch: &RecordBatch) -> Result<Vec<ControlSignal>, String> {
     let mut control_data = Vec::with_capacity(batch.num_columns());
 
     for (i, field) in batch.schema().fields().iter().enumerate() {
@@ -311,7 +304,7 @@ fn controls_from_result_batch(
                 let float_array = array::as_primitive_array::<Float64Type>(column);
                 let data_as_vec = float_array
                     .into_iter()
-                    .map(|x| x.unwrap()) 
+                    .map(|x| x.unwrap())
                     .collect::<Vec<f64>>();
                 control_data.push(ControlSignal {
                     name: column_name,
@@ -321,8 +314,7 @@ fn controls_from_result_batch(
             other_type => {
                 println!(
                     "Skipping column '{}' with unsupported type '{}'",
-                    column_name,
-                    other_type
+                    column_name, other_type
                 );
             }
         }
@@ -580,9 +572,11 @@ async fn generate_model_task(
             .time_data
             .as_ref()
             .ok_or("generate_model_task: didn't receive time data".to_string())?;
-        let mut input_data = optimization_data.input_data.expand_to_time_series(time_line);
+        let mut input_data = optimization_data
+            .input_data
+            .expand_to_time_series(time_line);
         input_data.infer_feature_flags();
-        
+
         if let Some(weather_data) = optimization_data.weather_data.take() {
             if let Err(e) = update_outside_node(&mut input_data, weather_data) {
                 return Err(format!(
@@ -593,9 +587,11 @@ async fn generate_model_task(
         } else {
             println!("No weather data available; skipping update of outside node inflow.");
         }
-        
+
         if let Some(electricity_price_data) = optimization_data.elec_price_data.take() {
-            if let Err(e) = update_npe_market_prices(&mut input_data.markets, &electricity_price_data) {
+            if let Err(e) =
+                update_npe_market_prices(&mut input_data.markets, &electricity_price_data)
+            {
                 return Err(format!(
                     "update_model_data_task: failed to update NPE market prices: {}",
                     e
@@ -604,7 +600,7 @@ async fn generate_model_task(
         } else {
             println!("No electricity price data available; skipping update of market prices.");
         }
-        
+
         input_data.check_ts_data_against_temporals()?;
         if tx.send(input_data).is_err() {
             return Err("update_model_data_task: failed to send generated input data".to_string());
@@ -615,21 +611,17 @@ async fn generate_model_task(
 }
 
 fn scale_ts_data(src: &TimeSeriesData, factor: f64) -> TimeSeriesData {
-    let scaled = src.ts_data
+    let scaled = src
+        .ts_data
         .iter()
         .map(|ts| TimeSeries {
             scenario: ts.scenario.clone(),
-            series: ts.series
-                .iter()
-                .map(|(ts, v)| (*ts, v * factor))
-                .collect(),
+            series: ts.series.iter().map(|(ts, v)| (*ts, v * factor)).collect(),
         })
         .collect();
 
     TimeSeriesData { ts_data: scaled }
 }
-
-
 
 fn update_npe_market_prices(
     markets: &mut IndexMap<String, Market>,
@@ -642,15 +634,15 @@ fn update_npe_market_prices(
         .ok_or("ElectricityPriceData::price_data is None")?;
 
     // 2) Prepare the three flavours once so we can reuse the clones.
-    let price_ts      = base_price.clone();
-    let up_price_ts   = scale_ts_data(base_price, 1.10);
+    let price_ts = base_price.clone();
+    let up_price_ts = scale_ts_data(base_price, 1.10);
     let down_price_ts = scale_ts_data(base_price, 0.90);
 
     // 3) Update every market that still carries a Forecast.
     for market in markets.values_mut() {
         if matches!(market.price, Forecastable::Forecast(_)) {
-            market.price      = Forecastable::TimeSeriesData(price_ts.clone());
-            market.up_price   = Forecastable::TimeSeriesData(up_price_ts.clone());
+            market.price = Forecastable::TimeSeriesData(price_ts.clone());
+            market.up_price = Forecastable::TimeSeriesData(up_price_ts.clone());
             market.down_price = Forecastable::TimeSeriesData(down_price_ts.clone());
         }
     }
@@ -681,7 +673,10 @@ fn update_outside_node(
             .ok_or_else(|| format!("{} node has no state", node_name))?;
 
         if !state.is_temp {
-            return Err(format!("{} node state is not marked as temperature", node_name));
+            return Err(format!(
+                "{} node state is not marked as temperature",
+                node_name
+            ));
         }
         if state.state_min > state.state_max {
             return Err(format!(
@@ -777,11 +772,14 @@ pub async fn fetch_weather_data_task(
 ) -> Result<(), String> {
     if let Ok(mut optimization_data) = rx.await {
         let requires_weather = optimization_data.input_data.nodes.iter().any(|node| {
-            node.inflow.iter().any(|fv| matches!(fv.value, BaseForecastable::Forecast(_)))
-        });        
+            node.inflow
+                .iter()
+                .any(|fv| matches!(fv.value, BaseForecastable::Forecast(_)))
+        });
 
         if requires_weather {
-            let time_line = optimization_data.time_data
+            let time_line = optimization_data
+                .time_data
                 .as_ref()
                 .ok_or("fetch_weather_data_task: did not receive time data".to_string())?;
             let start_time = time_line.first().ok_or("empty time line".to_string())?;
@@ -796,8 +794,9 @@ pub async fn fetch_weather_data_task(
             ) {
                 Ok(weather_values) => {
                     utilities::check_stamps_match(&weather_values, &time_line, "weather forecast")?;
-                    let values = time_series::extract_values_from_pairs_checked(&weather_values, &time_line)
-                        .map_err(|e| format!("fetch_weather_data: {}", e))?;
+                    let values =
+                        time_series::extract_values_from_pairs_checked(&weather_values, &time_line)
+                            .map_err(|e| format!("fetch_weather_data: {}", e))?;
                     optimization_data.weather_data = Some(update_weather_data(
                         time_line,
                         &values,
@@ -805,7 +804,10 @@ pub async fn fetch_weather_data_task(
                     ));
                 }
                 Err(e) => {
-                    return Err(format!("fetch_weather_data_task: failed to fetch weather data: {}", e));
+                    return Err(format!(
+                        "fetch_weather_data_task: failed to fetch weather data: {}",
+                        e
+                    ));
                 }
             }
         } else {
@@ -866,7 +868,7 @@ fn create_modified_price_series_data(
 }
 
 async fn fetch_electricity_price_task(
-    api_token: &str,
+    api_token: Option<&str>,
     python_exec: &str,
     price_fetcher_script: &str,
     location: &LocationSettings,
@@ -876,8 +878,8 @@ async fn fetch_electricity_price_task(
 ) -> Result<(), String> {
     if let Ok(mut optimization_data) = rx.await {
         let mut has_elering = false;
-        let mut has_entsoe  = false;
-        let mut invalid     = Vec::<String>::new();
+        let mut has_entsoe = false;
+        let mut invalid = Vec::<String>::new();
 
         for market in &optimization_data.input_data.markets {
             for fv in &market.price {
@@ -885,8 +887,8 @@ async fn fetch_electricity_price_task(
                     if f.f_type() == "electricity" {
                         match f.name() {
                             "ELERING" => has_elering = true,
-                            "ENTSOE"  => has_entsoe  = true,
-                            other     => invalid.push(other.to_owned()),
+                            "ENTSOE" => has_entsoe = true,
+                            other => invalid.push(other.to_owned()),
                         }
                     }
                 }
@@ -911,14 +913,9 @@ async fn fetch_electricity_price_task(
             .ok_or("fetch_electricity_price_task: didn't receive time data")?
             .clone();
 
-        let start_time = time_line_owned
-            .first()
-            .ok_or("time line is empty")?
-            .clone();
+        let start_time = time_line_owned.first().ok_or("time line is empty")?.clone();
 
-        let end_time = (*time_line_owned
-            .last()
-            .ok_or("time line is empty")? - TimeDelta::hours(1))
+        let end_time = (*time_line_owned.last().ok_or("time line is empty")? - TimeDelta::hours(1))
             .duration_trunc(TimeDelta::hours(1))
             .unwrap();
 
@@ -942,14 +939,21 @@ async fn fetch_electricity_price_task(
             .await
             {
                 Ok(prices) => insert_prices(prices)?,
-                Err(e)     => return Err(format!(
-                    "fetch_electricity_price_task: ELERING fetch failed: {}", e)),
+                Err(e) => {
+                    return Err(format!(
+                        "fetch_electricity_price_task: ELERING fetch failed: {}",
+                        e
+                    ))
+                }
             }
         }
 
         if has_entsoe {
+            let api_token = api_token
+                .ok_or("fetch_electricity_price_task: ENTSO-E API token has not been configured")?;
+
             match electricity_price_job_entsoe::fetch_electricity_prices(
-                location.country.as_str(), 
+                location.country.as_str(),
                 api_token,
                 &start_time,
                 &end_time,
@@ -959,20 +963,25 @@ async fn fetch_electricity_price_task(
             .await
             {
                 Ok(prices) => insert_prices(prices)?,
-                Err(e)     => return Err(format!(
-                    "fetch_electricity_price_task: ENTSO-E fetch failed: {}", e)),
+                Err(e) => {
+                    return Err(format!(
+                        "fetch_electricity_price_task: ENTSO-E fetch failed: {}",
+                        e
+                    ))
+                }
             }
         }
 
         if tx.send(optimization_data).is_err() {
-            return Err("fetch_electricity_price_task: failed to send updated optimization data".into());
+            return Err(
+                "fetch_electricity_price_task: failed to send updated optimization data".into(),
+            );
         }
         Ok(())
     } else {
         Err("fetch_electricity_price_task: input channel closed".into())
     }
 }
-
 
 fn fit_prices_to_time_line(
     prices: &Vec<(TimeStamp, f64)>,
@@ -983,9 +992,9 @@ fn fit_prices_to_time_line(
         return Err("electricity prices should have at least one time stamp".into());
     }
     eprintln!(
-    "DEBUG  first price stamp = {}, first time-line stamp = {}",
-    prices[0].0.format("%Y-%m-%dT%H:%M:%S"),
-    time_line[0].format("%Y-%m-%dT%H:%M:%S"),
+        "DEBUG  first price stamp = {}, first time-line stamp = {}",
+        prices[0].0.format("%Y-%m-%dT%H:%M:%S"),
+        time_line[0].format("%Y-%m-%dT%H:%M:%S"),
     );
     if prices[0].0 != time_line[0] {
         return Err("first electricity price time stamp mismatches with time line start".into());
@@ -1253,7 +1262,7 @@ mod tests {
             Ok(())
         }
     }
-    
+
     mod fit_prices_to_time_line {
         use chrono::TimeZone;
 
