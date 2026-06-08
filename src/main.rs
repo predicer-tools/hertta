@@ -134,11 +134,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         ))
         .with(cors);
     let health_route = warp::path("health")
-    .and(warp::get())
-    .map(|| warp::reply::with_status("OK", warp::http::StatusCode::OK));
+        .and(warp::get())
+        .map(|| warp::reply::with_status("OK", warp::http::StatusCode::OK));
     let routes = graphql_route.or(health_route);
-    let server_handle = warp::serve(routes)
-        .run(([127, 0, 0, 1], 3030));
+    let server_handle = warp::serve(routes).run(([0, 0, 0, 0], 3030));
     server_handle.await;
     Ok(())
 }
