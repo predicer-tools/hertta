@@ -140,6 +140,41 @@ pub fn create_state_con_factor(
     ValidationErrors::default()
 }
 
+pub fn update_state_con_factor(
+    factor_inputs: Vec<ValueInput>,
+    constraint_name: String,
+    node_name: String,
+    constraints: &mut Vec<BaseGenConstraint>,
+) -> ValidationErrors {
+    let factor: Vec<Value> = match factor_inputs
+        .into_iter()
+        .map(Value::try_from)
+        .collect::<Result<Vec<Value>, String>>() {
+        Ok(vec) => vec,
+        Err(err) => return ValidationErrors::from(ValidationError::new("factor", &err)),
+    };
+    let constraint = match find_constraint(&constraint_name, constraints) {
+        Ok(constraint) => constraint,
+        Err(errors) => return errors,
+    };
+    let state_factor = match constraint
+        .factors
+        .iter_mut()
+        .find(|f| f.var_type == ConstraintFactorType::State && f.var_tuple.entity == node_name)
+    {
+        Some(state_factor) => state_factor,
+        None => {
+            return ValidationErrors::from(ValidationError::new(
+                "node_name",
+                "no such state constraint factor",
+            ))
+        }
+    };
+
+    state_factor.data = factor;
+    ValidationErrors::default()
+}
+
 fn validate_state_con_factor_creation(
     node: &String,
     constraint: &BaseGenConstraint,
@@ -281,5 +316,75 @@ fn delete_con_factor<P: FnMut(&BaseConFactor) -> bool>(
         return MaybeError::new_ok();
     } else {
         return "no such constraint factor".into();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state_factor(node_name: &str, value: f64) -> BaseConFactor {
+        BaseConFactor {
+            var_type: ConstraintFactorType::State,
+            var_tuple: VariableId {
+                entity: node_name.into(),
+                identifier: None,
+            },
+            data: vec![Value::try_from(ValueInput {
+                scenario: Some("s1".into()),
+                constant: Some(value),
+                series: None,
+            })
+            .unwrap()],
+        }
+    }
+
+    fn constraint() -> BaseGenConstraint {
+        BaseGenConstraint {
+            name: "temperature_min".into(),
+            gc_type: crate::input_data_base::ConstraintType::GreaterThan,
+            is_setpoint: true,
+            penalty: 15.0,
+            factors: vec![state_factor("room_air", 294.15)],
+            constant: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn update_state_con_factor_replaces_factor_data() {
+        let mut constraints = vec![constraint()];
+        let factor = vec![ValueInput {
+            scenario: Some("s1".into()),
+            constant: Some(300.15),
+            series: None,
+        }];
+
+        let errors = update_state_con_factor(
+            factor,
+            "temperature_min".into(),
+            "room_air".into(),
+            &mut constraints,
+        );
+
+        assert!(errors.errors.is_empty());
+        assert_eq!(constraints[0].factors[0].data.len(), 1);
+        assert_eq!(
+            constraints[0].factors[0].data[0].scenario,
+            Some("s1".into())
+        );
+    }
+
+    #[test]
+    fn update_state_con_factor_reports_missing_factor() {
+        let mut constraints = vec![constraint()];
+
+        let errors = update_state_con_factor(
+            Vec::new(),
+            "temperature_min".into(),
+            "missing".into(),
+            &mut constraints,
+        );
+
+        assert_eq!(errors.errors.len(), 1);
     }
 }

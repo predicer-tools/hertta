@@ -950,6 +950,22 @@ impl Mutation {
         )
     }
 
+    #[graphql(description = "Update an existing state constraint factor.")]
+    async fn update_state_con_factor(
+        factor: Vec<ValueInput>,
+        constraint_name: String,
+        node_name: String,
+        context: &HerttaContext,
+    ) -> ValidationErrors {
+        let mut model = context.model.lock().await;
+        con_factor_input::update_state_con_factor(
+            factor,
+            constraint_name,
+            node_name,
+            &mut model.input_data.gen_constraints,
+        )
+    }
+
     async fn delete_state_con_factor(
         constraint_name: String,
         node_name: String,
