@@ -13,6 +13,17 @@ pub struct NewTopology {
     pub cap_ts: Vec<ValueInput>,
 }
 
+#[derive(GraphQLInputObject)]
+pub struct TopologyUpdate {
+    pub capacity: Option<f64>,
+    pub vom_cost: Option<f64>,
+    pub ramp_up: Option<f64>,
+    pub ramp_down: Option<f64>,
+    pub initial_load: Option<f64>,
+    pub initial_flow: Option<f64>,
+    pub cap_ts: Option<Vec<ValueInput>>,
+}
+
 impl NewTopology {
     fn to_topology(self, source: String, sink: String) -> BaseTopology {
         BaseTopology {
@@ -64,6 +75,46 @@ pub fn create_topology(
     let source = source_node_name.unwrap_or_else(|| process_name.clone());
     let sink = sink_node_name.unwrap_or_else(|| process_name.clone());
     process.topos.push(topology.to_topology(source, sink));
+    ValidationErrors::default()
+}
+
+pub fn update_topology(
+    process_name: &str,
+    source_node_name: &Option<String>,
+    sink_node_name: &Option<String>,
+    update: TopologyUpdate,
+    processes: &mut Vec<BaseProcess>,
+) -> ValidationErrors {
+    let process = match processes.iter_mut().find(|process| process.name == process_name) {
+        Some(process) => process,
+        None => return ValidationErrors::from(ValidationError::new("process_name", "no such process")),
+    };
+    let source = source_node_name.as_deref().unwrap_or(process_name);
+    let sink = sink_node_name.as_deref().unwrap_or(process_name);
+    let topology = match process.topos.iter_mut().find(|topology| topology.source == source && topology.sink == sink) {
+        Some(topology) => topology,
+        None => return ValidationErrors::from(ValidationError::new("topology", "no such topology")),
+    };
+    let ramp_up = update.ramp_up.unwrap_or(topology.ramp_up);
+    let ramp_down = update.ramp_down.unwrap_or(topology.ramp_down);
+    let mut errors = Vec::new();
+    if !(0.0..=1.0).contains(&ramp_up) { errors.push(ValidationError::new("ramp_up", "should be in [0, 1]")); }
+    if !(0.0..=1.0).contains(&ramp_down) { errors.push(ValidationError::new("ramp_down", "should be in [0, 1]")); }
+    if !errors.is_empty() { return ValidationErrors::from(errors); }
+    let cap_ts = match update.cap_ts {
+        Some(values) => match values.into_iter().map(Value::try_from).collect::<Result<Vec<_>, _>>() {
+            Ok(values) => Some(values),
+            Err(error) => return ValidationErrors::from(ValidationError::new("cap_ts", &error)),
+        },
+        None => None,
+    };
+    if let Some(value) = update.capacity { topology.capacity = value; }
+    if let Some(value) = update.vom_cost { topology.vom_cost = value; }
+    topology.ramp_up = ramp_up;
+    topology.ramp_down = ramp_down;
+    if let Some(value) = update.initial_load { topology.initial_load = value; }
+    if let Some(value) = update.initial_flow { topology.initial_flow = value; }
+    if let Some(values) = cap_ts { topology.cap_ts = values; }
     ValidationErrors::default()
 }
 

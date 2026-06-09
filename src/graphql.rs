@@ -40,7 +40,7 @@ use market_input::NewMarket;
 use node_delay_input::NewNodeDelay;
 use node_history_input::NewSeries;
 use node_input::NewNode;
-use process_input::NewProcess;
+use process_input::{NewProcess, ProcessUpdate};
 use risk_input::NewRisk;
 use reserve_type_input::NewReserveType;
 use inflow_block_input::NewInflowBlock;
@@ -51,7 +51,7 @@ use std::sync::Arc;
 use time_line_input::TimeLineUpdate;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
-use topology_input::NewTopology;
+use topology_input::{NewTopology, TopologyUpdate};
 use serde_json;
 
 
@@ -564,6 +564,12 @@ impl Mutation {
         )
     }
 
+    #[graphql(description = "Update fields of an existing process.")]
+    async fn update_process(name: String, process: ProcessUpdate, context: &HerttaContext) -> ValidationErrors {
+        let mut model = context.model.lock().await;
+        process_input::update_process(&name, process, &mut model.input_data.processes)
+    }
+
     #[graphql(description = "Add process to process group.")]
     async fn add_process_to_group(
         process_name: String,
@@ -624,6 +630,20 @@ impl Mutation {
             &source_node_name,
             &sink_node_name,
             &mut model.input_data.processes,
+        )
+    }
+
+    #[graphql(description = "Update fields of an existing topology.")]
+    async fn update_topology(
+        topology: TopologyUpdate,
+        source_node_name: Option<String>,
+        process_name: String,
+        sink_node_name: Option<String>,
+        context: &HerttaContext,
+    ) -> ValidationErrors {
+        let mut model = context.model.lock().await;
+        topology_input::update_topology(
+            &process_name, &source_node_name, &sink_node_name, topology, &mut model.input_data.processes,
         )
     }
 

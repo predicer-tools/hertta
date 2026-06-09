@@ -46,6 +46,27 @@ pub struct NewProcess {
     eff_ops_fun: Vec<PointInput>,
 }
 
+#[derive(GraphQLInputObject)]
+pub struct ProcessUpdate {
+    conversion: Option<Conversion>,
+    is_cf_fix: Option<bool>,
+    is_online: Option<bool>,
+    is_res: Option<bool>,
+    eff: Option<f64>,
+    load_min: Option<f64>,
+    load_max: Option<f64>,
+    start_cost: Option<f64>,
+    min_online: Option<f64>,
+    max_online: Option<f64>,
+    min_offline: Option<f64>,
+    max_offline: Option<f64>,
+    initial_state: Option<bool>,
+    is_scenario_independent: Option<bool>,
+    cf: Option<Vec<ValueInput>>,
+    eff_ts: Option<Vec<ValueInput>>,
+    eff_ops_fun: Option<Vec<PointInput>>,
+}
+
 impl NewProcess {
     fn to_process(self) -> BaseProcess {
         BaseProcess {
@@ -95,6 +116,59 @@ pub fn create_process(
     }
     processes.push(process.to_process());
     ValidationErrors::default()
+}
+
+pub fn update_process(name: &str, update: ProcessUpdate, processes: &mut Vec<BaseProcess>) -> ValidationErrors {
+    let process = match processes.iter_mut().find(|process| process.name == name) {
+        Some(process) => process,
+        None => return ValidationErrors::from(ValidationError::new("name", "no such process")),
+    };
+    let load_min = update.load_min.unwrap_or(process.load_min);
+    let load_max = update.load_max.unwrap_or(process.load_max);
+    let min_online = update.min_online.unwrap_or(process.min_online);
+    let max_online = update.max_online.unwrap_or(process.max_online);
+    let min_offline = update.min_offline.unwrap_or(process.min_offline);
+    let max_offline = update.max_offline.unwrap_or(process.max_offline);
+    let mut errors = Vec::new();
+    if !(0.0..=1.0).contains(&load_min) { errors.push(ValidationError::new("load_min", "should be in [0, 1]")); }
+    if !(0.0..=1.0).contains(&load_max) { errors.push(ValidationError::new("load_max", "should be in [0, 1]")); }
+    if load_min > load_max { errors.push(ValidationError::new("load_min", "greater than load_max")); }
+    if min_online > max_online && min_online > 0.0 && max_online > 0.0 {
+        errors.push(ValidationError::new("min_online", "greater than max_online"));
+    }
+    if min_offline > max_offline && min_offline > 0.0 && max_offline > 0.0 {
+        errors.push(ValidationError::new("min_offline", "greater than max_offline"));
+    }
+    if !errors.is_empty() { return ValidationErrors::from(errors); }
+
+    let cf = match convert_values(update.cf, "cf") { Ok(value) => value, Err(errors) => return errors };
+    let eff_ts = match convert_values(update.eff_ts, "eff_ts") { Ok(value) => value, Err(errors) => return errors };
+    if let Some(value) = update.conversion { process.conversion = value; }
+    if let Some(value) = update.is_cf_fix { process.is_cf_fix = value; }
+    if let Some(value) = update.is_online { process.is_online = value; }
+    if let Some(value) = update.is_res { process.is_res = value; }
+    if let Some(value) = update.eff { process.eff = value; }
+    process.load_min = load_min;
+    process.load_max = load_max;
+    if let Some(value) = update.start_cost { process.start_cost = value; }
+    process.min_online = min_online;
+    process.max_online = max_online;
+    process.min_offline = min_offline;
+    process.max_offline = max_offline;
+    if let Some(value) = update.initial_state { process.initial_state = value; }
+    if let Some(value) = update.is_scenario_independent { process.is_scenario_independent = value; }
+    if let Some(values) = cf { process.is_cf = !values.is_empty(); process.cf = values; }
+    if let Some(values) = eff_ts { process.eff_ts = values; }
+    if let Some(points) = update.eff_ops_fun { process.eff_ops_fun = points.into_iter().map(Into::into).collect(); }
+    ValidationErrors::default()
+}
+
+fn convert_values(inputs: Option<Vec<ValueInput>>, field: &str) -> Result<Option<Vec<Value>>, ValidationErrors> {
+    match inputs {
+        Some(inputs) => inputs.into_iter().map(Value::try_from).collect::<Result<Vec<_>, _>>()
+            .map(Some).map_err(|error| ValidationErrors::from(ValidationError::new(field, &error))),
+        None => Ok(None),
+    }
 }
 
 fn validate_process_creation(
