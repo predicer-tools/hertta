@@ -30,7 +30,7 @@ use crate::input_data_base::{
 use crate::model::{self, Model};
 use crate::scenarios::Scenario;
 use crate::settings::{LocationSettings, Settings};
-use gen_constraint_input::NewGenConstraint;
+use gen_constraint_input::{GenConstraintUpdate, NewGenConstraint};
 use input_data_setup_input::InputDataSetupInput;
 use juniper::{
     graphql_object, Context, EmptySubscription, FieldResult, GraphQLInputObject, GraphQLObject,
@@ -874,6 +874,20 @@ impl Mutation {
     ) -> ValidationErrors {
         let mut model = context.model.lock().await;
         gen_constraint_input::create_gen_constraint(
+            constraint,
+            &mut model.input_data.gen_constraints,
+        )
+    }
+
+    #[graphql(description = "Update an existing generic constraint.")]
+    async fn update_gen_constraint(
+        name: String,
+        constraint: GenConstraintUpdate,
+        context: &HerttaContext,
+    ) -> ValidationErrors {
+        let mut model = context.model.lock().await;
+        gen_constraint_input::update_gen_constraint(
+            &name,
             constraint,
             &mut model.input_data.gen_constraints,
         )
