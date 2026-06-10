@@ -5,10 +5,9 @@ use crate::input_data::{Forecastable, InputData, Market, TimeSeriesData};
 use crate::{TimeLine, TimeStamp};
 use arrow::array::{
     Array, ArrayRef, BooleanArray, Float64Array, Int32Array, Int64Array, StringArray,
-    TimestampMillisecondArray, UnionArray,
+    TimestampMillisecondArray,
 };
-use arrow::buffer::ScalarBuffer;
-use arrow::datatypes::{DataType, Field, Schema, TimeUnit, UnionFields};
+use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use arrow::{error::ArrowError, record_batch::RecordBatch};
 use arrow_errors::DataConversionError;
 use arrow_ipc::writer::StreamWriter;
@@ -163,93 +162,29 @@ fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, DataCo
         "ramp_dummy_variable_cost", // float index 1
     ];
 
-    let bool_array = BooleanArray::from(vec![
-        setup.use_reserves,
-        setup.contains_online,
-        setup.contains_states,
-        setup.contains_piecewise_eff,
-        setup.contains_risk,
-        setup.contains_diffusion,
-        setup.contains_delay,
-        setup.contains_markets,
-        setup.reserve_realisation,
-        setup.use_market_bids,
-        setup.use_node_dummy_variables,
-        setup.use_ramp_dummy_variables,
-    ]);
-    
-    let float_array = Float64Array::from(vec![
-        setup.node_dummy_variable_cost,
-        setup.ramp_dummy_variable_cost,
-    ]);
-    
-    let int_array = Int64Array::from(vec![setup.common_timesteps]);
-    
     let scenario_name = if setup.common_scenario_name.is_empty() {
         "missing".to_string()
     } else {
         setup.common_scenario_name.clone()
     };
-    let str_array = StringArray::from(vec![scenario_name]);
-
-    let union_fields = [
-        (0, Arc::new(Field::new("bool", DataType::Boolean, false))),
-        (1, Arc::new(Field::new("float", DataType::Float64, false))),
-        (2, Arc::new(Field::new("int", DataType::Int64, false))),
-        (3, Arc::new(Field::new("str", DataType::Utf8, false))),
-    ]
-    .into_iter()
-    .collect::<UnionFields>();
-
-    // Booleans: 0, Floats: 1, Int: 2, String: 3.
-    let type_ids = vec![
-        0, // use_reserves
-        0, // contains_online
-        0, // contains_states
-        0, // contains_piecewise_eff
-        0, // contains_risk
-        0, // contains_diffusion
-        0, // contains_delay
-        0, // contains_markets
-        0, // use_reserve_realisation
-        0, // use_market_bids
-        2, // common_timesteps
-        3, // common_scenario_name
-        0, // use_node_dummy_variables
-        0, // use_ramp_dummy_variables
-        1, // node_dummy_variable_cost
-        1, // ramp_dummy_variable_cost
+    let values = vec![
+        setup.use_reserves.to_string(),
+        setup.contains_online.to_string(),
+        setup.contains_states.to_string(),
+        setup.contains_piecewise_eff.to_string(),
+        setup.contains_risk.to_string(),
+        setup.contains_diffusion.to_string(),
+        setup.contains_delay.to_string(),
+        setup.contains_markets.to_string(),
+        setup.reserve_realisation.to_string(),
+        setup.use_market_bids.to_string(),
+        setup.common_timesteps.to_string(),
+        scenario_name,
+        setup.use_node_dummy_variables.to_string(),
+        setup.use_ramp_dummy_variables.to_string(),
+        setup.node_dummy_variable_cost.to_string(),
+        setup.ramp_dummy_variable_cost.to_string(),
     ];
-    let offsets = vec![
-        0,  // use_reserves -> bool[0]
-        1,  // contains_online -> bool[1]
-        2,  // contains_states -> bool[2]
-        3,  // contains_piecewise_eff -> bool[3]
-        4,  // contains_risk -> bool[4]
-        5,  // contains_diffusion -> bool[5]
-        6,  // contains_delay -> bool[6]
-        7,  // contains_markets -> bool[7]
-        8,  // use_reserve_realisation -> bool[8]
-        9,  // use_market_bids -> bool[9]
-        0,  // common_timesteps -> int[0]
-        0,  // common_scenario_name -> str[0]
-        10, // use_node_dummy_variables -> bool[10]
-        11, // use_ramp_dummy_variables -> bool[11]
-        0,  // node_dummy_variable_cost -> float[0]
-        1,  // ramp_dummy_variable_cost -> float[1]
-    ];
-    
-    let type_ids = ScalarBuffer::from(type_ids);
-    let offsets = ScalarBuffer::from(offsets);
-    
-    let children = vec![
-        Arc::new(bool_array) as ArrayRef,
-        Arc::new(float_array),
-        Arc::new(int_array),
-        Arc::new(str_array),
-    ];
-    let values = UnionArray::try_new(union_fields, type_ids, Some(offsets), children)
-        .unwrap();
 
     if parameters.len() != values.len() {
         return Err(DataConversionError::InvalidInput(
@@ -257,7 +192,7 @@ fn inputdatasetup_to_arrow(input_data: &InputData) -> Result<RecordBatch, DataCo
         ));
     }
     let parameter_array = Arc::new(StringArray::from(parameters)) as ArrayRef;
-    let value_array = Arc::new(values) as ArrayRef;
+    let value_array = Arc::new(StringArray::from(values)) as ArrayRef;
     let schema = Schema::new(vec![
         Field::new("parameter", DataType::Utf8, false),
         Field::new("value", value_array.data_type().clone(), true),
@@ -285,7 +220,7 @@ fn nodes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
         Field::new("state_loss_proportional", DataType::Float64, false),
         Field::new("scenario_independent_state", DataType::Boolean, false),
         Field::new("is_temp", DataType::Boolean, false),
-        Field::new("t_e_conversion", DataType::Float64, false),
+        Field::new("T_E_conversion", DataType::Float64, false),
         Field::new("residual_value", DataType::Float64, false),
     ]);
     let size = nodes.len();
@@ -493,7 +428,7 @@ fn processes_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError>
 fn groups_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowError> {
     let groups = &input_data.groups;
     let schema = Schema::new(vec![
-        Field::new("group_type", DataType::Utf8, false),
+        Field::new("type", DataType::Utf8, false),
         Field::new("entity", DataType::Utf8, false),
         Field::new("group", DataType::Utf8, false),
     ]);
@@ -533,7 +468,7 @@ fn process_topos_to_arrow(input_data: &InputData) -> Result<RecordBatch, ArrowEr
         Field::new("node", DataType::Utf8, false),
         Field::new("conversion_coeff", DataType::Float64, false),
         Field::new("capacity", DataType::Float64, false),
-        Field::new("vom_cost", DataType::Float64, false),
+        Field::new("VOM_cost", DataType::Float64, false),
         Field::new("ramp_up", DataType::Float64, false),
         Field::new("ramp_down", DataType::Float64, false),
         Field::new("initial_load", DataType::Float64, false),
@@ -3852,6 +3787,20 @@ mod tests {
             );
         }
 
+        let expected_values = vec![
+            "true", "true", "true", "true", "true", "true", "false", "true",
+            "true", "true", "2", "s_all", "true", "true", "10000", "10000",
+        ];
+        let values = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        for (idx, expected) in expected_values.iter().enumerate() {
+            assert_eq!(values.value(idx), *expected);
+        }
+
+        /*
         let expected_bools = vec![
             true,  // use_reserves  (contains_reserves)
             true,  // contains_online
@@ -3937,6 +3886,7 @@ mod tests {
                 expected_floats[offset]
             );
         }
+        */
     }
 
 }
