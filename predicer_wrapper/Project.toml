@@ -1,0 +1,7 @@
+[deps]
+Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+OrderedCollections = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
+Predicer = "029a90ca-637b-44c2-84e0-c53784befaff"
+TimeZones = "f269a46b-ccf7-5d73-abea-4c690281aa53"
+ZMQ = "c2297ded-f4af-51ae-bb23-16f91089e4e1"

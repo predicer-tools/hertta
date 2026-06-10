@@ -1,5 +1,5 @@
 use config::builder::{ConfigBuilder, DefaultState};
-use config::{Config, ConfigError, Environment};
+use config::{Config, ConfigError};
 use juniper::GraphQLObject;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -182,7 +182,6 @@ fn make_config_builder(
         .expect("failed to add default weather fetcher script to config builder")
         .set_default("price_fetcher_script", default_entsoe_fetcher_script())
         .expect("failed to add default price fetcher script to config builder")
-        .add_source(Environment::default())
 }
 
 pub fn make_settings(
@@ -200,7 +199,58 @@ pub fn make_settings(
         .required(false),
     );
     let config = builder.build()?;
-    config.try_deserialize::<Settings>()
+    let mut settings = config.try_deserialize::<Settings>()?;
+
+    override_string_from_environment(
+        environment_variables,
+        JULIA_EXEC_FIELD,
+        &mut settings.julia_exec,
+    );
+    override_string_from_environment(
+        environment_variables,
+        PREDICER_RUNNER_PROJECT_FIELD,
+        &mut settings.predicer_runner_project,
+    );
+    override_string_from_environment(
+        environment_variables,
+        PREDICER_PROJECT_FIELD,
+        &mut settings.predicer_project,
+    );
+    override_string_from_environment(
+        environment_variables,
+        "predicer_runner_script",
+        &mut settings.predicer_runner_script,
+    );
+    override_string_from_environment(
+        environment_variables,
+        PYTHON_EXEC_FIELD,
+        &mut settings.python_exec,
+    );
+    override_string_from_environment(
+        environment_variables,
+        "weather_fetcher_script",
+        &mut settings.weather_fetcher_script,
+    );
+    override_string_from_environment(
+        environment_variables,
+        "price_fetcher_script",
+        &mut settings.price_fetcher_script,
+    );
+
+    Ok(settings)
+}
+
+fn override_string_from_environment(
+    environment_variables: &HashMap<String, String>,
+    field: &str,
+    target: &mut String,
+) {
+    if let Some(value) = environment_variables
+        .get(field)
+        .or_else(|| environment_variables.get(&field.to_uppercase()))
+    {
+        *target = value.clone();
+    }
 }
 
 fn exec_from(path_variable: &str, exec: &str) -> Option<PathBuf> {

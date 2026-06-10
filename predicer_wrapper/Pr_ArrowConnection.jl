@@ -1,16 +1,6 @@
-import Pkg
-
-predicer_project_path = ARGS[1]
 zmq_port = ARGS[2]
 
-Pkg.instantiate()
-Pkg.add("Arrow")
-Pkg.add("DataFrames")
-Pkg.add("ZMQ")
-Pkg.add("OrderedCollections")
-Pkg.add("TimeZones")
-
-println("Running Julia script with all dependencies activated and instantiated.")
+println("Running Julia script with precompiled Predicer runner environment.")
 
 using Arrow
 using DataFrames
@@ -18,11 +8,6 @@ using ZMQ
 using OrderedCollections
 using TimeZones
 using Dates
-
-
-cd(predicer_project_path)
-Pkg.activate(".")
-Pkg.instantiate()
 using Predicer
 
 zmq_context = Context()
