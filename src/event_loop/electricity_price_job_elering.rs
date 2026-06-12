@@ -101,10 +101,14 @@ pub async fn fetch_electricity_prices_elering(
         .send()
         .await
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+    let status = response.status();
     let response_text = response
         .text()
         .await
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+    if !status.is_success() {
+        return Err(format!("Elering returned HTTP {status}: {response_text}").into());
+    }
     Ok(parse_elering_response(
         &response_text,
         &as_elering_country(country)?,

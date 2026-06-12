@@ -142,7 +142,12 @@ pub fn fetch_weather_data(
         Err(error) => return Err(format!("Python failed: {}", error)),
     };
     if !output.status.success() {
-        return Err("weather fetching returned non-zero exit status".into());
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "weather fetching returned non-zero exit status".into()
+        } else {
+            format!("weather fetching failed: {stderr}")
+        });
     }
     let output = match String::from_utf8(output.stdout) {
         Ok(json_out) => json_out,
