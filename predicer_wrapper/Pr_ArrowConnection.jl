@@ -1,6 +1,6 @@
 zmq_port = ARGS[2]
 
-println("Running Julia script with precompiled Predicer runner environment.")
+println("Loading precompiled Predicer runner environment...")
 
 using Arrow
 using DataFrames
@@ -9,6 +9,8 @@ using OrderedCollections
 using TimeZones
 using Dates
 using Predicer
+
+println("Predicer runner environment loaded.")
 
 zmq_context = Context()
 time_stamp_format = dateformat"yyyy-mm-ddTHH:MM:SS.s"
