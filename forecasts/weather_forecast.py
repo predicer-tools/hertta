@@ -44,7 +44,12 @@ def main(start_time: str, end_time: str, step: int, place: str) -> None:
     reshaped_data = reshape_dict(data)
     df = pd.DataFrame(index=data.keys(), data=reshaped_data[place])
     df['Air temperature'] += 273.15
-    mean_temperature = df['Air temperature'].resample(f'{step}min').nearest()
+    target_index = pd.date_range(start=start_time, end=end_time, freq=f'{step}min')
+    if df.index.tz is not None and target_index.tz is None:
+        target_index = target_index.tz_localize(df.index.tz)
+    elif df.index.tz is None and target_index.tz is not None:
+        target_index = target_index.tz_localize(None)
+    mean_temperature = df['Air temperature'].reindex(target_index, method='nearest')
     mean_temperature.index = mean_temperature.index.strftime('%Y-%m-%dT%H:%M:%S')
     json_output = json.dumps([(time, temperature) for time, temperature in mean_temperature.to_dict().items()])
     print(json_output)

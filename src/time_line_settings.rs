@@ -1,4 +1,4 @@
-use chrono::{TimeDelta, Utc, DurationRound};
+use chrono::{DateTime, DurationRound, TimeDelta, Utc};
 use juniper::{GraphQLObject, GraphQLUnion, GraphQLEnum};
 use serde::{Deserialize, Serialize};
 use crate::TimeStamp;
@@ -33,6 +33,8 @@ pub struct ClockChoice {
 pub enum Clock {
     /// Use the current hour truncated to the nearest hour.
     CurrentHour,
+    /// Use the next 15-minute boundary.
+    NextQuarterHour,
 }
 
 impl Clock {
@@ -41,6 +43,14 @@ impl Clock {
             Clock::CurrentHour => Utc::now()
                 .duration_trunc(chrono::Duration::hours(1))
                 .expect("Truncation to nearest hour should succeed"),
+            Clock::NextQuarterHour => {
+                let now = Utc::now();
+                let quarter_seconds = chrono::Duration::minutes(15).num_seconds();
+                let next_timestamp =
+                    ((now.timestamp() / quarter_seconds) + 1) * quarter_seconds;
+                DateTime::from_timestamp(next_timestamp, 0)
+                    .expect("next quarter-hour timestamp should be valid")
+            }
         }
     }
 }
@@ -171,6 +181,7 @@ pub fn compute_timeline_start(time_line_settings: &TimeLineSettings) -> TimeStam
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Timelike;
     use std::error::Error;
     
     #[test]
@@ -189,6 +200,16 @@ mod tests {
         } else {
             panic!("Expected ClockChoice for start.");
         }
+    }
+
+    #[test]
+    fn next_quarter_hour_is_a_future_quarter_boundary() {
+        let before = Utc::now();
+        let start = Clock::NextQuarterHour.calculate_start_time();
+
+        assert!(start > before);
+        assert_eq!(start.minute() % 15, 0);
+        assert_eq!(start.second(), 0);
     }
 
     #[test]
